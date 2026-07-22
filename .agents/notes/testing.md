@@ -157,6 +157,69 @@ pkill -f sgw-proxy 2>/dev/null; pgrep -af sgw-proxy || echo "无残留 ✓"
 
 ---
 
+## Part C：L2 locust 压测（网关限流/缓存量化）
+
+纯 HTTP 压测网关，不依赖 LLM。**安全兜底**：打的是网关(localhost)，网关全局限流(≤1req/s)+缓存保证外网请求受控。
+
+### C1. 创建压测脚本
+
+```bash
+mkdir -p ~/Documents/trader-skills/.agents/temp/locust
+cat > ~/Documents/trader-skills/.agents/temp/locust/sgw_stress.py << 'EOF'
+from locust import HttpUser, task, between
+import random
+EM_URL = "https://push2.eastmoney.com/api/qt/slist/get"
+HOT = ["600519", "000858", "601318", "300750", "002594"]
+COLD = [f"{random.choice(['600','000','300','002'])}{random.randint(100,999):03d}" for _ in range(50)]
+class GatewayUser(HttpUser):
+    wait_time = between(0.5, 2.0)
+    @task(7)
+    def hot(self):
+        self.client.get("/", params={"u": EM_URL, "spt": 3, "security_code": random.choice(HOT), "fields": "f12,f14"}, headers={"X-Cache-Tier": "S"}, name="hot(cached)")
+    @task(3)
+    def cold(self):
+        self.client.get("/", params={"u": EM_URL, "spt": 3, "security_code": random.choice(COLD), "fields": "f12,f14"}, headers={"X-Cache-Tier": "R"}, name="cold(limited)")
+EOF
+```
+
+### C2. 阶梯加压（10→100→300，每轮 30s）
+
+网关保持运行（Part A/B 的终端 A）。**每轮前记录 stats 基线，压测后核对外网请求数**：
+
+```bash
+cd ~/Documents/trader-skills
+
+# 10 用户小试
+curl -s http://127.0.0.1:7700/__stats | python3 -c "import sys,json;d=json.load(sys.stdin);print('基线 东财:',d['group_reqs']['eastmoney'])"
+uv run --project skills/a-stock-data/scripts locust -f .agents/temp/locust/sgw_stress.py --headless -u 10 -r 5 -t 30s --host http://127.0.0.1:7700 2>&1 | tail -5
+curl -s http://127.0.0.1:7700/__stats | python3 -c "import sys,json;d=json.load(sys.stdin);print('压后 东财:',d['group_reqs']['eastmoney'],'缓存命中:',d['cache']['hits'])"
+
+# 确认外网增量 <30 后，逐步加压到 100、300（改 -u 即可）
+```
+
+### C3. 安全判定
+
+```bash
+curl -s http://127.0.0.1:7700/__stats | python3 -c "import sys,json;d=json.load(sys.stdin);print('东财外网:',d['group_reqs']['eastmoney'],'| 缓存命中:',d['cache']['hits'],'| 限流等待:',d['bucket_waits']['eastmoney'])"
+```
+
+✅ **通过条件**（以 300 用户为例）：
+- 东财外网 < 100 次（≤1req/s 兜底，整轮测试约 30s 新增 ~24 次）
+- 缓存命中 >> 外网请求（热门标的命中缓存）
+- 0 失败
+
+❌ 外网请求飙升（如 >200/分钟）→ **立即 Ctrl+C 停 locust**，限流可能失效。
+
+### C4. 清理
+
+```bash
+rm -rf ~/Documents/trader-skills/.agents/temp/locust
+rm -rf ~/Documents/trader-skills/skills/a-stock-data/scripts/sgw/sgw/logs
+pkill -f sgw-proxy 2>/dev/null
+```
+
+---
+
 ## 验收判定
 
 | 部分 | 关键步骤 | 通过条件 |
@@ -166,3 +229,4 @@ pkill -f sgw-proxy 2>/dev/null; pgrep -af sgw-proxy || echo "无残留 ✓"
 | A 网关 | A7 透明性 | 经网关=直连，字节一致 |
 | **B agent** | **B3 端到端** | **真实数据 + 正确分流** |
 | **B agent** | **B4 网关** | **东财外网 > 0** |
+| **C 压测** | **C3 安全** | **300并发外网<100，缓存命中>>外网** |

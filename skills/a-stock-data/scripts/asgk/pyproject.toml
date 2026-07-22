@@ -20,3 +20,8 @@ build-backend = "hatchling.build"
 [tool.hatch.build.targets.wheel]
 # 包源码在 asgk/ 子目录（标准布局）
 packages = ["asgk"]
+
+[dependency-groups]
+dev = [
+    "locust>=2.46.1",
+]
