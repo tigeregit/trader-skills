@@ -1,5 +1,5 @@
-# ZCode 工具生成物
-.zcode/
+# 环境变量（含密钥，不入库）
+.env
 
 # Python
 __pycache__/
@@ -8,19 +8,16 @@ __pycache__/
 .venv/
 venv/
 
-# 网关运行时产物（指纹日志等，不入库）
-skills/a-stock-data/scripts/sgw_fingerprint.jsonl
+# 构建产物
+dist/
+build/
+
+# 网关运行时产物（指纹日志）
+**/sgw/logs/
+**/sgw_fingerprint.jsonl
+
+# 工具生成物
+.zcode/
 
 # OS
 .DS_Store
-skills/a-stock-data/scripts/dist/
-
-.env
-*/.env
-sgw_fingerprint.jsonl
-*/sgw_fingerprint.jsonl
-
-
-temp/
-temp*
-skills/a-stock-data/scripts/sgw/sgw/logs/

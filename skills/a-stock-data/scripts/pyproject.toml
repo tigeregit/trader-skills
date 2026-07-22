@@ -1,7 +1,7 @@
 # workspace 根：协调 sgw（网关）和 asgk（业务库）两个独立包。
 # 根本身不含代码，不打包。在根目录 uv sync 会装两个子包。
 [tool.uv.workspace]
-members = ["sgw", "asgk"]
+members = ["asgk"]
 
 [dependency-groups]
 # 根级 dev 依赖（测试用，P4 补充 locust 等）
