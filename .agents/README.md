@@ -39,6 +39,6 @@ todo/（完成） ──产物──► skills/ 或 notes/（正式位置）
 
 ## 当前内容
 
-- `notes/`：`design.md`（a-stock-data 转化设计）、`test-method.md`（pi agent + 双层压测测试方法）
+- `notes/`：`design.md`（a-stock-data 转化设计）、`gateway-design.md`（流量网关 + skill CLI 接入设计）、`test-method.md`（pi agent + 双层压测测试方法）
 - `todo/`：见 `todo/README.md`（P0 网关 → P1 库移植 → P2 拆分 → P3 路由 → P4 集成测试）
 - `temp/`：（空，待填充）

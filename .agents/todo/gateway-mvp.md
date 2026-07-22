@@ -2,6 +2,8 @@
 
 来源：notes/design.md 轴 2 / 落地路线 P0
 
+> **详细设计见 `notes/gateway-design.md`**（含网关架构、按域名组限流、缓存分档、skill CLI/asgk 接入契约、验收标准）。本文件是实现待办清单。
+
 ## 背景
 
 上游 `ref/a-stock-data` 的 `em_get()` 用模块级变量 `_em_last_call` 做限流——这是**进程内**限流。本项目单 IP 下 100～1000 个 agent 各自独立进程，每个进程有自己的 `_em_last_call`，互不可见 → 全局并发无上限 → 东财/同花顺必然封 IP（社区实测阈值：>5 req/s 或并发 ≥10 或 1 分钟 ≥200 次）。
@@ -11,7 +13,7 @@
 ## 待办
 
 - [ ] 实现 `skills/a-stock-data/scripts/sgw_proxy.py`：本地 HTTP 代理，监听 `localhost:PORT`。
-- [ ] **单域名组先跑通**：东财组（`*.eastmoney.com`）全局令牌桶，限流 ≤1 req/s + 随机抖动（对齐上游 `EM_MIN_INTERVAL=1.0`，但从进程级提升到全局级）。
+- [ ] **按域名组限流先跑通**：东财组（`*.eastmoney.com`，9 子域）全局令牌桶 ≤1 req/s + 随机抖动；同花顺组（`*.10jqka.com.cn`，4 子域）独立桶。对齐上游 `EM_MIN_INTERVAL=1.0`，但从进程级提升到全局级（见 `notes/gateway-design.md` §3.3）。
 - [ ] 最小缓存：先实现按 URL key 的内存缓存 + 可配置 TTL（静态数据长 TTL、实时数据 no-cache）。
 - [ ] 429/5xx 指数退避；403 不重试（风控信号，降频应对）。
 - [ ] 配置文件 `sgw_config.toml`：各组阈值、TTL 表。
