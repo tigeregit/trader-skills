@@ -36,14 +36,16 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 
 ## 使用方式
 
-### Python 库
+asgk 是 uv 项目，执行代码时须在 `scripts/` 目录（或用 `--project`）：
 
-```python
+```bash
+cd skills/a-stock-data/scripts && uv run python -c "
 from asgk import tencent_quote, eastmoney_reports, full_valuation
 
-q = tencent_quote(["600519"])          # PE/PB/市值
-reports = eastmoney_reports("600519")   # 研报
-v = full_valuation("600519")            # 完整估值
+q = tencent_quote(['600519'])           # PE/PB/市值（直连腾讯）
+reports = eastmoney_reports('600519')    # 研报（经网关）
+v = full_valuation('600519')             # 完整估值
+"
 ```
 
 ### 环境配置

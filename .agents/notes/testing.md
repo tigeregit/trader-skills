@@ -103,11 +103,12 @@ print(f'静态研报: 直连{len(d)}B 网关{len(g)}B 一致={d==g}')
 
 用 pi + ark-coding 验证 skill 在真实 agent 下的触发、路由、取数、网关全链路。
 
+> SKILL.md 已自解释 asgk 的执行方式（`cd scripts && uv run`），prompt 里无需重复路径。
+
 ### B1. 搭建独立工作目录
 
 ```bash
-WORK=/tmp/pi-agent-work
-SCRIPTS=~/Documents/trader-skills/skills/a-stock-data/scripts
+WORK=~/Documents/trader-skills/.agents/temp/pi-agent-work
 mkdir -p $WORK && cd $WORK
 echo 'ASGK_GW=http://127.0.0.1:7700' > .env
 ```
@@ -122,13 +123,10 @@ pi --provider ark-coding --model ark-coding/ark-code-latest --no-tools -p "回�
 ### B3. 单 agent 端到端（核心）
 
 ```bash
-cd /tmp/pi-agent-work
-SCRIPTS=~/Documents/trader-skills/skills/a-stock-data/scripts
+cd ~/Documents/trader-skills/.agents/temp/pi-agent-work
 pi --provider ark-coding --model ark-coding/ark-code-latest \
    --skill ~/Documents/trader-skills/skills/a-stock-data \
-   -p "用 a-stock-data skill 查贵州茅台(600519)的实时行情(PE/PB/市值)和最新研报标题。
-asgk 库在 $SCRIPTS 目录（uv 项目），执行代码时用 'cd $SCRIPTS && uv run python -c \"...\"'。
-取真实数据，不要编造。"
+   -p "用 a-stock-data skill 查贵州茅台(600519)的实时行情(PE/PB/市值)和最新研报标题。取真实数据。"
 ```
 ✅ 真实数据 + 正确分流（行情直连、研报经网关）
 
@@ -142,18 +140,16 @@ curl -s http://127.0.0.1:7700/__stats | python3 -c "import sys,json;d=json.load(
 ### B5. 多 agent 并发
 
 ```bash
-cd /tmp/pi-agent-work
-SCRIPTS=~/Documents/trader-skills/skills/a-stock-data/scripts
+cd ~/Documents/trader-skills/.agents/temp/pi-agent-work
 pi --provider ark-coding --model ark-coding/ark-code-latest \
    --skill ~/Documents/trader-skills/skills/a-stock-data \
-   -p "并行3任务用 asgk 的 eastmoney_reports 查研报数：1.000858 2.601318 3.000858(验证缓存)。
-asgk 在 $SCRIPTS，用 'cd $SCRIPTS && uv run python -c \"...\"' 执行。只返回条数。"
+   -p "并行3任务用 asgk 的 eastmoney_reports 查研报数：1.000858 2.601318 3.000858(验证缓存)。只返回条数。"
 ```
 
 ### B6. 清理
 
 ```bash
-rm -rf /tmp/pi-agent-work
+rm -rf ~/Documents/trader-skills/.agents/temp/pi-agent-work
 rm -f ~/Documents/trader-skills/skills/a-stock-data/scripts/query_*.py
 rm -f ~/Documents/trader-skills/skills/a-stock-data/scripts/sgw/sgw/sgw_fingerprint.jsonl
 pkill -f sgw-proxy 2>/dev/null; pgrep -af sgw-proxy || echo "无残留 ✓"
