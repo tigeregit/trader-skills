@@ -14,6 +14,8 @@ from asgk.capital import (
     dividend_history, stock_fund_flow_120d,
 )
 from asgk.news import eastmoney_stock_news, cls_telegraph, eastmoney_global_news
+from asgk.client import tdx_client
+from asgk.base import mootdx_finance, mootdx_f10, eastmoney_stock_info, sina_financial_report
 
 __all__ = [
     "em_get",
@@ -24,4 +26,6 @@ __all__ = [
     "margin_trading", "block_trade", "holder_num_change",
     "dividend_history", "stock_fund_flow_120d",
     "eastmoney_stock_news", "cls_telegraph", "eastmoney_global_news",
+    "tdx_client",
+    "mootdx_finance", "mootdx_f10", "eastmoney_stock_info", "sina_financial_report",
 ]
