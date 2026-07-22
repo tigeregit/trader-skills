@@ -14,7 +14,7 @@
 
 - [ ] 实现 `skills/a-stock-data/scripts/sgw_proxy.py`：本地 HTTP 代理，监听 `localhost:PORT`。
 - [ ] **按域名组限流先跑通**：东财组（`*.eastmoney.com`，9 子域）全局令牌桶 ≤1 req/s + 随机抖动；同花顺组（`*.10jqka.com.cn`，4 子域）独立桶。对齐上游 `EM_MIN_INTERVAL=1.0`，但从进程级提升到全局级（见 `notes/gateway-design.md` §3.3）。
-- [ ] 最小缓存：先实现按 URL key 的内存缓存 + 可配置 TTL（静态数据长 TTL、实时数据 no-cache）。
+- [ ] 五档缓存框架（见 `notes/gateway-design.md` §3.4）：按 `方法名+参数哈希` 做 key，TTL 由调用方（asgk 库）用装饰器声明档位（P/L/S/R/N），网关按声明执行。MVP 先落地 P(7d)/L(1d) 长缓存 + R/N no-cache；S 档的分时段（盘中不缓存/盘后12h）与交易时段感知留 P1/P4 校准。
 - [ ] 429/5xx 指数退避；403 不重试（风控信号，降频应对）。
 - [ ] 配置文件 `sgw_config.toml`：各组阈值、TTL 表。
 
