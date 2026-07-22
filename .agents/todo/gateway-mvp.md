@@ -14,9 +14,11 @@
 
 - [ ] 实现 `skills/a-stock-data/scripts/sgw_proxy.py`：本地 HTTP 代理，监听 `localhost:PORT`。
 - [ ] **按域名组限流先跑通**：东财组（`*.eastmoney.com`，9 子域）全局令牌桶 ≤1 req/s + 随机抖动；同花顺组（`*.10jqka.com.cn`，4 子域）独立桶。对齐上游 `EM_MIN_INTERVAL=1.0`，但从进程级提升到全局级（见 `notes/gateway-design.md` §3.3）。
-- [ ] 五档缓存框架（见 `notes/gateway-design.md` §3.4）：按 `方法名+参数哈希` 做 key，TTL 由调用方（asgk 库）用装饰器声明档位（P/L/S/R/N），网关按声明执行。MVP 先落地 P(7d)/L(1d) 长缓存 + R/N no-cache；S 档的分时段（盘中不缓存/盘后12h）与交易时段感知留 P1/P4 校准。
+- [ ] 五档缓存框架（见 `notes/gateway-design.md` §3.4）：按 `方法名+参数哈希` 做 key，TTL 由调用方（asgk 库）用装饰器声明档位（P/L/S/R/N），网关按声明执行。MVP 先落地 P(30d)/L(1d) 长缓存 + R/N no-cache；S 档的分时段（盘中不缓存/盘后12h）与交易时段感知留 P1/P4 校准。
+- [ ] **分流机制**（§3.4.6）：`em_get` 带 `X-Cache-Tier` 头声明档位；网关读头执行，无头时按 path 兜底规则（默认 R 安全档）。
+- [ ] **响应指纹日志**（§3.4.7）：每个请求记一条 jsonl（key/tier/resp_hash/session/changed），哈希剔除动态字段（req_trace/servertime）。P0 只记录不分析，为 P4 离线校准积累数据。
 - [ ] 429/5xx 指数退避；403 不重试（风控信号，降频应对）。
-- [ ] 配置文件 `sgw_config.toml`：各组阈值、TTL 表。
+- [ ] 配置文件 `sgw_config.toml`：各组阈值、TTL 表、兜底 path 规则。
 
 ## 验收标准
 
