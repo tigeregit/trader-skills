@@ -1,0 +1,12 @@
+# ZCode 工具生成物
+.zcode/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv/
+venv/
+
+# OS
+.DS_Store
