@@ -99,20 +99,35 @@ print('数据:', r.text[:80])
 ```
 ✅ 预期：`status: 200`，首次 `X-Cache: MISS`（再跑变 HIT），有真实 JSON 数据。
 
-## 七、em_get 直连模式（向后兼容）
+## 七、禁止直连保护（默认 ban）
 
-不设 `ASGK_GW` 时应直连上游（进程内限流）：
+未设 `ASGK_GW` 时，em_get 应**抛异常**（禁止风控源直连，防封 IP）：
 
 ```bash
-unset ASGK_GW  # 确保未设
+unset ASGK_GW ASGK_ALLOW_DIRECT  # 确保都未设
 uv run python -c "
+from asgk import em_get
+try:
+    em_get('https://push2.eastmoney.com/api/qt/slist/get',
+           params={'spt':3,'security_code':'600519'}, tier='S', timeout=15)
+    print('❌ 未抛异常')
+except RuntimeError as e:
+    print(f'✅ 抛异常: {str(e)[:40]}')
+"
+```
+✅ 预期：`✅ 抛异常: ASGK_GW 未设置...`
+
+仅调试时设 `ASGK_ALLOW_DIRECT=1` 可临时允许直连（进程内限流）：
+
+```bash
+unset ASGK_GW
+ASGK_ALLOW_DIRECT=1 uv run python -c "
 from asgk import em_get
 r = em_get('https://push2.eastmoney.com/api/qt/slist/get',
            params={'spt':3,'security_code':'600519','fields':'f12,f14'}, tier='S', timeout=15)
-print('直连 status:', r.status_code, '| 无X-Cache头:', r.headers.get('X-Cache') is None)
+print('调试直连 status:', r.status_code)
 "
 ```
-✅ 预期：`status: 200`，`无X-Cache头: True`（直连不经网关，无此头）。
 
 ## 八、指纹日志（离线修正用）
 
@@ -222,7 +237,7 @@ print(f'首次X-Cache: MISS, 缓存命中内容一致: {r1==r2}')
 | 四 | MISS→HIT | 缓存坏 |
 | **五** | **完成时刻递增(间隔≈1s)** | **限流失效(最严重)** |
 | 六 | 200 + 真实数据 + 走网关 | em_get 接口坏 |
-| 七 | 200 + 无 X-Cache 头 | 直连兼容坏 |
+| 七 | 未设网关时抛异常 | 禁止直连保护失效 |
 | 八 | 有 jsonl 记录 | 指纹日志没开 |
 | **九** | **静态端点字节一致** | **网关篡改/截断(严重)** |
 | 十 | 研报字段非空 | JSON 解析或字段丢失 |

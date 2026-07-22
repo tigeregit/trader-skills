@@ -1,4 +1,4 @@
-"""asgk.em_proxy — 统一请求入口 em_get，走网关/直连自适应。
+"""asgk.em_proxy — 统一请求入口 em_get，风控源必经网关。
 
 接口与上游 ref/a-stock-data 的 em_get 兼容（零改动迁移）：
     em_get(url, params=None, headers=None, timeout=15, **kwargs)
@@ -8,12 +8,16 @@
 
 行为：
     - 设了 ASGK_GW → 请求转发到网关（全局限流+缓存），tier 放 X-Cache-Tier 头
-    - 没设 → 直连上游（向后兼容；保留进程内限流作 fallback）
+    - 没设 ASGK_GW → **默认抛异常**（禁止风控源直连，杜绝忘配网关被封 IP）
+    - 显式设 ASGK_ALLOW_DIRECT=1 → 允许直连（仅调试用，进程内限流作 fallback）
 
 ASGK_GW 的来源（优先级从高到低）：
-    1. 环境变量 ASGK_GW（最高，部署时 systemd/container env 用这个）
+    1. 环境变量 ASGK_GW（最高，部署时 systemd/container envfile 用这个）
     2. .env 文件里的 ASGK_GW（开发用；从 cwd 或 ASGK_ENV 指定路径加载）
-环境变量优先于 .env，两者都未设则直连。
+环境变量优先于 .env。
+
+em_get 只被风控源（东财/同花顺）调用。直连源（腾讯/百度/新浪/mootdx/巨潮）
+不走 em_get，不受此约束——它们本就直连。
 """
 from __future__ import annotations
 
@@ -96,6 +100,14 @@ def em_get(url: str, params: dict | None = None, headers: dict | None = None,
             timeout=timeout,
             **kwargs,
         )
-    # 直连 fallback
+    # 未设网关：默认禁止直连（风控源直连会被封 IP）
+    if os.environ.get("ASGK_ALLOW_DIRECT") != "1":
+        raise RuntimeError(
+            "ASGK_GW 未设置：风控源（东财/同花顺）禁止直连。"
+            "请配置网关地址：设环境变量 ASGK_GW=http://localhost:7700，"
+            "或在项目根创建 .env 文件写入 ASGK_GW=...。"
+            "仅调试时可设 ASGK_ALLOW_DIRECT=1 临时允许直连。"
+        )
+    # 显式允许直连（调试用）
     _direct_throttle()
     return requests.get(url, params=params, headers=h, timeout=timeout, **kwargs)

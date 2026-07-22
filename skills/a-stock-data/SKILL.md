@@ -48,15 +48,22 @@ v = full_valuation("600519")            # 完整估值
 
 ### 环境配置
 
+风控源（东财/同花顺）**必须经网关**，未配 `ASGK_GW` 调用会抛异常（禁止直连，防封 IP）。
+
 ```bash
 # 1. 启网关（东财/同花顺限流+缓存）
 cd skills/a-stock-data/scripts && uv run sgw-proxy
 
-# 2. agent 侧设环境变量（让 asgk 走网关）
+# 2. 配置 ASGK_GW（二选一）
+#    方式A（推荐，多 agent 部署）：环境变量（systemd/container envfile）
 export ASGK_GW=http://localhost:7700
-
-# 3. 未设 ASGK_GW 则直连（向后兼容，单 agent 可用）
+#    方式B（开发）：项目根 .env 文件（asgk 自动加载，子 agent 也能继承）
+echo 'ASGK_GW=http://127.0.0.1:7700' > skills/a-stock-data/scripts/.env
 ```
+
+`ASGK_GW` 来源优先级：环境变量 > .env。两者都未设时，em_get 抛异常。
+仅调试时设 `ASGK_ALLOW_DIRECT=1` 可临时允许直连（不推荐）。
+
 
 ## 数据源优先级 & 网关
 
