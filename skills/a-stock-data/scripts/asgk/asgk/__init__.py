@@ -13,6 +13,7 @@ from asgk.capital import (
     margin_trading, block_trade, holder_num_change,
     dividend_history, stock_fund_flow_120d,
 )
+from asgk.news import eastmoney_stock_news, cls_telegraph, eastmoney_global_news
 
 __all__ = [
     "em_get",
@@ -22,4 +23,5 @@ __all__ = [
     "industry_comparison", "daily_dragon_tiger",
     "margin_trading", "block_trade", "holder_num_change",
     "dividend_history", "stock_fund_flow_120d",
+    "eastmoney_stock_news", "cls_telegraph", "eastmoney_global_news",
 ]

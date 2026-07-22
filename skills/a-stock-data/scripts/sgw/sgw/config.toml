@@ -14,6 +14,7 @@ domains = [
     "push2.eastmoney.com", "push2his.eastmoney.com", "push2ex.eastmoney.com",
     "data.eastmoney.com", "datacenter-web.eastmoney.com", "reportapi.eastmoney.com",
     "emappdata.eastmoney.com", "kuaixun.eastmoney.com", "quote.eastmoney.com", "so.eastmoney.com",
+    "search-api-web.eastmoney.com", "np-weblist.eastmoney.com",
 ]
 rps = 1.0          # 对齐上游 EM_MIN_INTERVAL=1.0
 jitter = [0.1, 0.5]
