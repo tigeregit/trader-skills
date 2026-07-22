@@ -153,7 +153,75 @@ R(no-cache): 日K线/百度K线[盘中含今日实时根](1.1/1.3)·分钟K(1.1)
 N(no-cache): 个股新闻(5.1)·财联社电报(5.2)·全球资讯(5.3)
 ```
 
-P1 移植每个 `asgk` 函数时，在函数上标注 `@cache(tier="S")` 之类装饰器，网关侧无需识别 URL 语义——**档位由调用方（asgk 库）声明**，网关只按声明的 TTL 执行。这比网关猜 URL 归类更可靠。
+P1 移植每个 `asgk` 函数时，在函数上标注 `@cache(tier="S")` 之类装饰器，网关侧无需识别 URL 语义——**档位由调用方（asgk 库）声明**，网关只按声明的 TTL 执行。这比网关猜 URL 归类更可靠。具体分流机制见 §3.4.6。
+
+#### 3.4.6 流量分流机制（网关如何区分档位）
+
+五档分类解决「各档怎么缓存」，本节解决「网关怎么知道一个请求属于哪档」。
+
+**问题**：网关收到的只是 `GET /?u=https://push2.eastmoney.com/api/qt/stock/get&secid=1.600519`——无语义。而 ref 实测发现**同域名甚至同 path 跨档位**：
+
+```
+push2.eastmoney.com/api/qt/stock/get           → 五档盘口 (R)
+push2.eastmoney.com/api/qt/stock/fflow/kline/get → 分钟资金流 (R)
+push2.eastmoney.com/api/qt/clist/get           → 行业排名 (R→S 双态)
+push2.eastmoney.com/api/qt/slist/get           → 板块归属 (S)
+```
+
+同一个 `push2.eastmoney.com` 域名混了 R 和 S；`clist/get` 自身还是 R→S 双态（参数不同语义不同）。故**靠域名或 URL path 分流档位不可行**。
+
+**方案：调用方显式声明（请求头）+ 网关兜底规则**。
+
+前提已验证：ref 中**所有东财请求都走 `em_get()`，零绕过**（19 处调用，0 处直连）。故只需让 `em_get` 携带档位，所有风控源流量都能被正确分流。
+
+**主路径——请求头声明**：给 `em_get` 增加可选 `tier` 参数，转发到网关时带 HTTP 头：
+
+```python
+# asgk/em_proxy.py
+_TIER_HEADER = "X-Cache-Tier"
+def em_get(url, params=None, headers=None, timeout=15, tier=None, **kw):
+    gw = os.environ.get("ASGK_GW")
+    h = dict(headers or {})
+    if tier:                                   # 调用方声明档位
+        h[_TIER_HEADER] = tier
+    if gw:
+        return requests.get(gw, params={"u": url, **(params or {})}, headers=h, timeout=timeout)
+    return requests.get(url, params=params, headers=h, timeout=timeout, **kw)
+
+# asgk 库各函数在调用时声明(由 @cache 装饰器注入):
+def eastmoney_concept_blocks(code):
+    return em_get(SLIST_URL, params=..., tier="S")     # 板块归属→S档
+def eastmoney_fund_flow_minute(code):
+    return em_get(FFLOW_URL, params=..., tier="R")     # 分钟资金流→R档
+```
+
+网关收到请求：读 `X-Cache-Tier` 头 → 查该档 TTL → 执行缓存/限流。头不存在或非法时走兜底。
+
+**兜底——网关默认规则**（给未声明 tier 的裸请求，如调试用的 curl、第三方直连）：
+
+按域名组 + path 模糊匹配给默认档位，配在 `sgw_config.toml`：
+
+```toml
+[fallback]
+# 默认安全档:未声明的请求一律按 R(no-cache)处理——宁可低命中,不可返回脏数据
+default_tier = "R"
+
+# 可显式覆盖的 path 规则(精确档位已由 em_get 声明,这里只兜底裸请求)
+[[fallback.rules]]
+path_contains = "/report/list"        # 研报
+tier = "P"
+[[fallback.rules]]
+path_contains = "/api/qt/stock/fflow/daykline"  # 日级资金流
+tier = "S"
+```
+
+兜底规则保守：未识别的默认 `R`（no-cache）——缓存宁缺毋滥，避免把实时数据当静态缓存导致脏读。
+
+**两层为何这样分工**：
+- 主路径（请求头）：精确，随 asgk 函数语义走，东财改 path 不影响（档位跟函数绑定不跟 URL 绑定）。
+- 兜底（path 规则）：只为非 asgk 入口（curl/第三方）兜底，覆盖不到也没大碍（默认 R 安全）。
+
+**分流与限流的关系**：限流（§3.3）按**域名组**（东财组/同花顺组），与档位正交——无论 R 还是 S，只要是东财域名就进东财组令牌桶。分流（档位）只决定**缓存策略**，不影响**限流分组**。
 
 ### 3.5 retry / 降级
 - 429/5xx：指数退避重试（对齐上游 Retry 配置）。
