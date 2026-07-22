@@ -84,7 +84,7 @@ diff <(git -C ref/a-stock-data show 9ed665c:SKILL.md) ref/a-stock-data/SKILL.md 
 - [ ] 新增端点：加 asgk 函数 + @source 声明 + reference 条目 + SKILL.md 路由表
 - [ ] 接口参数变更：更新 asgk 函数，smoke test 验证
 - [ ] reportName/字段变更：参考"已校正"表，确认是否再失效
-- [ ] 新增数据源域名：加到 `sgw/sgw/config.toml` 对应限流组
+- [ ] 新增数据源域名：加到 `packages/sgw/sgw/config.toml` 对应限流组
 - [ ] 上游版本号：更新本文件"基本信息"的 hash + 版本 + 日期
 
 ## 不同步的内容

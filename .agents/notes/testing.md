@@ -22,7 +22,7 @@ uv run python -c "from sgw.proxy import Gateway, load_config, DEFAULT_CONFIG; g=
 ### A2. 启动网关（终端 A）
 
 ```bash
-cd skills/a-stock-data/scripts
+cd packages/sgw
 uv run sgw-proxy --port 7700
 ```
 ✅ `[sgw_proxy] listening on 127.0.0.1:7700`
@@ -151,7 +151,7 @@ pi --provider ark-coding --model ark-coding/ark-code-latest \
 ```bash
 rm -rf ~/Documents/trader-skills/.agents/temp/pi-agent-work
 rm -f ~/Documents/trader-skills/skills/a-stock-data/scripts/query_*.py
-rm -rf ~/Documents/trader-skills/skills/a-stock-data/scripts/sgw/sgw/logs   # 测试产生的指纹日志
+rm -rf ~/Documents/trader-skills/packages/sgw/sgw/logs   # 测试产生的指纹日志
 pkill -f sgw-proxy 2>/dev/null; pgrep -af sgw-proxy || echo "无残留 ✓"
 ```
 
@@ -214,7 +214,7 @@ curl -s http://127.0.0.1:7700/__stats | python3 -c "import sys,json;d=json.load(
 
 ```bash
 rm -rf ~/Documents/trader-skills/.agents/temp/locust
-rm -rf ~/Documents/trader-skills/skills/a-stock-data/scripts/sgw/sgw/logs
+rm -rf ~/Documents/trader-skills/packages/sgw/sgw/logs
 pkill -f sgw-proxy 2>/dev/null
 ```
 

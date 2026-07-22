@@ -27,11 +27,13 @@ trader-skills/
 │   ├── notes/           知识方法总结：已确立的方法/规范/设计
 │   ├── todo/            待办：未完成、可独立认领的事项（每项一个 .md）
 │   └── temp/            临时：草稿/调研笔记/一次性分析
+├── packages/            跨 skill 共享的基础设施包（uv workspace）
+│   └── sgw/             流量网关（服务所有 skill 的风控源限流+缓存）
 ├── skills/              所有直接可用的 skill（最终产物）
 │   └── <skill-name>/
 │       ├── SKILL.md     路由层（精简，<300 行）
 │       ├── references/  按需加载的领域细节（分层/分源）
-│       ├── scripts/     可直接调用的共享代码
+│       ├── scripts/     该 skill 专属的共享代码（uv workspace）
 │       └── assets/      模板、配置等静态资源
 └── ref/                 submodule，参考实现，**拒绝从零开始**
     └── a-stock-data/    A股数据上游参考（见 §6）
