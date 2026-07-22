@@ -76,11 +76,11 @@ ln -sfn $(pwd)/skills/a-stock-data ~/.pi/skills/a-stock-data
 
 ### 网关就绪
 
-L1/L2 都依赖 `gateway-mvp.md` 的网关在跑：
+L1/L2 都依赖网关在跑（`sgw` 包，见 `gateway-design.md`）：
 
 ```bash
-python skills/a-stock-data/scripts/sgw_proxy.py   # 监听 localhost:7700
-export ASGK_GW=http://localhost:7700              # agent/asgk 读此变量
+cd skills/a-stock-data/scripts && uv run sgw-proxy   # 监听 localhost:7700
+export ASGK_GW=http://localhost:7700                  # agent/asgk 读此变量
 ```
 
 ## 三、L1 端到端测试流程（pi）
@@ -223,7 +223,7 @@ locust -f tests/locust_sgw.py --headless -u 1000 -r 50 --run-time 5m \
 
 ## 五、阈值校准产出
 
-测试后回填 `sgw_config.toml`：
+测试后回填 `sgw/sgw/config.toml`（网关配置）：
 
 - 东财组全局 RPS 上限（从 L2 找到不封 IP 的安全值，对齐上游 `EM_MIN_INTERVAL=1.0`）。
 - 同花顺组、财联社组各自的独立阈值。

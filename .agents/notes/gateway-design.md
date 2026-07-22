@@ -316,20 +316,28 @@ def em_get(url, params=None, headers=None, timeout=15, **kw):
 未配 `ASGK_GW` 时行为与上游一致（直连；上游已有的进程内限流保留作 fallback）。
 
 ### 4.4 CLI 安装
-`pyproject.toml` 注册 entry point：`sgw-proxy = "sgw_proxy:main"`（网关启动）、`asgk = "asgk.cli:main"`（CLI，P1 填充）。项目用 uv 管理，`uv run sgw-proxy` / `uv run asgk ...` 即可调用，无需手动 `pip install`。
+两个独立包各自的 pyproject 注册 entry point：`sgw-proxy = "sgw.proxy:main"`（网关，sgw 包）、`asgk = "asgk.cli:main"`（CLI，asgk 包，P1 填充）。项目用 uv workspace 管理，`uv run sgw-proxy` / `uv run asgk ...` 即可调用，无需手动 `pip install`。两个包可分别部署（装网关的机器不必装 asgk）。
 
 ## 五、产物文件结构
 
+网关与业务库是两个独立包（uv workspace），部署单元分离：
+
 ```
 skills/a-stock-data/scripts/
-├── asgk/
-│   ├── __init__.py            # 暴露 em_get, quote, ...
-│   ├── em_proxy.py            # em_get（网关/直连自适应）
-│   ├── client.py              # mootdx TCP（直连，不经网关）
-│   ├── quote.py / reports.py / ...   # 各层取数（P1 移植）
-│   └── cli.py                 # asgk CLI entry point
-├── sgw_proxy.py               # 网关进程
-└── sgw_config.toml            # 限流组/缓存TTL配置
+├── pyproject.toml              workspace 根（协调两子包，不含代码）
+├── sgw/                        网关包（独立部署的基础设施）
+│   ├── pyproject.toml          name="sgw", entry: sgw-proxy
+│   └── sgw/
+│       ├── proxy.py            网关进程（原 sgw_proxy.py）
+│       └── config.toml         限流组/缓存TTL配置（原 sgw_config.toml）
+└── asgk/                       业务库包（每 agent 用）
+    ├── pyproject.toml          name="asgk", entry: asgk(P1后期)
+    └── asgk/
+        ├── __init__.py         暴露 em_get, eastmoney_reports, ...
+        ├── em_proxy.py         em_get（网关/直连自适应）
+        ├── _contract.py        @source 装饰器
+        ├── reports.py / ...    各层取数（P1 移植）
+        └── cli.py              asgk CLI entry point（P1 后期）
 ```
 
 ## 六、技术选型理由
