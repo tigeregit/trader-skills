@@ -107,7 +107,11 @@ pi --provider ark-coding --model ark-coding/ark-code-latest \
 - token 消耗（对比上游全量载入 127KB 的基线，验证轴1拆分的 token 节省）。
 - 网关日志：该 session 触发了几次外网请求、几次缓存命中。
 
-> **实测基线（2026-07-22，ark-code-latest）**：连通预检通过；skill 自动触发；腾讯接口成功取回茅台实时数据（PE/PB/市值合理），证明 `provider 配置 + skill 软链 + 真实取数` 全链路打通。后续测试以此为干净基线。
+> **实测基线（2026-07-23，ark-code-latest，本项目产物）**：skill 软链指向 `skills/a-stock-data`（非 ref 蓝本）。
+> - **单 agent**：pi 正确触发 SKILL.md，按路由表选对函数（行情 `tencent_quote` 直连、研报 `eastmoney_reports` 经网关），写出并执行 asgk 代码，取回茅台真实数据（PE19.72/PB7.01/100篇研报）。网关侧确认东财请求 1 次、P 档缓存生效。**全链路打通 ✓**
+> - **3 agent 并发**（pi-parallel-agents）：3 任务并行查不同股票研报，均成功返回。但发现**网关未命中并发请求**（东财请求数未增）——排查为子 agent 未继承父进程 `ASGK_GW` 环境变量，走了直连。
+>
+> **⚠️ 部署发现**：`ASGK_GW` 环境变量必须确保对所有 agent 进程可见（写入 shell profile / systemd env / 容器 envfile），而非依赖父进程临时 export——pi-parallel-agents 的子 agent 不继承临时 export。这是多 agent 部署的必要配置。
 
 ### 3.2 并发 agent 压测（pi-parallel-agents）
 
