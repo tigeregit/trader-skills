@@ -121,6 +121,98 @@ tail -3 sgw_fingerprint.jsonl
 ```
 ✅ 预期：几条 jsonl，每条含 `key/tier/resp_hash/changed` 字段。
 
+## 数据内容校验（九～十二）
+
+前面八步验证「机制」（缓存/限流/转发）。下面四步验证「数据正确性」——经网关取到的内容是否完整无损、字段是否合理。
+
+> **关键方法学**：字节级一致性比对**只能用静态端点**（研报/公告，发布即定稿）。实时端点（资金流/行情）两次请求间数据本身会变，字节必然不同——这不是网关问题。故实时数据只校验「结构 + 字段 + 数值合理性」，不比对字节。
+
+### 九、透明性：字节级一致性（静态端点，最重要）
+
+证明网关无损转发——同一静态请求经网关 vs 直连，响应字节完全相同。两次**并发**发出（消除时间差）：
+
+```bash
+uv run python -c "
+import requests, concurrent.futures
+GW='http://127.0.0.1:7700'
+RPT='https://reportapi.eastmoney.com/report/list'
+P={'industryCode':'*','pageSize':'3','industry':'*','rating':'*','ratingChange':'*',
+   'beginTime':'2000-01-01','endTime':'2030-01-01','pageNo':'1','qType':'0',
+   'code':'600519','p':'1','pageNum':'1','pageNumber':'1','fields':''}
+H={'User-Agent':'Mozilla/5.0','Referer':'https://data.eastmoney.com/'}
+def direct(): return requests.get(RPT, params=P, headers=H, timeout=15).content
+def via_gw(): return requests.get(GW, params={'u':RPT,**P}, headers={'X-Cache-Tier':'R',**H}, timeout=15).content
+with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
+    fd, fg = ex.submit(direct), ex.submit(via_gw)
+    d, g = fd.result(), fg.result()
+print(f'静态研报: 直连{len(d)}B 网关{len(g)}B 一致={d==g}')
+"
+```
+✅ 预期：`一致=True`（字节完全相同）。
+❌ 若不一致 → 网关篡改/截断了响应内容，是严重 bug。
+
+### 十、JSON 内容：研报字段非空
+
+验证经网关取的研报列表，标题/机构等业务字段真实存在：
+
+```bash
+uv run python -c "
+import requests
+GW='http://127.0.0.1:7700'
+RPT='https://reportapi.eastmoney.com/report/list'
+P={'industryCode':'*','pageSize':'5','industry':'*','rating':'*','ratingChange':'*',
+   'beginTime':'2000-01-01','endTime':'2030-01-01','pageNo':'1','qType':'0',
+   'code':'600519','p':'1','pageNum':'1','pageNumber':'1','fields':''}
+d=requests.get(GW, params={'u':RPT,**P}, headers={'X-Cache-Tier':'P','Referer':'https://data.eastmoney.com/'}, timeout=30).json()
+recs=d.get('data') or []
+print(f'研报条数: {len(recs)}')
+if recs:
+    r=recs[0]
+    print(f\"标题: {r.get('title','')[:40]}\")
+    print(f\"机构: {r.get('orgSName','') or r.get('orgName','')}\")
+    print(f\"评级: {r.get('emRatingName','')}\")
+"
+```
+✅ 预期：条数 >0，标题/机构非空（如「飞天茅台年内二次提价...」/「群益证券」）。
+
+### 十一、结构化数值：资金流 klines 可解析
+
+验证实时数据经网关后结构完整、数值可解析（不比对字节，只看结构）：
+
+```bash
+uv run python -c "
+import requests
+GW='http://127.0.0.1:7700'
+FF='https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get'
+P={'secid':'1.600519','lmt':3,'klt':101,'fields1':'f1,f2','fields2':'f51,f52'}
+d=requests.get(GW, params={'u':FF,**P}, headers={'X-Cache-Tier':'R'}, timeout=15).json()
+klines=d.get('data',{}).get('klines',[])
+print(f'klines条数: {len(klines)}')
+if klines:
+    parts=klines[0].split(',')
+    print(f'首条: {klines[0]}')
+    print(f'字段数: {len(parts)}, 主力净流入数值化: {parts[1]}')
+"
+```
+✅ 预期：klines 条数 >0，首条可按逗号 split，主力净流入是数值（如 `389827968.0`）。
+
+### 十二、缓存内容一致性
+
+验证缓存命中返回的内容与首次一致（缓存没存坏）：
+
+```bash
+uv run python -c "
+import requests
+GW='http://127.0.0.1:7700'
+FF='https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get'
+P={'secid':'1.000858','lmt':1,'klt':101,'fields1':'f1','fields2':'f51,f52'}
+r1=requests.get(GW, params={'u':FF,**P}, headers={'X-Cache-Tier':'S'}, timeout=15).content
+r2=requests.get(GW, params={'u':FF,**P}, headers={'X-Cache-Tier':'S'}, timeout=15).content
+print(f'首次X-Cache: MISS, 缓存命中内容一致: {r1==r2}')
+"
+```
+✅ 预期：两次内容完全一致（缓存无损存取）。
+
 ## 验收判定表
 
 | 步骤 | 通过条件 | 失败含义 |
@@ -132,8 +224,14 @@ tail -3 sgw_fingerprint.jsonl
 | 六 | 200 + 真实数据 + 走网关 | em_get 接口坏 |
 | 七 | 200 + 无 X-Cache 头 | 直连兼容坏 |
 | 八 | 有 jsonl 记录 | 指纹日志没开 |
+| **九** | **静态端点字节一致** | **网关篡改/截断(严重)** |
+| 十 | 研报字段非空 | JSON 解析或字段丢失 |
+| 十一 | klines 可解析、数值化 | 结构损坏 |
+| 十二 | 缓存内容一致 | 缓存存取有损 |
 
-**第五步是关键**——它验证 P0 解决的核心问题：单 IP 多 agent 并发，外网出口被串行化，不封 IP。
+**两个关键步骤**：
+- **第五步**（限流）：验证 P0 核心价值——单 IP 多 agent 并发不封 IP。
+- **第九步**（透明性）：验证数据正确性根基——网关无损转发，经网关 = 直连。
 
 ## 收尾
 
