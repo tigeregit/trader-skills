@@ -1,0 +1,65 @@
+# sgw_proxy 配置：限流组 / 五档缓存 TTL / 兜底分流规则
+# 详见 .agents/notes/gateway-design.md
+
+[server]
+host = "127.0.0.1"
+port = 7700
+
+# ── 按域名组限流（§3.3）──────────────────────────────────────
+# 每组独立令牌桶：rps=每秒请求数，jitter=随机抖动区间(秒)
+# 全局串行：所有 agent 进程共享这一个网关出口，令牌桶在网关进程内
+[[group]]
+name = "eastmoney"
+domains = [
+    "push2.eastmoney.com", "push2his.eastmoney.com", "push2ex.eastmoney.com",
+    "data.eastmoney.com", "reportapi.eastmoney.com", "emappdata.eastmoney.com",
+    "kuaixun.eastmoney.com", "quote.eastmoney.com", "so.eastmoney.com",
+]
+rps = 1.0          # 对齐上游 EM_MIN_INTERVAL=1.0
+jitter = [0.1, 0.5]
+
+[[group]]
+name = "10jqka"
+domains = [
+    "basic.10jqka.com.cn", "data.10jqka.com.cn",
+    "zx.10jqka.com.cn", "dq.10jqka.com.cn",
+]
+rps = 1.5
+jitter = [0.1, 0.4]
+
+# ── 五档缓存 TTL（§3.4.2）───────────────────────────────────
+# 档位由 asgk 库用 X-Cache-Tier 头声明（§3.4.6 先验方案）
+[cache]
+P_ttl = 2592000           # 30天：研报/公告/分红/F10/互动易（发布即定稿）
+L_ttl = 86400             # 1天：季报快照/财报三表/股东户数（季度更新）
+# S 档分时段（§3.4.3）：盘中不缓存避免脏数据，盘后定稿缓存12h
+S_ttl_session = 0         # 盘中(09:00-18:00)：no-cache
+S_ttl_afterclose = 43200  # 盘后(18:00-次日09:00)：12h
+R_ttl = 0                 # 实时：no-cache
+N_ttl = 0                 # 流式新闻：no-cache
+
+# 交易时段简化判断（MVP）：工作日 09:00-18:00 视为盘中
+# P4 实测时校准为真实交易日历
+[cache.session]
+intraday_start = "09:00"
+intraday_end = "18:00"
+
+# ── 兜底分流规则（§3.4.6）───────────────────────────────────
+# 未声明 X-Cache-Tier 的裸请求（curl/第三方直连）走这里
+[fallback]
+default_tier = "R"        # 未识别一律 R（no-cache）：宁缺毋滥，避免脏读
+
+[[fallback.rules]]
+path_contains = "/report/list"
+tier = "P"
+
+[[fallback.rules]]
+path_contains = "/api/qt/stock/fflow/daykline"
+tier = "S"
+
+# ── 响应指纹日志（§3.4.7 离线修正）──────────────────────────
+[fingerprint]
+enabled = true
+log_path = "sgw_fingerprint.jsonl"
+# 哈希前剔除的动态字段（这些每次都变，会污染变更检测）
+strip_fields = ["req_trace", "servertime", "server_time", "request_id", "trace_id"]
