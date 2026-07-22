@@ -14,3 +14,13 @@ skills/a-stock-data/scripts/sgw_fingerprint.jsonl
 # OS
 .DS_Store
 skills/a-stock-data/scripts/dist/
+
+.env
+*/.env
+sgw_fingerprint.jsonl
+*/sgw_fingerprint.jsonl
+
+
+temp/
+temp*
+skills/a-stock-data/scripts/sgw/sgw/logs/

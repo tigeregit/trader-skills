@@ -104,8 +104,9 @@ class Cache:
 
 # ── 网关主体 ──────────────────────────────────────────────────
 class Gateway:
-    def __init__(self, config: dict):
+    def __init__(self, config: dict, fp_dir_override: str | None = None):
         self.cfg = config
+        self._fp_dir_override = fp_dir_override
         # 域名 → 组名
         self.domain_group: dict[str, str] = {}
         self.buckets: dict[str, TokenBucket] = {}
@@ -123,7 +124,10 @@ class Gateway:
         fp = config.get("fingerprint", {})
         self.fp_enabled = fp.get("enabled", False)
         self.fp_strip = set(fp.get("strip_fields", []))
-        self.fp_path = HERE / fp.get("log_path", "sgw_fingerprint.jsonl") if self.fp_enabled else None
+        # 日志目录：--fp-dir > config log_dir > 默认 包目录/logs
+        self.fp_dir = Path(self._fp_dir_override or fp.get("log_dir", "logs"))
+        if not self.fp_dir.is_absolute():
+            self.fp_dir = HERE / self.fp_dir
         self.fp_last_hash: dict[str, str] = {}  # key → 上次 resp_hash
         self.fp_lock = threading.Lock()
 
@@ -180,7 +184,7 @@ class Gateway:
         return hashlib.md5(body).hexdigest()
 
     def _log_fingerprint(self, key: str, tier: str, body: bytes, session: str):
-        if not self.fp_enabled or not self.fp_path:
+        if not self.fp_enabled or not self.fp_dir:
             return
         h = self._resp_fingerprint(body)
         with self.fp_lock:
@@ -192,7 +196,10 @@ class Gateway:
             "key": key, "tier": tier, "session": session,
             "resp_hash": h[:12], "changed": changed,
         }
-        with open(self.fp_path, "a", encoding="utf-8") as f:
+        # 按天拆分：sgw_fp_YYYYMMDD.jsonl，避免超大文件
+        self.fp_dir.mkdir(parents=True, exist_ok=True)
+        fp_file = self.fp_dir / f"sgw_fp_{datetime.now().strftime('%Y%m%d')}.jsonl"
+        with open(fp_file, "a", encoding="utf-8") as f:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     # ── 核心请求处理 ──
@@ -315,17 +322,19 @@ def main():
     ap.add_argument("-c", "--config", default=str(DEFAULT_CONFIG))
     ap.add_argument("--host", default=None)
     ap.add_argument("--port", type=int, default=None)
+    ap.add_argument("--fp-dir", default=None,
+                    help="指纹日志目录（生产环境必须指定，如 /var/log/sgw）")
     args = ap.parse_args()
 
     cfg = load_config(Path(args.config))
     host = args.host or cfg["server"]["host"]
     port = args.port or cfg["server"]["port"]
 
-    gateway = Gateway(cfg)
+    gateway = Gateway(cfg, fp_dir_override=args.fp_dir)
     server = ThreadingHTTPServer((host, port), make_handler(gateway))
     print(f"[sgw_proxy] listening on {host}:{port}", flush=True)
     print(f"[sgw_proxy] groups: {list(gateway.buckets)}", flush=True)
-    print(f"[sgw_proxy] fingerprint log: {gateway.fp_path}", flush=True)
+    print(f"[sgw_proxy] fingerprint log: {gateway.fp_dir}", flush=True)
     try:
         server.serve_forever()
     except KeyboardInterrupt:

@@ -151,7 +151,7 @@ pi --provider ark-coding --model ark-coding/ark-code-latest \
 ```bash
 rm -rf ~/Documents/trader-skills/.agents/temp/pi-agent-work
 rm -f ~/Documents/trader-skills/skills/a-stock-data/scripts/query_*.py
-rm -f ~/Documents/trader-skills/skills/a-stock-data/scripts/sgw/sgw/sgw_fingerprint.jsonl
+rm -rf ~/Documents/trader-skills/skills/a-stock-data/scripts/sgw/sgw/logs   # 测试产生的指纹日志
 pkill -f sgw-proxy 2>/dev/null; pgrep -af sgw-proxy || echo "无残留 ✓"
 ```
 

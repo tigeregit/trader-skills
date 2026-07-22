@@ -61,6 +61,8 @@ tier = "S"
 # ── 响应指纹日志（§3.4.7 离线修正）──────────────────────────
 [fingerprint]
 enabled = true
-log_path = "sgw_fingerprint.jsonl"
+# 日志目录：生产环境必须指定（如 /var/log/sgw）；默认在网关包目录下
+# 文件按天自动拆分：sgw_fp_YYYYMMDD.jsonl，避免超大文件
+log_dir = "logs"
 # 哈希前剔除的动态字段（这些每次都变，会污染变更检测）
 strip_fields = ["req_trace", "servertime", "server_time", "request_id", "trace_id"]

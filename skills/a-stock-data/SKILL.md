@@ -55,6 +55,8 @@ v = full_valuation('600519')             # 完整估值
 ```bash
 # 1. 启网关（东财/同花顺限流+缓存）
 cd skills/a-stock-data/scripts && uv run sgw-proxy
+#   生产环境指定指纹日志目录（按天自动拆分 sgw_fp_YYYYMMDD.jsonl）：
+#   uv run sgw-proxy --fp-dir /var/log/sgw
 
 # 2. 配置 ASGK_GW（二选一）
 #    方式A（推荐，多 agent 部署）：环境变量（systemd/container envfile）
