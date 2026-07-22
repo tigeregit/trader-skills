@@ -1,0 +1,92 @@
+---
+name: a-stock-data
+description: 当任务需要获取A股真实数据时使用——行情(K线/五档/PE/PB/市值)、研报(评级/一致预期EPS)、信号(热点/北向/龙虎榜/解禁/行业)、资金面(融资融券/大宗/股东户数/分红/资金流)、新闻(财联社电报/全球资讯)、财务三表/F10、公告、打板(涨停池/炸板率)、ETF期权(希腊字母/IV)、舆情(互动易/热榜)等。提供 Python 库(asgk) + CLI + 共享流量网关，支持单 IP 下多 agent 并发。仅在需要取数时使用，概念讨论/投资观点无需加载。
+---
+
+# A股数据 skill
+
+本项目提供 A 股取数能力，**不定义交易策略**。所有东财/同花顺请求经共享网关（全局限流+缓存），腾讯/百度/新浪/mootdx 直连。
+
+## 快速决策：要什么数据？
+
+| 需求 | 函数 | 参考 |
+|------|------|------|
+| 实时价/PE/PB/市值 | `tencent_quote` | [layer1-quote](references/layer1-quote.md) |
+| 日K线(带均线) | `baidu_kline_with_ma` | layer1 |
+| 五档盘口/逐笔 | `mootdx_quotes`/`mootdx_transaction` | layer1 |
+| 研报/评级 | `eastmoney_reports` | [layer2-report](references/layer2-report.md) |
+| 一致预期EPS | `ths_eps_forecast` | layer2 |
+| 当日强势股/题材 | `ths_hot_reason` | [layer3-signal](references/layer3-signal.md) |
+| 个股板块归属 | `eastmoney_concept_blocks` | layer3 |
+| 龙虎榜 | `dragon_tiger_board`/`daily_dragon_tiger` | layer3 |
+| 行业排名 | `industry_comparison` | layer3 |
+| 融资融券/大宗 | `margin_trading`/`block_trade` | [layer4-capital](references/layer4-capital.md) |
+| 股东户数/分红 | `holder_num_change`/`dividend_history` | layer4 |
+| 资金流 | `stock_fund_flow_120d` | layer4 |
+| 财联社电报/新闻 | `cls_telegraph`/`eastmoney_stock_news` | [layer5-news](references/layer5-news.md) |
+| 财务三表 | `sina_financial_report` | [layer6-base](references/layer6-base.md) |
+| F10/股本/上市日 | `mootdx_f10`/`eastmoney_stock_info` | layer6 |
+| 公告 | `cninfo_announcements` | [layer7-announce](references/layer7-announce.md) |
+| 涨停池/炸板率 | `em_zt_pool`/`limit_up_sentiment` | [layer8-limitup](references/layer8-limitup.md) |
+| ETF期权/希腊字母 | `sina_option_greeks` | [layer9-option](references/layer9-option.md) |
+| 互动易/热榜 | `cninfo_irm`/`ths_hot_list` | [layer10-sentiment](references/layer10-sentiment.md) |
+| 估值(PE/PEG) | `full_valuation`/`calc_peg` | [valuation](references/valuation.md) |
+
+**需要某层详细字段/示例时，读对应 reference 文件（按需加载，不必全读）。**
+
+## 使用方式
+
+### Python 库
+
+```python
+from asgk import tencent_quote, eastmoney_reports, full_valuation
+
+q = tencent_quote(["600519"])          # PE/PB/市值
+reports = eastmoney_reports("600519")   # 研报
+v = full_valuation("600519")            # 完整估值
+```
+
+### 环境配置
+
+```bash
+# 1. 启网关（东财/同花顺限流+缓存）
+cd skills/a-stock-data/scripts && uv run sgw-proxy
+
+# 2. agent 侧设环境变量（让 asgk 走网关）
+export ASGK_GW=http://localhost:7700
+
+# 3. 未设 ASGK_GW 则直连（向后兼容，单 agent 可用）
+```
+
+## 数据源优先级 & 网关
+
+- **不封 IP 的源直连**：腾讯/百度/新浪/mootdx（TCP），不经网关。
+- **有风控的源经网关**：东财(12子域)/同花顺(4子域)，全局限流 ≤1 req/s + 缓存。
+- 网关是 100~1000 agent 并发的核心设施（单 IP 不封）。
+- 主源被封的降级策略见 [failover](references/failover.md)。
+
+## 缓存档位（由 @source 声明）
+
+| 档 | TTL | 数据类型 |
+|----|-----|---------|
+| P | 30天 | 研报/公告/分红/F10（发布即定稿） |
+| L | 1天 | 财报三表/股东户数（季度） |
+| S | 盘后12h/盘中0 | 龙虎榜/融资融券/板块（日级定稿） |
+| R | no-cache | 行情/K线/资金流（实时） |
+| N | no-cache | 新闻电报（流式） |
+
+详细缓存/分档机制见 `.agents/notes/gateway-design.md`。
+
+## 安装
+
+```bash
+cd skills/a-stock-data/scripts
+uv sync          # 安装 sgw + asgk 两个包
+uv run sgw-proxy # 启网关
+```
+
+## 已知限制
+
+- `mootdx_bars` 在 mootdx 0.11.7 返回空（日K用百度K线替代）。
+- mootdx 需国内网络（TCP 7709 海外超时）。
+- 北向深股通(sgt)自2024-08披露收紧，仅参考。

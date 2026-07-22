@@ -1,0 +1,37 @@
+# 资金面 / 筹码层（融资融券 / 大宗 / 股东户数 / 分红 / 资金流）
+
+资金与筹码数据，全部东财 datacenter 经网关。
+
+## 函数速查
+
+| 函数 | 数据 | 源 | 档位 |
+|------|------|----|----|
+| `margin_trading(code)` | 融资融券明细(日级) | 东财datacenter | S |
+| `block_trade(code)` | 大宗交易 | 东财datacenter | S |
+| `holder_num_change(code)` | 股东户数变化(季度) | 东财datacenter | L |
+| `dividend_history(code)` | 分红送转历史 | 东财datacenter | P |
+| `stock_fund_flow_120d(code)` | 个股资金流(120日) | 东财push2his | S |
+
+## 调用示例
+
+```python
+from asgk import margin_trading, stock_fund_flow_120d, holder_num_change
+
+# 融资融券
+mt = margin_trading("600519", page_size=5)
+print(f"融资余额:{mt[0]['rzye']/1e8:.1f}亿")
+
+# 股东户数（筹码集中度信号）
+hn = holder_num_change("600519", page_size=3)
+print(f"股东数:{hn[0]['holder_num']} 环比:{hn[0]['change_ratio']}%")
+# 户数持续减少 = 筹码集中 = 主力吸筹
+
+# 120日资金流
+ff = stock_fund_flow_120d("600519")
+print(f"近20日主力累计:{sum(d['main_net'] for d in ff[-20:])/1e8:.2f}亿")
+```
+
+## 注意
+- 资金流金额单位是**元**（非万元），注意换算。
+- `holder_num_change` 的 reportName 已校正为 `RPT_F10_EH_HOLDERNUM`（ref 原值失效）。
+- 融资融券/大宗是日级盘后定稿（S档），盘中查返回昨日数据。

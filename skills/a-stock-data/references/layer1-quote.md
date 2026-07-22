@@ -1,0 +1,34 @@
+# 行情层（K线 / 五档盘口 / 逐笔 / PE-PB-市值）
+
+实时行情数据，全部**直连不经网关**（腾讯/百度/mootdx 均不封 IP）。
+
+## 函数速查
+
+| 函数 | 数据 | 源 | 档位 |
+|------|------|----|----|
+| `tencent_quote(codes)` | PE/PB/市值/换手/涨跌停 | 腾讯(GBK) | R |
+| `baidu_kline_with_ma(code)` | 日K带MA5/10/20 | 百度 | R |
+| `mootdx_bars(code, frequency, offset)` | K线(多周期,不复权) | 通达信TCP | R |
+| `mootdx_quotes(codes)` | 五档盘口(46字段) | 通达信TCP | R |
+| `mootdx_transaction(code, date)` | 逐笔成交 | 通达信TCP | R |
+
+## 调用示例
+
+```python
+from asgk import tencent_quote, baidu_kline_with_ma
+
+# PE/PB/市值（最常用）
+q = tencent_quote(["600519"])
+print(q["600519"])  # {name, price, pe_ttm, pb, mcap_yi(亿), turnover_pct, limit_up, ...}
+
+# 带均线的日K（日K首选，mootdx_bars 有兼容问题）
+bk = baidu_kline_with_ma("600519")
+print(bk["keys"])   # [time, open, close, high, low, volume, ma5avgprice, ...]
+print(bk["rows"][-5:])  # 最近5根
+```
+
+## 注意
+- **mootdx_bars**：mootdx 0.11.7 实测返回 0 条（库兼容性问题）。日K用 `baidu_kline_with_ma` 替代。
+- **tencent_quote 字段索引**：PE(TTM)=索引39，PB=索引46（非43，43是振幅%），总市值(亿)=44。
+- mootdx 数据**不复权**，跨除权日需自行复权。
+- mootdx 需国内网络（TCP 7709），海外超时。
