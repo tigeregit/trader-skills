@@ -29,7 +29,7 @@ from urllib.parse import urlparse, parse_qs
 import requests
 
 HERE = Path(__file__).resolve().parent
-DEFAULT_CONFIG = HERE / "sgw_config.toml"
+DEFAULT_CONFIG = HERE / "config.toml"
 
 # 东财/同花顺等风控源走网关；其余(腾讯/百度/新浪/mootdx-TCP)直连不经网关
 PROXIED_DOMAIN_SUFFIXES = (".eastmoney.com", ".10jqka.com.cn")
