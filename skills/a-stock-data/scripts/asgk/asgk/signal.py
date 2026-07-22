@@ -10,27 +10,10 @@ from __future__ import annotations
 from datetime import datetime, timedelta
 
 from asgk._contract import source
+from asgk._datacenter import datacenter as _datacenter
 from asgk.em_proxy import em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
-DATACENTER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-
-
-# ── 东财数据中心共用 helper（龙虎榜/解禁/融资融券等共用，内部函数）──
-def _datacenter(report_name: str, filter_str: str = "", page_size: int = 50,
-                sort_columns: str = "", sort_types: str = "-1", tier: str = "S") -> list[dict]:
-    """东财数据中心统一查询（经网关，已内置限流）。"""
-    params = {
-        "reportName": report_name, "columns": "ALL",
-        "filter": filter_str, "pageNumber": "1", "pageSize": str(page_size),
-        "sortColumns": sort_columns, "sortTypes": sort_types,
-        "source": "WEB", "client": "WEB",
-    }
-    r = em_get(DATACENTER_URL, params=params, timeout=15, tier=tier)
-    d = r.json()
-    if d.get("result") and d["result"].get("data"):
-        return d["result"]["data"]
-    return []
 
 
 # ── 3.1 同花顺热点 ──────────────────────────────────────────────

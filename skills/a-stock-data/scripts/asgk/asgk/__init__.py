@@ -9,6 +9,10 @@ from asgk.signal import (
     eastmoney_fund_flow_minute, dragon_tiger_board, lockup_expiry,
     industry_comparison, daily_dragon_tiger,
 )
+from asgk.capital import (
+    margin_trading, block_trade, holder_num_change,
+    dividend_history, stock_fund_flow_120d,
+)
 
 __all__ = [
     "em_get",
@@ -16,4 +20,6 @@ __all__ = [
     "ths_hot_reason", "hsgt_realtime", "eastmoney_concept_blocks",
     "eastmoney_fund_flow_minute", "dragon_tiger_board", "lockup_expiry",
     "industry_comparison", "daily_dragon_tiger",
+    "margin_trading", "block_trade", "holder_num_change",
+    "dividend_history", "stock_fund_flow_120d",
 ]
