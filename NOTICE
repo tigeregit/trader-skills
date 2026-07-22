@@ -1,0 +1,26 @@
+NOTICE
+
+trader-skills
+Copyright (c) 2026 trader-skills contributors
+
+This product includes software derived from:
+
+  a-stock-data
+  Copyright (c) Simon 林 (simonlin1212)
+  Licensed under the Apache License, Version 2.0
+  https://github.com/simonlin1212/a-stock-data
+
+The asgk library (skills/a-stock-data/scripts/asgk/) is a modified and
+restructured derivative of the a-stock-data SKILL.md embedded code.
+Significant changes include:
+
+  - Refactored from single-file markdown to modular Python package
+  - Added shared traffic gateway (sgw) for multi-agent concurrency
+  - Added five-tier caching and rate limiting
+  - Changed return types from DataFrame to list[dict]
+  - Corrected upstream endpoint issues (see .agents/notes/sync-with-ref.md)
+
+The original Apache 2.0 license and copyright notice are retained for
+these derivative portions, as required by Section 4 of the Apache 2.0
+license. The modifications and additions are licensed under the
+PolyForm Noncommercial License 1.0.0 (see LICENSE).

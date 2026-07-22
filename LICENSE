@@ -1,0 +1,89 @@
+PolyForm Noncommercial License 1.0.0
+
+<https://polyformproject.org/licenses/noncommercial/1.0.0>
+
+Copyright (c) 2026 trader-skills contributors
+
+This is human-readable summary of (and not a substitute for) the license.
+
+## You Can:
+
+- Use, copy, modify this software and its source code
+- Distribute copies
+- Sublicense (under terms compatible with this license)
+
+## You Cannot:
+
+- **Use this software commercially** — no use for commercial gain or
+  in a commercial context. Personal, research, educational, and
+  non-profit use is fine.
+
+## You Must:
+
+- Include this license and copyright notice in all copies
+- State significant changes made to the software
+
+---
+
+# Full Text
+
+## 1. Purpose
+
+This license allows use, modification, and distribution of this software
+for any noncommercial purpose. Commercial use is not permitted.
+
+## 2. Definitions
+
+**"Software"** means the contents of this repository, including source
+code, documentation, and configuration files.
+
+**"Licensor"** means the copyright holder granting this license.
+
+**"You"** means the individual or entity exercising permissions under
+this license.
+
+**"Commercial Use"** means any use of the Software primarily intended
+for or directed toward commercial advantage or monetary compensation.
+This includes selling the Software, using it to provide paid services,
+or using it internally in a business in a way that provides commercial
+advantage.
+
+## 3. Grant of License
+
+Subject to the terms and conditions of this license, Licensor grants You
+a worldwide, royalty-free, non-exclusive license to:
+
+1. Use, copy, and modify the Software, in source or object form, for any
+   noncommercial purpose.
+2. Distribute copies of the Software or modified versions, provided that
+   each recipient receives this license and the copyright notice.
+
+## 4. Commercial Use Prohibited
+
+You may not use the Software, or any modified version of it, for any
+Commercial Use. Personal projects, academic research, education, and
+non-profit use are permitted.
+
+If you wish to use this software commercially, contact the Licensor to
+obtain a separate commercial license.
+
+## 5. Conditions
+
+You must:
+
+1. Retain the copyright notice and this license in all copies or
+   substantial portions of the Software.
+2. State clearly any significant modifications you have made.
+
+## 6. Disclaimer
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS
+OR IMPLIED. IN NO EVENT SHALL THE LICENSOR BE LIABLE FOR ANY CLAIM OR
+DAMAGES ARISING FROM THE USE OF THE SOFTWARE.
+
+## 7. Derivative Works
+
+This Software is derived from works licensed under the Apache License,
+Version 2.0 (see NOTICE). Those portions remain subject to their original
+license terms. This license applies to the modifications and additions
+made by the Licensor.
