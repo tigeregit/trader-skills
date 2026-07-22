@@ -11,25 +11,25 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 
 | 需求 | 函数 | 参考 |
 |------|------|------|
-| 实时价/PE/PB/市值 | `tencent_quote` | [layer1-quote](references/layer1-quote.md) |
-| 日K线(带均线) | `baidu_kline_with_ma` | layer1 |
-| 五档盘口/逐笔 | `mootdx_quotes`/`mootdx_transaction` | layer1 |
-| 研报/评级 | `eastmoney_reports` | [layer2-report](references/layer2-report.md) |
-| 一致预期EPS | `ths_eps_forecast` | layer2 |
-| 当日强势股/题材 | `ths_hot_reason` | [layer3-signal](references/layer3-signal.md) |
-| 个股板块归属 | `eastmoney_concept_blocks` | layer3 |
-| 龙虎榜 | `dragon_tiger_board`/`daily_dragon_tiger` | layer3 |
-| 行业排名 | `industry_comparison` | layer3 |
-| 融资融券/大宗 | `margin_trading`/`block_trade` | [layer4-capital](references/layer4-capital.md) |
-| 股东户数/分红 | `holder_num_change`/`dividend_history` | layer4 |
-| 资金流 | `stock_fund_flow_120d` | layer4 |
-| 财联社电报/新闻 | `cls_telegraph`/`eastmoney_stock_news` | [layer5-news](references/layer5-news.md) |
-| 财务三表 | `sina_financial_report` | [layer6-base](references/layer6-base.md) |
-| F10/股本/上市日 | `mootdx_f10`/`eastmoney_stock_info` | layer6 |
-| 公告 | `cninfo_announcements` | [layer7-announce](references/layer7-announce.md) |
-| 涨停池/炸板率 | `em_zt_pool`/`limit_up_sentiment` | [layer8-limitup](references/layer8-limitup.md) |
-| ETF期权/希腊字母 | `sina_option_greeks` | [layer9-option](references/layer9-option.md) |
-| 互动易/热榜 | `cninfo_irm`/`ths_hot_list` | [layer10-sentiment](references/layer10-sentiment.md) |
+| 实时价/PE/PB/市值 | `tencent_quote` | [quote](references/quote.md) |
+| 日K线(带均线) | `baidu_kline_with_ma` | quote |
+| 五档盘口/逐笔 | `mootdx_quotes`/`mootdx_transaction` | quote |
+| 研报/评级 | `eastmoney_reports` | [report](references/report.md) |
+| 一致预期EPS | `ths_eps_forecast` | report |
+| 当日强势股/题材 | `ths_hot_reason` | [signal](references/signal.md) |
+| 个股板块归属 | `eastmoney_concept_blocks` | signal |
+| 龙虎榜 | `dragon_tiger_board`/`daily_dragon_tiger` | signal |
+| 行业排名 | `industry_comparison` | signal |
+| 融资融券/大宗 | `margin_trading`/`block_trade` | [capital](references/capital.md) |
+| 股东户数/分红 | `holder_num_change`/`dividend_history` | capital |
+| 资金流 | `stock_fund_flow_120d` | capital |
+| 财联社电报/新闻 | `cls_telegraph`/`eastmoney_stock_news` | [news](references/news.md) |
+| 财务三表 | `sina_financial_report` | [base](references/base.md) |
+| F10/股本/上市日 | `mootdx_f10`/`eastmoney_stock_info` | base |
+| 公告 | `cninfo_announcements` | [announce](references/announce.md) |
+| 涨停池/炸板率 | `em_zt_pool`/`limit_up_sentiment` | [limitup](references/limitup.md) |
+| ETF期权/希腊字母 | `sina_option_greeks` | [option](references/option.md) |
+| 互动易/热榜 | `cninfo_irm`/`ths_hot_list` | [sentiment](references/sentiment.md) |
 | 估值(PE/PEG) | `full_valuation`/`calc_peg` | [valuation](references/valuation.md) |
 
 **需要某层详细字段/示例时，读对应 reference 文件（按需加载，不必全读）。**
