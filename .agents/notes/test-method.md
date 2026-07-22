@@ -28,20 +28,51 @@ npm i -g @earendil-works/pi@latest      # 或从源码 build
 pi extension add messense/pi-parallel-agents
 ```
 
-### 加载被测 skill
+### 配置模型 provider（实测：火山方舟 Coding Plan）
 
-将本项目 skill 软链/拷贝到 pi 的 skill 目录，使 pi 能发现：
+L1 测试需要 LLM 驱动 agent loop。实测可用：火山方舟 Coding Plan（套餐制、OpenAI 兼容）。
 
-```bash
-# 项目级（推荐，隔离）
-mkdir -p .pi/skills
-ln -s ../../skills/a-stock-data .pi/skills/a-stock-data
+在 `~/.pi/agent/models.json` 配置 provider（API Key 留空待填，或用 `$ENV_VAR` 引用环境变量）：
 
-# 或用户级（全局）
-ln -s ~/Documents/trader-skills/skills/a-stock-data ~/.pi/skills/a-stock-data
+```jsonc
+{
+  "providers": {
+    "ark-coding": {
+      "baseUrl": "https://ark.cn-beijing.volces.com/api/coding/v3",  // OpenAI 兼容入口（勿用 /api/v3，那个不走套餐额度）
+      "apiKey": "",                                                    // 填入 Coding Plan API Key
+      "authHeader": true,
+      "api": "openai-completions",
+      "models": [
+        { "id": "glm-5.2", "reasoning": true, "thinkingFormat": "zai", "contextWindow": 128000, "cost": {"input":0,"output":0,"cacheRead":0,"cacheWrite":0} },
+        { "id": "ark-code-latest", "reasoning": false, "contextWindow": 128000, "cost": {"input":0,"output":0,"cacheRead":0,"cacheWrite":0} }
+        // 其余模型（doubao-seed-2.0-code / deepseek-v4-pro / kimi-k2.7-code）按需追加
+      ]
+    }
+  }
+}
 ```
 
-确认发现：`pi skills list` 应列出 `a-stock-data`。
+要点（实测确认）：
+
+- `cost` 全 0：Coding Plan 是套餐制，不按 token 计费。
+- `ark-code-latest`：**控制台动态切换别名**——同一命令实际跑哪个底层模型取决于[开通管理页](https://console.volcengine.com/ark/region:ark+cn-beijing/openManagement)当前选择（或 Auto 自动调度）。这影响 L1 可复现性：如需固定模型做对比，用具体 model id（如 `glm-5.2`）而非 `ark-code-latest`。
+- `thinkingFormat: "zai"` 是 pi 内置的智谱 GLM thinking 协议；若 reasoning 模型响应异常可先去掉定位。
+
+### 加载被测 skill
+
+实测方式：把 skill 软链到 pi 的全局 skill 目录，使 pi 按 `name`+`description` 发现。**测试 ref 蓝本时**链 ref，**测试本项目产物时**链 skills：
+
+```bash
+mkdir -p ~/.pi/skills
+
+# 测试 ref 蓝本（当前阶段）
+ln -sfn $(pwd)/ref/a-stock-data ~/.pi/skills/a-stock-data
+
+# 测试本项目产物（P3 完成后）
+ln -sfn $(pwd)/skills/a-stock-data ~/.pi/skills/a-stock-data
+```
+
+确认发现：`ls ~/.pi/skills/` 应见 `a-stock-data`，且 `head ~/.pi/skills/a-stock-data/SKILL.md` 能读到 frontmatter。
 
 ### 网关就绪
 
@@ -56,16 +87,27 @@ export ASGK_GW=http://localhost:7700              # agent/asgk 读此变量
 
 ### 3.1 单 agent 正确性验证
 
-先用单 session 确认 skill 触发与流程正确，再上并发。
+**第一步：连通预检**（不依赖 skill，排除 provider 配置问题）：
 
 ```bash
-pi run -p "查一下 688017 的完整估值：行情、研报、资金面、PE消化时间"
+pi --provider ark-coding --model ark-coding/ark-code-latest --no-tools -p "请只回复四个字：连通测试"
+# 期望输出：连通测试
 ```
 
-检查 `.pi/sessions/<id>/`：
+**第二步：skill 触发 + 真实取数**（在项目目录下跑，pi 才有 bash 工具能执行取数代码；选零 key、不封 IP 的端点首测）：
+
+```bash
+pi --provider ark-coding --model ark-coding/ark-code-latest \
+   -p "用 a-stock-data skill 的腾讯财经接口，查贵州茅台(600519)实时行情：现价、PE、PB、总市值。实际写代码调接口取真实数据。"
+```
+
+检查 `.pi/sessions/<id>/`（或 stdout）：
 - skill 是否被触发（description 命中）。
+- 是否真实调外网（腾讯 `qt.gtimg.cn`）拿到数据，而非编造。
 - token 消耗（对比上游全量载入 127KB 的基线，验证轴1拆分的 token 节省）。
 - 网关日志：该 session 触发了几次外网请求、几次缓存命中。
+
+> **实测基线（2026-07-22，ark-code-latest）**：连通预检通过；skill 自动触发；腾讯接口成功取回茅台实时数据（PE/PB/市值合理），证明 `provider 配置 + skill 软链 + 真实取数` 全链路打通。后续测试以此为干净基线。
 
 ### 3.2 并发 agent 压测（pi-parallel-agents）
 
