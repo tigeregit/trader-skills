@@ -1,6 +1,6 @@
 # TODO: P1 scripts 共享库移植
 
-来源：docs/design.md 轴 3 / 落地路线 P1
+来源：notes/design.md 轴 3 / 落地路线 P1
 
 ## 背景
 

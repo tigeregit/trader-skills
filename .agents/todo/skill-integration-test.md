@@ -1,6 +1,6 @@
 # TODO: P4 集成实测与阈值校准
 
-来源：docs/design.md 落地路线 P4
+来源：notes/design.md 落地路线 P4
 
 ## 背景
 
@@ -8,7 +8,7 @@
 
 ## 待办
 
-用 `docs/test-method.md` 确立的测试流程，跑典型业务流程：
+用 `notes/test-method.md` 确立的测试流程，跑典型业务流程：
 
 - [ ] 流程 A：单票完整估值（行情 + 研报 + 信号 + 资金面 + 估值公式）。
 - [ ] 流程 B：批量估值对比（并发多票，压测网关）。
@@ -30,4 +30,4 @@
 ## 依赖
 
 - 依赖 `skill-router.md`（含其前置 P0-P2）全部完成。
-- 依赖 `pi-agent-test-method.md` 提供测试流程。
+- 依赖 `notes/test-method.md` 提供测试流程。

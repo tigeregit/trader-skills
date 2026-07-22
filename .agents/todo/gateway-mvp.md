@@ -1,6 +1,6 @@
 # TODO: P0 流量网关 MVP
 
-来源：docs/design.md 轴 2 / 落地路线 P0
+来源：notes/design.md 轴 2 / 落地路线 P0
 
 ## 背景
 
@@ -25,4 +25,4 @@
 ## 依赖
 
 - 无前置；这是后续所有改造的基础设施。
-- 完成后用 `docs/test-method.md` 的流程做并发压测校准阈值。
+- 完成后用 `notes/test-method.md` 的流程做并发压测校准阈值。

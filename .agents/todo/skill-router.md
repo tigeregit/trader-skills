@@ -1,6 +1,6 @@
 # TODO: P3 SKILL.md 路由层
 
-来源：docs/design.md 轴 1 / 落地路线 P3
+来源：notes/design.md 轴 1 / 落地路线 P3
 
 ## 背景
 

@@ -12,7 +12,7 @@
 
 本项目 skill 将在**相同 IP 下被 100～1000 个 agent 并发使用**。这是与普通单 agent skill 最大的差异，所有设计须服从这一约束：
 
-- **流量管控优先**：带风控的数据源（东财、同花顺等）一旦被多 agent 并发打，必然封 IP。所有此类请求**必须走共享流量网关**（见 `docs/design.md` 网关方案），agent 不得各自直连。
+- **流量管控优先**：带风控的数据源（东财、同花顺等）一旦被多 agent 并发打，必然封 IP。所有此类请求**必须走共享流量网关**（见 `.agents/notes/design.md` 网关方案），agent 不得各自直连。
 - **不封 IP 的源可直连**：通达信(mootdx TCP)/腾讯/百度等无 IP 风控的源保持直连，避免网关成为单点瓶颈。
 - **缓存优先**：同一只票的静态/低频数据（如 PE、股本、公告）多 agent 共享一个缓存层，命中即不打外网。
 - **代码复用**：数据获取逻辑沉淀为共享脚本库（`skills/<name>/scripts/`），agent 调用而非每次重新拼装脚本，降低 token 消耗与重复请求。
@@ -22,17 +22,19 @@
 ```
 trader-skills/
 ├── AGENTS.md            本文件：项目约定与 agent 行为规范
-├── .agents/
-│   └── todo/            待办事项（每项一个 .md，见 §7）
+├── .agents/             agent 协作文档库（见 §7，入口 .agents/README.md）
+│   ├── README.md        总入口：目录职责 + 维护规则 + 内容流转
+│   ├── notes/           知识方法总结：已确立的方法/规范/设计
+│   ├── todo/            待办：未完成、可独立认领的事项（每项一个 .md）
+│   └── temp/            临时：草稿/调研笔记/一次性分析
 ├── skills/              所有直接可用的 skill（最终产物）
 │   └── <skill-name>/
 │       ├── SKILL.md     路由层（精简，<300 行）
 │       ├── references/  按需加载的领域细节（分层/分源）
 │       ├── scripts/     可直接调用的共享代码
 │       └── assets/      模板、配置等静态资源
-├── ref/                 submodule，参考实现，**拒绝从零开始**
-│   └── a-stock-data/    A股数据上游参考（见 §6）
-└── docs/                设计文档、方案说明
+└── ref/                 submodule，参考实现，**拒绝从零开始**
+    └── a-stock-data/    A股数据上游参考（见 §6）
 ```
 
 - `skills/` 放**直接可用**的 skill，是交付物。
@@ -71,7 +73,7 @@ trader-skills/
 
 - `ref/a-stock-data`：A股全栈数据工具包（10 层 / 43 端点 / 15 数据源），作为 `skills/a-stock-data` 的**改造蓝本**。
   - 上游：https://github.com/simonlin1212/a-stock-data
-  - 它是**单 agent 单文件**形态（127KB SKILL.md 全量入上下文），需按 `docs/design.md` 三轴重构（拆分加载 / 流量网关 / 代码沉淀）转化为本项目形态。
+  - 它是**单 agent 单文件**形态（127KB SKILL.md 全量入上下文），需按 `.agents/notes/design.md` 三轴重构（拆分加载 / 流量网关 / 代码沉淀）转化为本项目形态。
 
 ## 7. TODO 管理
 
@@ -83,7 +85,7 @@ trader-skills/
 
 - 目录：`.agents/todo/<name>.md`，文件名 kebab-case、语义化。
 - 每个 TODO 文件 = 一个可独立认领、可独立交付的事项，须含：来源 / 背景 / 待办(checklist) / 验收标准 / 依赖。
-- **TODO 与正式文档分离**：待办是「尚未做的事」。一旦某待办产出了正式方法/规范/代码（如确立了测试方法），产物落到 `docs/`、`skills/` 等正式位置，该 TODO 文件从 todo 目录**删除**并在 README 清单移除——todo 目录只保留未完成项，不堆积历史。
+- **TODO 与正式文档分离**：待办是「尚未做的事」。一旦某待办产出了正式方法/规范/代码（如确立了测试方法），产物落到 `.agents/notes/`（文档）或 `skills/`（代码），该 TODO 文件从 todo 目录**删除**并在 README 清单移除——todo 目录只保留未完成项，不堆积历史。
 - 完整的文件内容约定、状态流转、归档规则见 `.agents/todo/README.md`。
 
 ### 正文中的引用
@@ -92,4 +94,4 @@ AGENTS.md / docs 中涉及待办的内容，用 `[TODO: <name>]` 标注并指向
 
 ### 测试方法
 
-测试方法见 `docs/test-method.md`（pi agent + 双层压测，正式文档）。相关待办 `.agents/todo/skill-integration-test.md` 按该方法执行。
+测试方法见 `.agents/notes/test-method.md`（pi agent + 双层压测，正式文档）。相关待办 `.agents/todo/skill-integration-test.md` 按该方法执行。

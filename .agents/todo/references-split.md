@@ -1,6 +1,6 @@
 # TODO: P2 references 分层拆分
 
-来源：docs/design.md 轴 1 / 落地路线 P2
+来源：notes/design.md 轴 1 / 落地路线 P2
 
 ## 背景
 
