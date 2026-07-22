@@ -2,6 +2,8 @@
 
 来源：notes/design.md 轴 3 / 落地路线 P1
 
+> **移植规范见 `notes/asgk-contract.md`**（两层函数模型、@source 装饰器、签名规范、43 端点完整映射表）。每个端点移植时按契约第五节表的 tier/via/cli 标注，并遵循第七节移植流程。
+
 ## 背景
 
 上游 `ref/a-stock-data/SKILL.md` 把全部实现**内嵌在 markdown 代码块**里，agent 每次触发 skill 都要重新拼装脚本。本项目场景下 100～1000 agent 重复拼装同一套代码是纯浪费（token + 重复请求）。需沉淀为共享库，agent 只 import 调用。
