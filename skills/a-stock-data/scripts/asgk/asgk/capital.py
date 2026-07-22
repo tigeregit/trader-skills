@@ -60,20 +60,15 @@ def holder_num_change(code: str, page_size: int = 10) -> list[dict]:
     """股东户数变化（季度级）。
 
     Returns:
-        [{date, holder_num, change_num, change_ratio(环比%), avg_shares(户均持股)}, ...]
-
-    Note:
-        ⚠️ 上游 ref 的 reportName="RPT_HOLDERNUMLATEST" 实测返回的是融资融券字段
-        （非股东户数），疑似 reportName 失效或变更。移植忠实于 ref，待 P4 实测时
-        校正正确 reportName（可能为 RPT_F10_EH_HOLDERNUM 之类）。
+        [{date, holder_num, change_num, change_ratio(环比%), avg_shares(户均流通股)}, ...]
     """
-    data = _datacenter("RPT_HOLDERNUMLATEST", filter_str=f'(SECURITY_CODE="{code}")',
+    data = _datacenter("RPT_F10_EH_HOLDERNUM", filter_str=f'(SECURITY_CODE="{code}")',
                        page_size=page_size, sort_columns="END_DATE", sort_types="-1")
     return [{
         "date": str(row.get("END_DATE", ""))[:10],
-        "holder_num": row.get("HOLDER_NUM", 0),
-        "change_num": row.get("HOLDER_NUM_CHANGE", 0),
-        "change_ratio": row.get("HOLDER_NUM_RATIO", 0),
+        "holder_num": row.get("HOLDER_TOTAL_NUM", 0),
+        "change_num": row.get("HOLDER_TOTAL_NUMCHANGE", 0),
+        "change_ratio": row.get("TOTAL_NUM_RATIO", 0),
         "avg_shares": row.get("AVG_FREE_SHARES", 0),
     } for row in data]
 

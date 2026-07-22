@@ -8,7 +8,7 @@ from asgk.quote import (
     mootdx_bars, mootdx_quotes, mootdx_transaction,
     tencent_quote, baidu_kline_with_ma,
 )
-from asgk.reports import eastmoney_reports, eastmoney_industry_reports
+from asgk.reports import eastmoney_reports, eastmoney_industry_reports, ths_eps_forecast
 from asgk.signal import (
     ths_hot_reason, hsgt_realtime, eastmoney_concept_blocks,
     eastmoney_fund_flow_minute, dragon_tiger_board, lockup_expiry,
@@ -37,7 +37,7 @@ __all__ = [
     "mootdx_bars", "mootdx_quotes", "mootdx_transaction",
     "tencent_quote", "baidu_kline_with_ma",
     # 研报层
-    "eastmoney_reports", "eastmoney_industry_reports",
+    "eastmoney_reports", "eastmoney_industry_reports", "ths_eps_forecast",
     # 信号层
     "ths_hot_reason", "hsgt_realtime", "eastmoney_concept_blocks",
     "eastmoney_fund_flow_minute", "dragon_tiger_board", "lockup_expiry",

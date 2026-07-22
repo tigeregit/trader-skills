@@ -49,9 +49,9 @@ def mootdx_bars(code: str, frequency: int = 9, offset: int = 100) -> list[dict]:
         ⚠️ 参数名是 frequency 不是 category（传 category 会被静默吞掉退化成日线）。
         返回不复权原始价，跨除权日需自行复权或改用百度K线。
 
-        ⚠️ 2026-07 实测部分 mootdx 版本 bars 返回 0 条（finance 正常，疑似 bars 接口
-        兼容性问题）。日K可靠替代用 `baidu_kline_with_ma`（自带均线），或腾讯行情取实时价。
-        待 P4 实测时定位 mootdx bars 正确调用方式。
+        ⚠️ mootdx 0.11.7 实测 bars 返回 0 条（底层 get_security_bars 返回空，finance 正常），
+        属该版本库兼容性问题，非本项目可修。日K可靠替代用 `baidu_kline_with_ma`
+        （自带均线，实测 2001 条可用），或腾讯行情取实时价。
     """
     client = tdx_client()
     return _to_records(client.bars(symbol=code, frequency=frequency, offset=offset))

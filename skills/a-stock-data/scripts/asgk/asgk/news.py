@@ -89,13 +89,13 @@ def eastmoney_global_news(page_size: int = 50) -> list[dict]:
     Note:
         @source(strip=["req_trace"])：req_trace 每次是 uuid4，指纹哈希时需剔除
         （否则每次响应哈希都不同，误判为高频变化）。见 gateway-design §3.4.7。
-
-        ⚠️ 2026-07 实测 np-weblist 返回 data=null（疑似 fastColumn 参数变更或端点调整），
-        安全返回 []。待 P4 实测时校正参数。与 §5.2 财联社互为备份，不影响电报获取。
     """
+    from datetime import datetime
+    # sortEnd 必须传日期（空串会报 Required parameter 错误），默认当天取最新
+    today = datetime.now().strftime("%Y-%m-%d")
     r = em_get("https://np-weblist.eastmoney.com/comm/web/getFastNewsList",
                params={"client": "web", "biz": "web_724", "fastColumn": "102",
-                       "sortEnd": "", "pageSize": str(page_size),
+                       "sortEnd": today, "pageSize": str(page_size),
                        "req_trace": str(uuid.uuid4())},
                headers={"Referer": "https://kuaixun.eastmoney.com/"}, timeout=10, tier="N")
     data = r.json().get("data") or {}

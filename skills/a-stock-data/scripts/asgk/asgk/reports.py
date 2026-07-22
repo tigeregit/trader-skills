@@ -1,11 +1,12 @@
-"""asgk.reports — 研报层（东财，经网关）。
+"""asgk.reports — 研报层（东财研报 + 同花顺一致预期EPS）。
 
-移植自 ref/a-stock-data SKILL.md §2.1。按 asgk-contract.md 契约：
-  - @source(tier="P", via="gateway")：研报发布即定稿，P档长缓存(30天)
-  - 经 em_get 走网关（全局限流+缓存）
+移植自 ref/a-stock-data SKILL.md §2.1-2.2。按 asgk-contract.md 契约：
+  - 东财研报经网关，P档；同花顺EPS经网关，S档
   - 返回结构化 list[dict]
 """
 from __future__ import annotations
+
+from io import StringIO
 
 from asgk._contract import source
 from asgk.em_proxy import em_get
@@ -76,3 +77,30 @@ def eastmoney_industry_reports(industry_code: str = "*", max_pages: int = 5,
         if page >= (d.get("TotalPage", 1) or 1):
             break
     return all_records
+
+
+@source(tier="S", via="gateway")
+def ths_eps_forecast(code: str) -> list[dict]:
+    """同花顺机构一致预期 EPS（解析 HTML 表格）。
+
+    Args:
+        code: 6位股票代码
+    Returns:
+        年度一致预期 EPS 列表，字段含 年度/预测机构数/最小值/均值/最大值。
+        "均值" = 机构一致预期 EPS。预测机构数 < 3 要谨慎。
+    Note:
+        经网关（basic.10jqka.com.cn，同花顺组）。用 pandas read_html 解析（pandas
+        已随 mootdx 依赖引入，非新增重依赖）。
+    """
+    import pandas as pd
+    r = em_get(f"https://basic.10jqka.com.cn/new/{code}/worth.html",
+               headers={"User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7)",
+                        "Referer": "https://basic.10jqka.com.cn/"},
+               timeout=15, tier="S")
+    r.encoding = "gbk"
+    dfs = pd.read_html(StringIO(r.text))
+    for df in dfs:
+        cols = [str(c) for c in df.columns]
+        if any("每股收益" in c or "均值" in c for c in cols):
+            return df.to_dict("records")
+    return (dfs[0].to_dict("records") if dfs else [])
