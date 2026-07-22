@@ -4,15 +4,14 @@
 
 ## 当前清单
 
-| 状态 | 文件 | 事项 | 来源 / 依赖 |
-|------|------|------|------------|
-| 🟡 in-progress | `skill-integration-test.md` | P4 集成实测与阈值校准 | notes/design.md P4 · 依赖 skill-router + notes/test-method.md |
+*（无未完成事项。P0-P4 全部完成。）*
 
 > **已归档**：
-> - `gateway-mvp.md`（P0 流量网关）2026-07-22 完成，产物 `sgw/sgw/proxy.py` + `asgk/em_proxy.py`
+> - `gateway-mvp.md`（P0 流量网关）2026-07-22 完成，产物 `sgw/` 包
 > - `scripts-library-port.md`（P1 共享库移植）2026-07-23 完成，产物 `asgk/` 15模块43函数
 > - `references-split.md`（P2 references 拆分）2026-07-23 完成，产物 `references/` 12文件
 > - `skill-router.md`（P3 SKILL.md 路由层）2026-07-23 完成，产物 `SKILL.md`（92行）
+> - `skill-integration-test.md`（P4 集成测试）2026-07-23 完成，L1 pi端到端 + L2 locust压测通过
 >
 > 按归档规则，已完成的 TODO 从 todo 删除，产物落在 skills/。
 
