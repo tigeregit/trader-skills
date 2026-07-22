@@ -4,6 +4,10 @@
 移植自 ref/a-stock-data，按 asgk-contract.md 契约组织。
 """
 from asgk.em_proxy import em_get
+from asgk.quote import (
+    mootdx_bars, mootdx_quotes, mootdx_transaction,
+    tencent_quote, baidu_kline_with_ma,
+)
 from asgk.reports import eastmoney_reports, eastmoney_industry_reports
 from asgk.signal import (
     ths_hot_reason, hsgt_realtime, eastmoney_concept_blocks,
@@ -29,6 +33,9 @@ from asgk.valuation import forward_pe, pe_digestion, calc_peg, full_valuation
 __all__ = [
     # 底层
     "em_get",
+    # 行情层
+    "mootdx_bars", "mootdx_quotes", "mootdx_transaction",
+    "tencent_quote", "baidu_kline_with_ma",
     # 研报层
     "eastmoney_reports", "eastmoney_industry_reports",
     # 信号层
