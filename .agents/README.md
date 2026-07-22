@@ -39,6 +39,5 @@ todo/（完成） ──产物──► skills/ 或 notes/（正式位置）
 
 ## 当前内容
 
-- `notes/`：`design.md`（a-stock-data 转化设计）、`gateway-design.md`（流量网关 + skill CLI 接入设计）、`test-method.md`（pi agent + 双层压测测试方法）、`sgw-acceptance-guide.md`（sgw 网关验收指南）
-- `todo/`：见 `todo/README.md`（P0 网关 → P1 库移植 → P2 拆分 → P3 路由 → P4 集成测试）
+- `notes/`：见 `notes/README.md`（入口）。含 design（总设计）、gateway-design（网关）、asgk-contract（接口契约）、test-method（方法论）、testing（操作手册）- `todo/`：见 `todo/README.md`（P0 网关 → P1 库移植 → P2 拆分 → P3 路由 → P4 集成测试）
 - `temp/`：（空，待填充）
