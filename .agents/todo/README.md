@@ -6,19 +6,20 @@
 
 | 状态 | 文件 | 事项 | 来源 / 依赖 |
 |------|------|------|------------|
-| 🔴 pending | `gateway-mvp.md` | P0 流量网关 MVP | notes/design.md 轴2 · **无前置，优先** |
-| 🔴 pending | `scripts-library-port.md` | P1 scripts 共享库移植 | notes/design.md 轴3 · 依赖 gateway-mvp |
+| 🔴 pending | `scripts-library-port.md` | P1 scripts 共享库移植 | notes/design.md 轴3 · 依赖 skills/a-stock-data/scripts（P0已交付） |
 | 🔴 pending | `references-split.md` | P2 references 分层拆分 | notes/design.md 轴1 · 依赖 scripts-library-port |
 | 🔴 pending | `skill-router.md` | P3 SKILL.md 路由层 | notes/design.md P3 · 依赖 references-split |
 | 🔴 pending | `skill-integration-test.md` | P4 集成实测与阈值校准 | notes/design.md P4 · 依赖 skill-router + notes/test-method.md |
 
-状态图例：🔴 pending（未开始）／ 🟡 in-progress（进行中）／ 🟢 done（已完成，归档见下）
+> **已归档**：`gateway-mvp.md`（P0 流量网关）已于 2026-07-22 完成，产物为 `skills/a-stock-data/scripts/sgw_proxy.py` + `asgk/em_proxy.py`，按归档规则从 todo 删除。
+
+状态图例：🔴 pending（未开始）／ 🟡 in-progress（进行中）／ 🟢 done（已完成，归档见上）
 
 ## 依赖关系
 
 ```
-gateway-mvp ─► scripts-library-port ─► references-split ─► skill-router ─► skill-integration-test
-                                                                        （按 notes/test-method.md 执行）
+[P0 gateway-mvp ✓ 已交付] ─► scripts-library-port ─► references-split ─► skill-router ─► skill-integration-test
+                                                                                   （按 notes/test-method.md 执行）
 ```
 
 `gateway-mvp` 是其余改造的基础设施，最先执行。`notes/test-method.md` 是正式测试方法文档（非待办），`skill-integration-test.md` 按它执行。
