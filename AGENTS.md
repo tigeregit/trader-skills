@@ -77,44 +77,19 @@ trader-skills/
 
 待办事项不写在 AGENTS.md 正文，而是拆分为独立文件放入 `.agents/todo/`。
 
-### 放置位置与命名
+**入口与权威索引**：`.agents/todo/README.md` 是 todo 目录的入口，维护着当前清单、状态、依赖图与维护规范。查看/新增/变更待办一律以该 README 为准——本节只规定原则，不在 AGENTS.md 重复清单。
 
-- 目录：`.agents/todo/<name>.md`
-- 文件名：kebab-case，语义化（如 `gateway-mvp.md`、`scripts-library-port.md`）。
-- 每个 TODO 文件 = 一个可独立认领、可独立交付的事项。
+### 原则
 
-### 文件内容约定
-
-每个 TODO 文件应包含：
-
-- **来源**：指向 AGENTS.md 章节或 docs 文档中提出该事项的位置。
-- **背景**：为什么有这个待办（问题/动机）。
-- **待办**：可勾选的 checklist。
-- **验收标准**：怎样算完成。
-- **依赖**：前置 TODO（用文件名引用）。
+- 目录：`.agents/todo/<name>.md`，文件名 kebab-case、语义化。
+- 每个 TODO 文件 = 一个可独立认领、可独立交付的事项，须含：来源 / 背景 / 待办(checklist) / 验收标准 / 依赖。
+- **TODO 与正式文档分离**：待办是「尚未做的事」。一旦某待办产出了正式方法/规范/代码（如确立了测试方法），产物落到 `docs/`、`skills/` 等正式位置，该 TODO 文件从 todo 目录**删除**并在 README 清单移除——todo 目录只保留未完成项，不堆积历史。
+- 完整的文件内容约定、状态流转、归档规则见 `.agents/todo/README.md`。
 
 ### 正文中的引用
 
 AGENTS.md / docs 中涉及待办的内容，用 `[TODO: <name>]` 标注并指向 `.agents/todo/<name>.md`，不把待办细节展开在正文。
 
-### 当前 TODO 清单
+### 测试方法
 
-| 文件 | 事项 | 来源 |
-|------|------|------|
-| `pi-agent-test-method.md` | 确立 pi agent 测试方法 | 原「测试方法 [TODO]」 |
-| `gateway-mvp.md` | P0 流量网关 MVP | design.md 轴2 / P0 |
-| `scripts-library-port.md` | P1 scripts 共享库移植 | design.md 轴3 / P1 |
-| `references-split.md` | P2 references 分层拆分 | design.md 轴1 / P2 |
-| `skill-router.md` | P3 SKILL.md 路由层 | design.md P3 |
-| `skill-integration-test.md` | P4 集成实测与阈值校准 | design.md P4 |
-
-> 测试方法见 `.agents/todo/pi-agent-test-method.md`（原 AGENTS.md「测试方法 [TODO]」）。
-
-### 依赖关系
-
-```
-pi-agent-test-method ──┐
-gateway-mvp ───────────┼─► scripts-library-port ─► references-split ─► skill-router ─► skill-integration-test
-```
-
-`gateway-mvp` 是其余改造的基础设施，优先完成。
+测试方法见 `docs/test-method.md`（pi agent + 双层压测，正式文档）。相关待办 `.agents/todo/skill-integration-test.md` 按该方法执行。

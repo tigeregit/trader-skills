@@ -1,6 +1,6 @@
 # 测试方法：pi agent + 双层压测
 
-来源：AGENTS.md「测试方法 [TODO]」 / 服务于 `gateway-mvp.md`、`skill-integration-test.md`
+服务于 `.agents/todo/gateway-mvp.md`、`.agents/todo/skill-integration-test.md`。本文是项目正式测试方法定义（非待办）。
 
 ## 一、结论：选用 pi agent，辅以 HTTP 压测
 
@@ -193,11 +193,6 @@ locust -f tests/locust_sgw.py --headless -u 1000 -r 50 --run-time 5m \
 - **LLM 成本**：L1 跑大并发成本高，故 L1 定位为「正确性 + 小并发」，L2 为「规模化压测」。
 - **pi 版本变动**：pi 仍在演进，若 session 日志格式或 extension API 变化，需同步更新本文件的命令。以 https://pi.dev/docs 为准。
 
-## 七、验收标准（本 TODO 完成）
+## 七、与待办的衔接
 
-- [x] 调研 pi agent 能力，确认其 skill 机制与本项目一致、可模拟并发。
-- [x] 给出双层测试策略（pi 端到端 + locust 网关压测）及各自流程。
-- [x] 定义观测指标与阈值目标。
-- [ ] （执行态，非本 TODO）按本流程实测并产出校准报告——归入 `skill-integration-test.md`。
-
-> 说明：本文件是**方法定义**，实际跑测试在 `skill-integration-test.md`（依赖 P0-P3 产物就绪）。本 TODO（确立方法）至此完成。
+本文是**方法定义**，实际跑测试是待办 `.agents/todo/skill-integration-test.md`（依赖 P0-P3 产物就绪）。该待办完成时，按本文第五节产出阈值校准报告并回填 `sgw_config.toml`。
