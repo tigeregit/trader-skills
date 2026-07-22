@@ -162,8 +162,10 @@ L1 受 LLM 成本/速率限制，跑不到 1000 并发。纯网关压测用 locu
 
 ### 4.1 安装
 
+locust 作为 dev 依赖加入 uv 项目（在 `skills/a-stock-data/scripts/` 下）：
+
 ```bash
-pip install locust
+uv add --dev locust
 ```
 
 ### 4.2 压测脚本 `tests/locust_sgw.py`

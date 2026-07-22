@@ -316,7 +316,7 @@ def em_get(url, params=None, headers=None, timeout=15, **kw):
 未配 `ASGK_GW` 时行为与上游一致（直连；上游已有的进程内限流保留作 fallback）。
 
 ### 4.4 CLI 安装
-`pyproject.toml` 注册 entry point：`asgk = "asgk.cli:main"`。`pip install -e .` 后 `asgk` 全局可用。
+`pyproject.toml` 注册 entry point：`sgw-proxy = "sgw_proxy:main"`（网关启动）、`asgk = "asgk.cli:main"`（CLI，P1 填充）。项目用 uv 管理，`uv run sgw-proxy` / `uv run asgk ...` 即可调用，无需手动 `pip install`。
 
 ## 五、产物文件结构
 
@@ -345,7 +345,7 @@ skills/a-stock-data/scripts/
 
 ## 八、验收标准（承接 gateway-mvp.md）
 
-- 网关启动：`python sgw_proxy.py` 监听 7700。
+- 网关启动：在 `skills/a-stock-data/scripts/` 下 `uv run sgw-proxy` 监听 7700（等价 `uv run python sgw_proxy.py`）。
 - 单进程基准：`curl 'localhost:7700/?u=<东财url>&secid=1.600519'` 正确代理。
 - **并发验证**：多进程并发打网关，外网出口被压到东财组 ≤1 req/s（用 `/__stats` 验证）。
 - 缓存命中时零外网请求。
