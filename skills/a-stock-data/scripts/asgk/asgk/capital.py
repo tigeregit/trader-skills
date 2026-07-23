@@ -63,7 +63,8 @@ def holder_num_change(code: str, page_size: int = 10) -> list[dict]:
         [{date, holder_num, change_num, change_ratio(环比%), avg_shares(户均流通股)}, ...]
     """
     data = _datacenter("RPT_F10_EH_HOLDERNUM", filter_str=f'(SECURITY_CODE="{code}")',
-                       page_size=page_size, sort_columns="END_DATE", sort_types="-1")
+                       page_size=page_size, sort_columns="END_DATE", sort_types="-1",
+                       tier="L")
     return [{
         "date": str(row.get("END_DATE", ""))[:10],
         "holder_num": row.get("HOLDER_TOTAL_NUM", 0),
@@ -82,7 +83,8 @@ def dividend_history(code: str, page_size: int = 20) -> list[dict]:
           bonus_ratio(每10股送股), plan(进度)}, ...]
     """
     data = _datacenter("RPT_SHAREBONUS_DET", filter_str=f'(SECURITY_CODE="{code}")',
-                       page_size=page_size, sort_columns="EX_DIVIDEND_DATE", sort_types="-1")
+                       page_size=page_size, sort_columns="EX_DIVIDEND_DATE", sort_types="-1",
+                       tier="P")
     return [{
         "date": str(row.get("EX_DIVIDEND_DATE", ""))[:10],
         "bonus_rmb": row.get("PRETAX_BONUS_RMB", 0),
