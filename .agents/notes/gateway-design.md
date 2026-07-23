@@ -266,13 +266,45 @@ tier = "S"
 
 **与 P4 的衔接**：离线修正作为 `skill-integration-test.md`（P4）的一部分——压测期间积累日志，事后分析产出修正表。MVP（P0）阶段先记录日志但不做分析（分析依赖足够样本，需 P4 的并发压测才积累得到）。
 
+### 3.4.8 磁盘持久化（P/L 档）
+
+五档缓存（§3.4.2）默认纯内存，网关重启即全丢。P 档（30 天 TTL，研报/分红/F10）与 L 档（1 天，财报/股东户数）是**发布即定稿/季度更新**的长效数据，重启后冷启动重打外网既浪费限流配额（≤1 req/s 下回填慢）也增加封 IP 风险。本节为 P/L 增加磁盘持久层。
+
+**定位**：仅持久化 P/L。S 档盘中 0、盘后 12h，跨重启无意义且易脏，不落盘；R/N 本就 no-cache。
+
+**选型**：SQLite（stdlib `sqlite3`，零新依赖，符合 §6 零重型依赖）单文件 `sgw_cache.db`，WAL 模式（读不阻塞写）。schema：`cache(key PK, body BLOB, headers TEXT, expire REAL, tier TEXT, created REAL)`。key 复用内存格式 `f"{tier}|{url}"`；headers 用 `json.dumps` 序列化（值是 `{"Content-Type":...}` 简单 dict）；body 用 BLOB 存原始字节，无 base64 开销。
+
+**写策略**：write-through--`cache.set` 时同步写内存和磁盘。P/L 写入受 ≤1 req/s 限流，频率低，同步落盘开销可接受，且数据不丢。崩溃（`kill -9`）至多丢最后一条在途写入。
+
+**读路径**：内存优先（`HIT-MEM`）；内存未命中回查磁盘，命中则回填内存并返回 `HIT-DISK`，后续命中走内存。响应头 `X-Cache` 由原 `HIT`/`MISS` 细化为 `HIT-MEM`/`HIT-DISK`/`MISS`。
+
+**删除机制**（无后台线程，对齐项目「无后台清理」风格）：
+- **启动 `load_all`**：`SELECT *` 回填内存，同时 `DELETE WHERE expire<=now` 清掉历史过期项。
+- **`get` 惰性删除**：命中过期项时 `DELETE` 并返回 miss。
+- 永不再访问的 P 档 key 最长留存到下次重启才被 `load_all` 清掉。30 天 TTL 内单 IP 场景 P 档总量有限（研报/分红/财报，数千条量级），泄漏可接受。
+
+**配置**（`config.toml` `[cache.persist]`，仿 `[cache.session]`/`[fingerprint]`）：
+```toml
+[cache.persist]
+enabled = true
+dir = "cache"          # 相对包目录；生产用 --cache-dir /var/lib/sgw
+tiers = ["P", "L"]
+```
+CLI `--cache-dir` 覆盖 `dir`（仿 `--fp-dir`）。db 默认 `packages/sgw/sgw/cache/sgw_cache.db`。
+
+**观测**：`/__stats` 增加 `disk_cache`（size/hits/misses）、`disk_load_count`/`disk_load_ms`（启动回填条目数与耗时）。详见 §3.6。
+
+**关停**：`main()` 在 `server.shutdown()` 前关闭 db 连接；新增 `SIGTERM` handler 走同一关停路径（原仅 `KeyboardInterrupt`，`kill` 会丢连接）。
+
+**tier bug 关联**：实施时发现 `capital.dividend_history`（`@source` 标 P）与 `holder_num_change`（标 L）经 `_datacenter` 调用时未传 tier，被默认值 `S` 覆盖，运行时实际走 S 档--既与声明不符，也使二者无法落 P/L 磁盘档。已一并修复（显式传 `tier='P'/'L'`）。
+
 ### 3.5 retry / 降级
 - 429/5xx：指数退避重试（对齐上游 Retry 配置）。
 - 403：**不重试**（东财风控信号），返回错误让上层切备用源（ref 的 failover）。
 
 ### 3.6 观测
 两类观测：
-- **计数器**（实时）：每组请求数/缓存命中数/限流等待数/错误数。`GET /__stats` 暴露 JSON，供 `test-method.md` 的 L2 压测采集。
+- **计数器**（实时）：每组请求数/缓存命中数/限流等待数/错误数/磁盘缓存。`GET /__stats` 暴露 JSON，供 `test-method.md` 的 L2 压测采集。字段：`cache`（内存 size/hits/misses）、`disk_cache`（磁盘 size/hits/misses，未启用为 null）、`disk_load_count`/`disk_load_ms`（启动回填条目数与耗时，§3.4.8）。响应头 `X-Cache` 区分 `HIT-MEM`/`HIT-DISK`/`MISS`。
 - **响应指纹日志**（积累用）：每个请求记一条 §3.4.7 的结构化日志（key/tier/resp_hash/session/changed），落盘为 jsonl。P0 阶段开启记录、不做分析；P4 压测后离线分析产出分档修正表。日志需定期轮转避免膨胀。
 
 ## 四、Skill CLI 接入设计（asgk）
