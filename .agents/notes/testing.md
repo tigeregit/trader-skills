@@ -43,7 +43,7 @@ URL='https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get'
 curl -s -D - -H "X-Cache-Tier: S" "http://127.0.0.1:7700/?u=$URL&secid=1.600519&lmt=1&klt=101&fields1=f1&fields2=f51,f52" -o /dev/null | grep -i X-Cache
 curl -s -D - -H "X-Cache-Tier: S" "http://127.0.0.1:7700/?u=$URL&secid=1.600519&lmt=1&klt=101&fields1=f1&fields2=f51,f52" -o /dev/null | grep -i X-Cache
 ```
-✅ `MISS` → `HIT`
+✅ `MISS` -> `HIT-MEM`（响应头 X-Cache 取值：HIT-MEM 内存命中 / HIT-DISK 磁盘命中 / MISS 打外网，见 A8）
 
 ### A5. 并发限流（核心）
 
@@ -97,6 +97,38 @@ print(f'静态研报: 直连{len(d)}B 网关{len(g)}B 一致={d==g}')
 ```
 ✅ `一致=True`
 
+### A8. 磁盘持久化（P/L 档，§3.4.8）
+
+验证 P/L 档缓存落 SQLite、重启后恢复、命中来源可区分。
+
+```bash
+# 1. 写入一条 P 档（MISS -> 落盘）
+URL='https://reportapi.eastmoney.com/report/list'
+curl -s -D - -H "X-Cache-Tier: P" "http://127.0.0.1:7700/?u=$URL&industryCode=*&pageSize=1&fields=f11" -o /dev/null | grep -i X-Cache
+✅ X-Cache: MISS
+
+# 2. 内存命中
+curl -s -D - -H "X-Cache-Tier: P" "http://127.0.0.1:7700/?u=$URL&industryCode=*&pageSize=1&fields=f11" -o /dev/null | grep -i X-Cache
+✅ X-Cache: HIT-MEM
+
+# 3. 看 /__stats：disk_cache.size > 0
+curl -s http://127.0.0.1:7700/__stats | python3 -c "import sys,json;d=json.load(sys.stdin);print('disk_cache:',d['disk_cache'])"
+✅ disk_cache.size > 0
+
+# 4. 重启网关，验证 load_all 恢复（启动日志可见 loaded N entries）
+pkill -f sgw-proxy; sleep 2
+cd ~/Documents/trader-skills/packages/sgw && uv run sgw-proxy --port 7700 2>&1 | grep "disk cache"
+✅ [sgw_proxy] disk cache: ... (loaded N entries in ...ms)
+
+# 5. 重启后请求同 URL：应命中（HIT-MEM，因 load_all 已灌入内存），且东财外网请求 0
+curl -s -D - -H "X-Cache-Tier: P" "http://127.0.0.1:7700/?u=$URL&industryCode=*&pageSize=1&fields=f11" -o /dev/null | grep -i X-Cache
+curl -s http://127.0.0.1:7700/__stats | python3 -c "import sys,json;d=json.load(sys.stdin);print('em_reqs:',d['group_reqs']['eastmoney'],'disk_load_count:',d['disk_load_count'])"
+✅ X-Cache: HIT-MEM  且  em_reqs: 0（零外网）  disk_load_count > 0
+```
+
+> HIT-DISK 路径（内存清空后命中磁盘）由单元测试覆盖（`packages/sgw/tests/test_cache.py::test_disk_hit_after_mem_clear`），手动验收聚焦「重启恢复」这一核心价值。
+
+> 仅 P/L 档落盘；S 盘中易脏、R/N 不缓存。db 默认 `packages/sgw/sgw/cache/sgw_cache.db`，生产用 `--cache-dir` 指定。
 ---
 
 ## Part B：L1 pi agent 端到端（真实 agent 验证）
@@ -154,6 +186,53 @@ rm -f ~/Documents/trader-skills/skills/a-stock-data/scripts/query_*.py
 rm -rf ~/Documents/trader-skills/packages/sgw/sgw/logs   # 测试产生的指纹日志
 pkill -f sgw-proxy 2>/dev/null; pgrep -af sgw-proxy || echo "无残留 ✓"
 ```
+
+### B7. glm-5.2 模型端到端（步骤与坑）
+
+B3 默认用 `ark-code-latest`。若要指定 `glm-5.2`，步骤相同但有一个**必须先解决的坑**。
+
+**坑：glm-5.2 报 `developer role` 400 错误**
+
+glm-5.2 在 models.json 里 `"reasoning": true`，pi 对 reasoning 模型默认用 `developer` role 发 system prompt（OpenAI o1 风格），但 glm-5.2 的 Ark Coding 端点只认 `system`/`assistant`/`user`/`tool`，请求直接 400：
+
+```
+400: ... invalid value: `developer`, supported values: `system`,`assistant`,`user`,`tool`
+```
+
+根因在 pi-ai 的 `openai-completions.js`：`useDeveloperRole = model.reasoning && compat.supportsDeveloperRole`，ark-coding baseUrl 不在「非标准 provider」名单里导致 `supportsDeveloperRole` 检测为 true。
+
+**修法**：编辑 `~/.pi/agent/models.json`，给 glm-5.2 加 `compat` 覆盖（先备份）：
+
+```bash
+cp ~/.pi/agent/models.json ~/.pi/agent/models.json.bak
+# 在 glm-5.2 的模型定义对象里加入：
+#   "compat": { "supportsDeveloperRole": false },
+```
+
+这是 pi 客户端配置，不在本项目仓库内。
+
+**步骤**（修坑后）：
+
+```bash
+# 1. 启网关（终端 A）
+cd ~/Documents/trader-skills/packages/sgw && uv run sgw-proxy --port 7700
+
+# 2. 连通预检（用 glm-5.2）
+pi --provider ark-coding --model ark-coding/glm-5.2 --no-tools -p "回复：连通OK"
+✅ `连通OK`
+
+# 3. 端到端取数 + 生成报告
+WORK=~/Documents/trader-skills/.agents/temp/pi-wanhua
+mkdir -p $WORK && cd $WORK
+echo 'ASGK_GW=http://127.0.0.1:7700' > .env
+pi --provider ark-coding --model ark-coding/glm-5.2 \
+   --skill ~/Documents/trader-skills/skills/a-stock-data --approve \
+   -p "用 a-stock-data skill 获取<标的>(<代码>)的真实数据...写一份投资建议 markdown..."
+```
+
+✅ 报告生成 + 数据真实 + 网关有外网请求记录。
+
+> 注：东财 `push2his` 子域偶发 `RemoteDisconnected`（服务端问题，非本项目 bug），asgk 会降级到新浪备用源，属 failover 正常行为。
 
 ---
 
@@ -227,6 +306,8 @@ pkill -f sgw-proxy 2>/dev/null
 | A 网关 | A5 限流 | 完成时刻递增（间隔≈1s） |
 | A 网关 | A6 禁止直连 | 未设网关时抛异常 |
 | A 网关 | A7 透明性 | 经网关=直连，字节一致 |
+| A 网关 | A8 磁盘持久化 | 重启后 HIT-MEM 且 em_reqs=0，disk_load_count>0 |
 | **B agent** | **B3 端到端** | **真实数据 + 正确分流** |
 | **B agent** | **B4 网关** | **东财外网 > 0** |
+| B agent | B7 glm-5.2 | 先修 developer role 坑，连通+取数正常 |
 | **C 压测** | **C3 安全** | **300并发外网<100，缓存命中>>外网** |
