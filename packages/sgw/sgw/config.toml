@@ -45,6 +45,13 @@ N_ttl = 0                 # 流式新闻：no-cache
 intraday_start = "09:00"
 intraday_end = "18:00"
 
+# ── 磁盘持久化（§3.4.8）──────────────────────────────────────
+# 仅 P/L 档落盘，重启后恢复，避免冷启动重打外网。S 盘中易脏、R/N 不缓存。
+[cache.persist]
+enabled = true
+dir = "cache"          # 相对包目录；生产建议 --cache-dir /var/lib/sgw
+tiers = ["P", "L"]     # 仅持久化这两档
+
 # ── 兜底分流规则（§3.4.6）───────────────────────────────────
 # 未声明 X-Cache-Tier 的裸请求（curl/第三方直连）走这里
 [fallback]

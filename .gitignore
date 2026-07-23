@@ -12,9 +12,11 @@ venv/
 dist/
 build/
 
-# 网关运行时产物（指纹日志）
+# 网关运行时产物（指纹日志 / 磁盘缓存）
 **/sgw/logs/
+**/sgw/cache/
 **/sgw_fingerprint.jsonl
+**/sgw_cache.db
 
 # 工具生成物
 .zcode/

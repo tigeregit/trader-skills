@@ -15,6 +15,7 @@ agent (×1000)                         外网
 
 - **全局限流**：按域名组令牌桶（东财组 ≤1 req/s、同花顺组独立），跨进程生效——无论多少 agent 进程并发，外网出口收敛到一个
 - **五档缓存**：静态数据(P档30天) / 日级(S档) / 实时(R档不缓存)，1000 agent 查同一票只打 1 次外网
+- **P/L 档磁盘持久化**：研报/财报/分红等静态/季度数据落 SQLite，网关重启后恢复，冷启动不重打外网
 - **透明代理**：经网关 = 直连，响应字节完全一致
 - **响应指纹日志**：按天拆分，供离线分析修正分档规则
 
@@ -30,7 +31,7 @@ uv sync
 ## 启动
 
 ```bash
-# 默认（端口 7700，指纹日志写到 sgw/logs/）
+# 默认（端口 7700，指纹日志写到 sgw/logs/，磁盘缓存 sgw/cache/）
 uv run sgw-proxy
 
 # 指定端口
@@ -38,6 +39,9 @@ uv run sgw-proxy --port 8080
 
 # 生产环境：指定指纹日志目录（按天自动拆分 sgw_fp_YYYYMMDD.jsonl）
 uv run sgw-proxy --fp-dir /var/log/sgw
+
+# 生产环境：指定磁盘缓存目录（P/L 档持久化，sgw_cache.db）
+uv run sgw-proxy --cache-dir /var/lib/sgw
 
 # 指定配置文件
 uv run sgw-proxy -c /path/to/config.toml
@@ -83,23 +87,39 @@ P_ttl = 2592000        # 静态(研报/公告): 30天
 L_ttl = 86400          # 季度(财报): 1天
 S_ttl_afterclose = 43200  # 日级盘后: 12h
 R_ttl = 0              # 实时: no-cache
+
+# P/L 档磁盘持久化（重启恢复，避免冷启动重打外网）
+[cache.persist]
+enabled = true
+dir = "cache"          # 相对包目录；生产用 --cache-dir 覆盖
+tiers = ["P", "L"]     # 仅持久化这两档（S 盘中易脏、R/N 不缓存）
 ```
 
 ## 观测
 
 ```bash
-# 计数器（请求数/缓存命中/限流等待/错误数）
+# 计数器（请求数/缓存命中/限流等待/错误数/磁盘缓存）
 curl -s http://127.0.0.1:7700/__stats | python3 -m json.tool
 ```
+
+`/__stats` 返回字段：`cache`（内存缓存 size/hits/misses）、`disk_cache`（磁盘缓存 size/hits/misses，未启用为 null）、`disk_load_count`/`disk_load_ms`（启动时从磁盘回填的条目数与耗时）。
+
+响应头 `X-Cache` 区分命中来源：`HIT-MEM`（内存命中）/ `HIT-DISK`（磁盘命中，已回填内存）/ `MISS`（打外网）。
 
 ## 验证
 
 ```bash
-# 代理 + 缓存（两次请求，第二次应 X-Cache: HIT）
+# 代理 + 缓存（两次请求，第二次应 X-Cache: HIT-MEM）
 URL='https://push2his.eastmoney.com/api/qt/stock/fflow/daykline/get'
 curl -s -D - -H "X-Cache-Tier: S" \
   "http://127.0.0.1:7700/?u=$URL&secid=1.600519&lmt=1&klt=101&fields1=f1&fields2=f51,f52" \
   -o /dev/null | grep X-Cache
+
+# P 档磁盘持久化（重启后恢复）
+URL='https://reportapi.eastmoney.com/report/list'
+curl -s -D - -H "X-Cache-Tier: P" \
+  "http://127.0.0.1:7700/?u=$URL&pageSize=1&industryCode=*&fields=f11" -o /dev/null | grep X-Cache  # MISS
+# 重启网关后同请求 -> X-Cache: HIT-DISK；/__stats 可见 disk_load_count>0
 
 # 并发限流（5并发不同标的，完成时刻应递增间隔≈1s）
 uv run python -c "

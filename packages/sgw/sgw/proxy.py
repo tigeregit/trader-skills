@@ -17,6 +17,8 @@ import fnmatch
 import hashlib
 import json
 import random
+import signal
+import sqlite3
 import threading
 import time
 import tomllib
@@ -102,12 +104,104 @@ class Cache:
             return {"size": len(self._store), "hits": self.hits, "misses": self.misses}
 
 
+# ── 磁盘缓存：SQLite + WAL，仅持久化 P/L 档（§3.4.8）─────────────
+class DiskCache:
+    """P/L 档缓存的磁盘持久层。
+
+    write-through：每次 set 同步落盘；get 读盘回填内存。重启后 load_all 回填。
+    WAL 模式读不阻塞写；写用一把锁串行化（P/L 写入 ≤1 req/s，无竞争压力）。
+    过期清理：启动 load_all 扫表删过期 + get 命中过期惰性删除，无后台线程。
+    """
+
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS cache (
+        key     TEXT PRIMARY KEY,
+        body    BLOB,
+        headers TEXT,
+        expire  REAL,
+        tier    TEXT,
+        created REAL
+    )
+    """
+
+    def __init__(self, db_path: Path, tiers: set[str]):
+        self.db_path = db_path
+        self.tiers = tiers
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=NORMAL")
+        self._conn.executescript(self.SCHEMA)
+        self._conn.commit()
+        self._lock = threading.Lock()
+        self.hits = 0
+        self.misses = 0
+
+    def get(self, key: str) -> Optional[tuple[bytes, dict]]:
+        with self._lock:
+            row = self._conn.execute(
+                "SELECT body, headers, expire FROM cache WHERE key=?", (key,)
+            ).fetchone()
+        if not row:
+            self.misses += 1
+            return None
+        body, headers_json, expire = row
+        if expire <= time.time():
+            # 惰性删除过期项
+            with self._lock:
+                self._conn.execute("DELETE FROM cache WHERE key=?", (key,))
+                self._conn.commit()
+            self.misses += 1
+            return None
+        self.hits += 1
+        return body, json.loads(headers_json)
+
+    def set(self, key: str, body: bytes, headers: dict, ttl: int, tier: str):
+        if tier not in self.tiers:
+            return
+        with self._lock:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO cache (key, body, headers, expire, tier, created) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (key, body, json.dumps(headers, ensure_ascii=False),
+                 time.time() + ttl, tier, time.time()),
+            )
+            self._conn.commit()
+
+    def load_all(self) -> dict[str, tuple[bytes, dict, float, str]]:
+        """启动时回填内存。过滤并删除过期项，返回未过期的 {key: (body, headers, expire, tier)}。"""
+        now = time.time()
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT key, body, headers, expire, tier FROM cache"
+            ).fetchall()
+            # 删除所有过期项
+            self._conn.execute("DELETE FROM cache WHERE expire <= ?", (now,))
+            self._conn.commit()
+        result = {}
+        for key, body, headers_json, expire, tier in rows:
+            if expire > now:
+                result[key] = (body, json.loads(headers_json), expire, tier)
+        return result
+
+    def stats(self) -> dict:
+        with self._lock:
+            size = self._conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
+        return {"size": size, "hits": self.hits, "misses": self.misses}
+
+    def close(self):
+        with self._lock:
+            self._conn.close()
+
+
 # ── 网关主体 ──────────────────────────────────────────────────
 class Gateway:
-    def __init__(self, config: dict, fp_dir_override: str | None = None):
+    def __init__(self, config: dict, fp_dir_override: str | None = None,
+                 cache_dir_override: str | None = None):
         self.cfg = config
         self._fp_dir_override = fp_dir_override
-        # 域名 → 组名
+        self._cache_dir_override = cache_dir_override
+        # 域名 -> 组名
         self.domain_group: dict[str, str] = {}
         self.buckets: dict[str, TokenBucket] = {}
         for g in config.get("group", []):
@@ -120,6 +214,22 @@ class Gateway:
         # 每组计数
         self.group_reqs: dict[str, int] = {n: 0 for n in self.buckets}
         self.group_errs: dict[str, int] = {n: 0 for n in self.buckets}
+        # 磁盘缓存（P/L 档持久化，§3.4.8）
+        self.disk_cache: Optional[DiskCache] = None
+        self._disk_load_count = 0
+        self._disk_load_ms = 0
+        persist = config.get("cache", {}).get("persist", {})
+        if persist.get("enabled", False):
+            cache_dir = Path(self._cache_dir_override or persist.get("dir", "cache"))
+            if not cache_dir.is_absolute():
+                cache_dir = HERE / cache_dir
+            tiers = set(persist.get("tiers", ["P", "L"]))
+            self.disk_cache = DiskCache(cache_dir / "sgw_cache.db", tiers)
+            t0 = time.time()
+            for key, (body, headers, expire, tier) in self.disk_cache.load_all().items():
+                self.cache._store[key] = (body, headers, expire, tier)
+            self._disk_load_count = len(self.cache._store)
+            self._disk_load_ms = round((time.time() - t0) * 1000, 1)
         # 指纹日志
         fp = config.get("fingerprint", {})
         self.fp_enabled = fp.get("enabled", False)
@@ -128,7 +238,7 @@ class Gateway:
         self.fp_dir = Path(self._fp_dir_override or fp.get("log_dir", "logs"))
         if not self.fp_dir.is_absolute():
             self.fp_dir = HERE / self.fp_dir
-        self.fp_last_hash: dict[str, str] = {}  # key → 上次 resp_hash
+        self.fp_last_hash: dict[str, str] = {}  # key -> 上次 resp_hash
         self.fp_lock = threading.Lock()
 
     # ── 域名归组 ──
@@ -221,7 +331,16 @@ class Gateway:
         if cached:
             body, headers = cached
             self._log_fingerprint(cache_key, tier, body, "cache_hit")
-            return 200, body, {**headers, "X-Cache": "HIT", "X-Cache-Tier": tier}
+            return 200, body, {**headers, "X-Cache": "HIT-MEM", "X-Cache-Tier": tier}
+        # 内存未命中：回查磁盘缓存（仅 P/L 持久化档）
+        if ttl > 0 and self.disk_cache is not None:
+            disk = self.disk_cache.get(cache_key)
+            if disk:
+                body, headers = disk
+                # 回填内存，后续命中走内存
+                self.cache.set(cache_key, body, headers, ttl, tier)
+                self._log_fingerprint(cache_key, tier, body, "cache_hit_disk")
+                return 200, body, {**headers, "X-Cache": "HIT-DISK", "X-Cache-Tier": tier}
 
         # 限流（全局串行）
         bucket = self.buckets[group]
@@ -248,6 +367,9 @@ class Gateway:
                 resp_headers = {"Content-Type": r.headers.get("Content-Type", "application/json")}
                 if ttl > 0:
                     self.cache.set(cache_key, r.content, resp_headers, ttl, tier)
+                    # write-through：P/L 档同步落盘（§3.4.8）
+                    if self.disk_cache is not None:
+                        self.disk_cache.set(cache_key, r.content, resp_headers, ttl, tier)
                 session = "intraday" if self._is_intraday() else "afterclose"
                 self._log_fingerprint(cache_key, tier, r.content, session)
                 return r.status_code, r.content, {**resp_headers, "X-Cache": "MISS", "X-Cache-Tier": tier}
@@ -265,6 +387,9 @@ class Gateway:
             "group_errs": self.group_errs,
             "bucket_waits": {n: b.wait_count for n, b in self.buckets.items()},
             "cache": self.cache.stats(),
+            "disk_cache": self.disk_cache.stats() if self.disk_cache else None,
+            "disk_load_count": self._disk_load_count,
+            "disk_load_ms": self._disk_load_ms,
             "intraday": self._is_intraday(),
         }
 
@@ -318,28 +443,40 @@ def load_config(path: Path) -> dict:
 
 
 def main():
-    ap = argparse.ArgumentParser(description="sgw_proxy — A股数据共享流量网关")
+    ap = argparse.ArgumentParser(description="sgw_proxy - A股数据共享流量网关")
     ap.add_argument("-c", "--config", default=str(DEFAULT_CONFIG))
     ap.add_argument("--host", default=None)
     ap.add_argument("--port", type=int, default=None)
     ap.add_argument("--fp-dir", default=None,
                     help="指纹日志目录（生产环境必须指定，如 /var/log/sgw）")
+    ap.add_argument("--cache-dir", default=None,
+                    help="磁盘缓存目录（P/L 档持久化，生产建议 /var/lib/sgw）")
     args = ap.parse_args()
 
     cfg = load_config(Path(args.config))
     host = args.host or cfg["server"]["host"]
     port = args.port or cfg["server"]["port"]
 
-    gateway = Gateway(cfg, fp_dir_override=args.fp_dir)
+    gateway = Gateway(cfg, fp_dir_override=args.fp_dir, cache_dir_override=args.cache_dir)
     server = ThreadingHTTPServer((host, port), make_handler(gateway))
     print(f"[sgw_proxy] listening on {host}:{port}", flush=True)
     print(f"[sgw_proxy] groups: {list(gateway.buckets)}", flush=True)
     print(f"[sgw_proxy] fingerprint log: {gateway.fp_dir}", flush=True)
+    if gateway.disk_cache:
+        print(f"[sgw_proxy] disk cache: {gateway.disk_cache.db_path} "
+              f"(loaded {gateway._disk_load_count} entries in {gateway._disk_load_ms}ms)", flush=True)
+
+    def shutdown(*_):
+        print("\n[sgw_proxy] stopping...", flush=True)
+        if gateway.disk_cache:
+            gateway.disk_cache.close()
+        server.shutdown()
+
+    signal.signal(signal.SIGTERM, shutdown)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        print("\n[sgw_proxy] stopped")
-        server.shutdown()
+        shutdown()
 
 
 if __name__ == "__main__":
