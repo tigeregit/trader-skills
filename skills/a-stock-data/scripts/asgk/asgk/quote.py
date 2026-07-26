@@ -145,6 +145,11 @@ def baidu_kline_with_ma(code: str, start_time: str = "") -> dict:
         start_time: 起始日 "YYYY-MM-DD"，空=全部
     Returns:
         {keys: [字段名...], rows: ["时间,开,收,高,低,量,额,ma5,ma10,ma20", ...]}
+
+    Note:
+        百度对此端点有 IP 风控，被拒时返回 ``{"ResultCode":"403","Result":[]}``。
+        本函数检测到该结构会抛 ``RuntimeError``（含 ResultCode 与处置建议），
+        而非让 ``Result=[]`` 走到 ``.get`` 触发误导性的 ``AttributeError``。
     """
     r = requests.get("https://finance.pae.baidu.com/selfselect/getstockquotation",
                      params={"all": "1", "isIndex": "false", "isBk": "false", "isBlock": "false",
@@ -156,6 +161,30 @@ def baidu_kline_with_ma(code: str, start_time: str = "") -> dict:
                               "Origin": "https://gushitong.baidu.com",
                               "Referer": "https://gushitong.baidu.com/"},
                      timeout=10)
-    result = r.json().get("Result", {})
+    return _parse_baidu_kline(r.json(), code)
+
+
+def _parse_baidu_kline(d: dict, code: str) -> dict:
+    """解析百度股市通 K 线返回，对风控/异常结构给出清晰错误。
+
+    百度 observed 返回形态：
+      - 正常: {"ResultCode":"0", "Result":{"newMarketData":{"keys":[...], "marketData":"..."}}}
+      - 风控: {"ResultCode":"403", "Result":[]}  ← 当前服务器 IP 被稳定拒绝
+      - 其它非 0 ResultCode 也按错误处理。
+    """
+    code_str = str(d.get("ResultCode", ""))
+    result = d.get("Result")
+
+    # 风控/异常：ResultCode != "0"，或 Result 非 dict（被拒时常为 []）
+    if code_str != "0" or not isinstance(result, dict):
+        # Result 非空却不是 dict，同样视为接口异常（保留原始结构供排查）
+        hint = "百度拒绝访问，当前 IP 可能被风控" if code_str == "403" or not code_str else \
+               f"百度返回异常 ResultCode={code_str}"
+        raise RuntimeError(
+            f"baidu_kline_with_ma({code!r}) 取数失败: {hint}。"
+            f"原始返回 ResultCode={code_str!r}, Result 类型={type(result).__name__}。"
+            f"建议：换 IP/加代理重试，或改用其它日K源（注意 mootdx_bars 0.11.7 亦不可用）。"
+        )
+
     md = result.get("newMarketData", {})
     return {"keys": md.get("keys", []), "rows": md.get("marketData", "").split(";")}
