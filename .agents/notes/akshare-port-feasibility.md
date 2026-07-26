@@ -1,0 +1,326 @@
+# 方案 C 可行性探索：akshare 移植到 asgk 的难点与 asgk 设计升级
+
+> **状态**：Draft，可行性探索（非执行计划）
+> **分支**：`feat/akshare-merge`
+> **日期**：2026-07-26
+> **关联**：
+> - [akshare-integration-analysis.md](akshare-integration-analysis.md)（已确立选方案 C）
+> - [akshare-merge-design.md](akshare-merge-design.md)（合成方案执行 plan）
+
+---
+
+## 0. 问题
+
+方案 C（akshare 作 ref 蓝本，移植解析逻辑到 asgk）是否真的可行？是否存在**无法或难以移植**的接口？如果存在，asgk 现有设计需要怎样升级才能消化？
+
+本文基于 akshare 全量源码的依赖使用点核查 + 解析模式分类，给出结论。
+
+---
+
+## 1. akshare 接口按"获取+解析模式"分类
+
+核查 akshare 所有 A 股相关模块，按**数据获取方式 × 响应解析方式**两维度分类：
+
+### 1.1 数据获取方式（4 类）
+
+| 获取方式 | 占比 | asgk 兼容性 |
+|---------|------|------------|
+| **东财 datacenter GET**（`datacenter-web.eastmoney.com/api/data/v1/get`） | ~50% | ✅ 完全兼容，复用 `_datacenter()` |
+| **东财 push2 GET**（`push2his.eastmoney.com` / `push2.eastmoney.com`） | ~20% | ✅ 完全兼容，复用 `em_get()` |
+| **同花顺 GET + hexin-v 签名**（`data.10jqka.com.cn` / `q.10jqka.com.cn`） | ~10% | ⚠️ 需本地 JS 签名（asgk 已有先例） |
+| **乐咕/eNiu GET + token 签名**（`legulegu.com` / `eniu.com`） | ~5% | ⚠️ 需本地 JS 签名 + HTML 拿 CSRF |
+| 其他（新浪 HTML / 巨潮 POST / 交易所 GET / 雪球） | ~15% | 多数兼容，个别需特殊处理 |
+
+### 1.2 响应解析方式（4 类）
+
+| 解析方式 | akshare 用法 | asgk 兼容性 |
+|---------|------------|------------|
+| **纯 JSON** | `r.json()["result"]["data"]` | ✅ 直接复用，返回 `list[dict]` |
+| **HTML + lxml/bs4** | `BeautifulSoup(r.text).find(...)` | ⚠️ 需引入轻量 HTML 解析（见 §3.2） |
+| **JS 算法执行（mini-racer）** | 三种子场景，见 §2.2 | ⚠️ 需区分对待 |
+| **Excel（openpyxl/xlrd）** | 交易所下载 Excel 解析 | ❌ 个别接口，建议跳过 |
+
+---
+
+## 2. 难点接口清单与根因分析
+
+### 2.1 P0 接口（11 个）——**全部可移植，零难点**
+
+逐一核查 P0 候选接口的解析模式：
+
+| 接口 | 获取 | 解析 | 难度 |
+|------|------|------|------|
+| 十大股东 `stock_gdfx_top_10_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+| 股东持股变化 `stock_gdfx_holding_change_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+| 业绩预告 `stock_yjyg_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+| 业绩快报 `stock_yjkb_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+| 回购 `stock_repurchase_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+| 高管增减持 `stock_hold_management_detail_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+| 机构调研 `stock_jgdy_detail_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+| 概念板块成份股 `stock_board_concept_cons_em` | 东财 push2 | 纯 JSON | 🟢 极易 |
+| 行业板块成份股 `stock_board_industry_cons_em` | 东财 push2 | 纯 JSON | 🟢 极易 |
+| 股权质押 `stock_gpzy_pledge_ratio_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+| 商誉 `stock_sy_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
+
+**结论**：P0 全部是东财 datacenter/push2 的纯 JSON 接口，与 asgk 现有 `capital.py`/`signal.py` 范式**完全同构**，移植工作量极低（每接口 ~30-50 行）。
+
+### 2.2 P1 难点接口（mini-racer + HTML）
+
+这些是真正需要设计升级才能消化的接口：
+
+| 接口 | 难点 | 根因 |
+|------|------|------|
+| **个股 PE/PB 分位** `stock_a_indicator_lg` | HTML + CSRF | eNiu 需先 GET HTML 拿 `_csrf` token，再带 token 请求 JSON |
+| **全市场 PE/PB** `stock_market_pe_lg` | mini-racer | 乐咕请求需 `hex(date)` 签名 token |
+| **筹码分布** `stock_cyq_em` | mini-racer | CYQ 算法在 JS 里实现（不是解密，是计算） |
+| **同花顺资金流** `stock_fund_flow_individual` | mini-racer + HTML | 同花顺 `hexin-v` cookie 签名 + HTML 表格解析 |
+| **同花顺概念板块** `stock_board_concept_ths` | mini-racer + HTML | 同上 |
+| **同花顺技术选股** `stock_rank_*_ths`（11 个） | mini-racer + HTML | 同上 |
+| **新浪龙虎榜** `stock_lhb_detail_daily_sina` | HTML | 新浪返回 HTML 表格 |
+| **乐咕赚钱效应** `stock_market_activity_legu` | HTML | 乐咕返回 HTML |
+
+### 2.3 mini-racer 的三种子场景（关键拆解）
+
+核查所有 mini-racer 使用点，发现**三种本质不同的用法**，难度天差地别：
+
+| 子场景 | 用例 | 本质 | asgk 应对 |
+|--------|------|------|----------|
+| **(a) JS 算请求签名 token** | 乐咕 `hex(date)`、同花顺 `hexin-v` | JS 函数 → 纯 Python 重写（几行） | 🟢 已有先例：`cls_telegraph` 的 `md5(sha1(qs))` |
+| **(b) JS 实现业务算法** | 东财筹码 CYQ | 纯算法，JS 与 Python 等价表达 | 🟢 翻译成 Python（公开算法） |
+| **(c) JS 解密加密响应** | （akshare A 股里**未发现**） | 真正需要 JS 引擎 | 🔴 本项目范围内**不存在** |
+
+**关键发现**：核查 akshare 全部 A 股模块，**子场景 (c) 不存在**。所有 mini-racer 用法都是 (a) 签名或 (b) 算法，都可以纯 Python 重写。这是方案 C 可行的决定性证据。
+
+### 2.4 真正"难以移植"的接口（仅 2 类）
+
+| 接口类型 | 例子 | 难点 | 建议 |
+|---------|------|------|------|
+| **交易所 Excel 下载** | `stock_margin_underlying_info_szse`（深交所标的 Excel） | 需 openpyxl | **跳过**（asgk 已有东财 margin 源） |
+| **curl_cffi JA3 绕过** | `news_stock_em`（东财搜索 api）、`news_baidu` | 需 TLS 指纹伪装 | **暂缓**（asgk 已有 `eastmoney_stock_news` 替代） |
+
+这两类都不在 P0/P1 候选里，且 asgk 已有替代源，**不影响合成方案**。
+
+---
+
+## 3. asgk 设计升级方案（针对难点）
+
+针对 §2.2 的难点接口，asgk 需要三处设计升级。**这些都是新增能力，不破坏现有契约**。
+
+### 3.1 升级一：本地签名工具模块 `_signing.py`
+
+**问题**：乐咕/同花顺/eNiu 都需要本地计算签名 token，asgk 目前只在 `cls_telegraph` 内联实现了一次。
+
+**升级**：抽出公共签名工具模块。
+
+```python
+# asgk/_signing.py（新增）
+"""本地签名工具：JS 签名算法的纯 Python 重写。
+
+原则：不引入 mini-racer（重依赖），将 JS 签名函数翻译成 Python。
+所有签名算法来自 akshare 的 ths.js / 乐咕 hash_code（ref 蓝本）。
+"""
+from datetime import datetime
+import hashlib
+
+def ths_hexin_v() -> str:
+    """同花顺 hexin-v cookie 签名。
+
+    算法来源：akshare/utils/ths.js 的 v() 函数（纯时间戳+随机数哈希）。
+    返回值作为 Cookie: hexin-v=<value> 或 X-Requested-With 配套头。
+    """
+    # 翻译自 ths.js，~20 行 Python（具体实现待移植时填）
+    ...
+
+def legu_token(date: datetime | None = None) -> str:
+    """乐咕请求 token = hex(date_iso)。
+
+    算法来源：akshare stock_a_pe_and_pb.py 的 hash_code JS。
+    """
+    d = (date or datetime.now()).date().isoformat()
+    return hashlib.md5(...)  # 翻译自乐咕 hash_code
+```
+
+**价值**：
+- 同花顺资金流/概念板块/技术选股（11+ 接口）共用 `ths_hexin_v()`
+- 乐咕全市场 PE/PB/巴菲特/股债利差共用 `legu_token()`
+- 复用 `cls_telegraph` 已验证的"JS→Python 签名翻译"模式
+
+**对现有设计的影响**：零破坏。纯新增模块，`cls_telegraph` 后续可重构调用它（可选）。
+
+### 3.2 升级二：轻量 HTML 解析（不引入 lxml/bs4）
+
+**问题**：同花顺资金流/龙虎榜（新浪）/乐咕赚钱效应返回 HTML 表格，akshare 用 `BeautifulSoup + lxml`。
+
+**asgk 约束**：不引入 bs4/lxml（重依赖，~30MB）。
+
+**升级方案对比**：
+
+| 方案 | 依赖 | 适用 | 推荐度 |
+|------|------|------|--------|
+| **(A) 纯正则解析 HTML 表格** | 零 | 简单表格（同花顺/新浪） | 🟢 推荐（轻量） |
+| **(B) stdlib `html.parser`** | 零（标准库） | 中等复杂 HTML | 🟢 推荐（标准库） |
+| **(C) 引入 `selectolax`** | ~2MB（lexbor C 绑定） | 复杂 HTML | 🟡 仅在 A/B 不够时 |
+| **(D) 引入 bs4+lxml** | ~30MB | 通用 | 🔴 违反轻依赖原则 |
+
+**推荐**：**方案 B（stdlib `html.parser`）为主，方案 A（正则）为辅**。
+
+```python
+# asgk/_htmltable.py（新增）
+"""轻量 HTML 表格解析（基于 stdlib html.parser，不引入 bs4/lxml）。
+
+用于同花顺/新浪/乐咕返回的 HTML 表格数据。
+"""
+from html.parser import HTMLParser
+
+class TableParser(HTMLParser):
+    """从 HTML 提取 <table> 为 list[list[str]]。"""
+    def __init__(self):
+        super().__init__()
+        self.tables: list[list[list[str]]] = []
+        self._cur_table: list[list[str]] | None = None
+        self._cur_row: list[str] | None = None
+        self._cur_cell: list[str] | None = None
+    def handle_starttag(self, tag, attrs):
+        if tag == "table": self._cur_table = []
+        elif tag == "tr" and self._cur_table is not None: self._cur_row = []
+        elif tag in ("td", "th") and self._cur_row is not None: self._cur_cell = []
+    def handle_endtag(self, tag):
+        if tag == "table" and self._cur_table is not None:
+            self.tables.append(self._cur_table); self._cur_table = None
+        elif tag == "tr" and self._cur_row is not None:
+            self._cur_table.append(self._cur_row); self._cur_row = None
+        elif tag in ("td", "th") and self._cur_cell is not None:
+            self._cur_row.append("".join(self._cur_cell)); self._cur_cell = None
+    def handle_data(self, data):
+        if self._cur_cell is not None: self._cur_cell.append(data.strip())
+
+def parse_html_tables(html: str) -> list[list[list[str]]]:
+    p = TableParser(); p.feed(html); return p.tables
+```
+
+**价值**：覆盖所有 HTML 表格接口（同花顺/新浪/乐咕），零新增依赖。
+
+**对现有设计的影响**：零破坏。纯新增模块。
+
+### 3.3 升级三：扩展 `@source` 装饰器的 via 字段
+
+**问题**：现有 `Via = Literal["gateway", "direct"]` 只区分"经网关"和"直连"。但难点接口需要更细的标注：
+
+- 同花顺源经网关，但需本地签名（`gateway + sign=ths`）
+- 乐咕源直连，但需本地签名 + CSRF（`direct + sign=legu`）
+- 东财 push2 经网关，纯 JSON（`gateway`）
+
+**升级（可选，向后兼容）**：
+
+```python
+# asgk/_contract.py（扩展）
+Via = Literal["gateway", "direct"]
+
+@dataclass
+class SourceMeta:
+    tier: Tier
+    via: Via
+    sign: str | None = None  # 新增：签名类型 "ths" / "legu" / "cls" / None
+    parse: str | None = None  # 新增：解析类型 "json" / "html_table" / "text"
+    cli: str | None = None
+    ...
+```
+
+**注意**：这是**可选升级**，目的是让 `@source` 元数据更完整（驱动文档生成/离线分析）。现有函数不挂 `sign`/`parse` 也能工作（默认 None）。
+
+**对现有设计的影响**：向后兼容。现有 50 个函数无需改动；新函数可选挂 `sign`/`parse`。
+
+### 3.4 升级四：sgw 新增乐咕/交易所限流组（可选）
+
+**问题**：乐咕（`legulegu.com`/`eniu.com`）和交易所（`query.sse.com.cn`）不在 sgw 现有 `PROXIED_DOMAIN_SUFFIXES` 里。
+
+**两个选项**（已在 integration-analysis.md §5 讨论）：
+
+| 选项 | 做法 | 推荐 |
+|------|------|------|
+| asgk 内直连 + 自律限流 | 复用 `em_proxy._direct_throttle` 模式 | 🟢 乐咕（无封 IP 风险） |
+| sgw 新增限流组 | config 加 `legu`/`exchange` 组 | 🟡 交易所源（与东财隔离更安全） |
+
+**对现有设计的影响**：sgw config 扩展，不改代码。零破坏。
+
+---
+
+## 4. 难点接口的移植可行性裁决
+
+逐个裁决 §2.2 的难点接口，确认是否可移植：
+
+| 接口 | 升级依赖 | 裁决 | 工作量 |
+|------|---------|------|--------|
+| 个股 PE/PB 分位（eNiu） | 升级一（CSRF）+ HTML 拿 token | ✅ 可移植 | 中（~80 行） |
+| 全市场 PE/PB（乐咕） | 升级一（`legu_token`） | ✅ 可移植 | 低（~40 行） |
+| 巴菲特指标（乐咕） | 升级一（`legu_token`） | ✅ 可移植 | 低（~30 行） |
+| 股债利差（乐咕） | 升级一（`legu_token`） | ✅ 可移植 | 低（~30 行） |
+| 筹码分布（东财） | 升级一无关，CYQ 算法 Python 重写 | ✅ 可移植 | 中（~100 行，含 CYQ 算法） |
+| 同花顺资金流 | 升级一（`ths_hexin_v`）+ 升级二（HTML） | ✅ 可移植 | 中（~80 行） |
+| 同花顺概念板块 | 升级一 + 升级二 | ✅ 可移植 | 中（~60 行） |
+| 同花顺技术选股（11 个） | 升级一 + 升级二 | ✅ 可移植 | 中（~200 行，11 接口共用基建） |
+| 新浪龙虎榜 | 升级二（HTML） | ✅ 可移植 | 低（~50 行） |
+| 乐咕赚钱效应 | 升级二（HTML） | ✅ 可移植 | 低（~50 行） |
+
+**裁决结论**：**全部难点接口可移植**，无"无法移植"项。需要的前置升级是 §3.1 + §3.2（两个轻量新模块），都是纯新增、零破坏。
+
+---
+
+## 5. asgk 设计升级汇总
+
+| 升级 | 类型 | 依赖变化 | 破坏性 | 必要性 |
+|------|------|---------|--------|--------|
+| `_signing.py` 本地签名工具 | 新增模块 | 零 | 无 | 必需（覆盖乐咕+同花顺 15+ 接口） |
+| `_htmltable.py` HTML 表格解析 | 新增模块 | 零（stdlib） | 无 | 必需（覆盖 HTML 接口） |
+| `@source` 加 `sign`/`parse` 字段 | 契约扩展 | 零 | 向后兼容 | 可选（元数据更完整） |
+| sgw 新增 `legu`/`exchange` 组 | config 扩展 | 零 | 无 | 可选（按源决策） |
+
+**核心结论**：asgk 设计升级的代价是**新增 2 个轻量工具模块（~150 行）**，零新增重依赖，零破坏现有契约。这足以消化 akshare 所有 A 股难点接口。
+
+---
+
+## 6. 终极可行性结论
+
+### 6.1 方案 C 可行吗？
+
+**完全可行。** 核查 akshare 全部 A 股模块：
+
+- **P0（11 接口）**：100% 纯 JSON，零难点，与 asgk 现有范式同构
+- **P1 难点（10+ 接口）**：100% 可移植，需 2 个轻量工具模块前置
+- **真正不可移植**：仅 2 类（交易所 Excel / curl_cffi JA3），都在 P2 外且有替代源
+
+### 6.2 asgk 设计需要升级吗？
+
+**需要，但代价极小**：
+- 新增 `_signing.py`（本地签名工具，~80 行）
+- 新增 `_htmltable.py`（HTML 表格解析，~70 行，基于 stdlib）
+- 可选：`@source` 扩展 `sign`/`parse` 元数据字段（向后兼容）
+- 可选：sgw 新增乐咕/交易所限流组（config 级）
+
+**关键设计原则不变**：
+- ✅ 零重依赖（不引入 pandas/lxml/bs4/mini-racer/curl_cffi）
+- ✅ 风控源经 sgw 网关（§2 合规）
+- ✅ `list[dict]` 返回（与现有 50 函数一致）
+- ✅ `@source` + tier/via 契约（向后兼容）
+
+### 6.3 关键证据：mini-racer 子场景 (c) 不存在
+
+akshare 全部 A 股模块里，**没有"JS 解密加密响应"的场景**（子场景 c）。所有 mini-racer 用法都是签名（a）或算法（b），都可纯 Python 重写。这是方案 C 可行的**决定性证据**——意味着没有任何接口"必须依赖 JS 引擎"。
+
+### 6.4 对合成方案执行 plan 的修订建议
+
+[akshare-merge-design.md](akshare-merge-design.md) 的阶段拆解需补一处前置：
+
+- **新增阶段 0.5**：实现 `_signing.py` + `_htmltable.py` 两个工具模块
+- **阶段 1 P0**：不变（纯 JSON，无需工具模块）
+- **阶段 2 P1**：依赖阶段 0.5 的工具模块
+
+---
+
+## 7. 待评审决策点
+
+1. **`_signing.py` 的算法来源**：直接翻译 akshare 的 `ths.js` / 乐咕 `hash_code`，还是先逆向验证？（倾向直接翻译 + 真机验证）
+2. **`_htmltable.py` 的实现**：stdlib `html.parser`（推荐）vs 正则 vs selectolax？
+3. **`@source` 是否扩展 `sign`/`parse` 字段**？（倾向是，元数据驱动文档生成）
+4. **sgw 乐咕/交易所限流组**：进网关 vs 直连？（倾向：乐咕直连，交易所进网关）
+5. **CYQ 筹码算法**：翻译 akshare 的 JS 实现 vs 参考公开算法独立实现？（倾向后者，更易维护）

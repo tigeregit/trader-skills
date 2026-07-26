@@ -12,6 +12,7 @@
 | [sync-with-ref.md](sync-with-ref.md) | 与上游 ref 的同步记录（git hash + 转换方法 + 更新流程） | 上游更新时同步 |
 | [akshare-merge-design.md](akshare-merge-design.md) | akshare 能力合成到 a-stock-data 的设计（Draft，含拆分vs合成决策、3阶段拆解、交叉接口归属表） | 评审/执行 akshare 移植时 |
 | [akshare-integration-analysis.md](akshare-integration-analysis.md) | akshare 集成路径分析（source gateway vs 封装 package vs ref 蓝本移植，三方案对比） | 评审集成方案、理解为何选 ref 蓝本移植时 |
+| [akshare-port-feasibility.md](akshare-port-feasibility.md) | 方案 C 可行性探索（难点接口分类、mini-racer 三子场景、asgk 设计升级方案） | 评审方案 C 可行性、规划 asgk 升级时 |
 | [test-method.md](test-method.md) | 测试方法论（pi+locust 双层策略，L1端到端/L2压测） | 规划测试时 |
 | [testing.md](testing.md) | 测试操作手册（网关验收 + pi端到端 + locust压测，可直接执行） | 实际跑测试时 |
 
