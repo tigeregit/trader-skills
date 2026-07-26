@@ -112,95 +112,90 @@
 
 **升级**：抽出公共签名工具模块。
 
+**决策（评审已定）**：**vendor akshare 的 JS + py-mini-racer 执行**。
+
+理由：py-mini-racer（48M）已是 mootdx 的传递依赖，asgk 环境里已装，**用起来零新增成本**。相比纯 Python 重写，vendor JS 的优势是上游 ths.js 变了只换文件、无需逆向重写。
+
 ```python
 # asgk/_signing.py（新增）
-"""本地签名工具：JS 签名算法的纯 Python 重写。
+"""本地签名工具：vendor akshare 的 JS，用 py-mini-racer 执行。
 
-原则：不引入 mini-racer（重依赖），将 JS 签名函数翻译成 Python。
-所有签名算法来自 akshare 的 ths.js / 乐咕 hash_code（ref 蓝本）。
+py-mini-racer 已是 mootdx 传递依赖（已装），无新增依赖成本。
+JS 文件 vendor 在 asgk/_vendor/，上游变更时换文件即可。
 """
-from datetime import datetime
-import hashlib
+from functools import lru_cache
+from pathlib import Path
+import py_mini_racer
+
+_VENDOR_DIR = Path(__file__).parent / "_vendor"
+
+@lru_cache(maxsize=1)
+def _engine(js_name: str) -> py_mini_racer.MiniRacer:
+    """加载并缓存 JS 引擎（首次 eval ~50ms，后续调用 <1ms）。"""
+    js = py_mini_racer.MiniRacer()
+    js.eval((_VENDOR_DIR / js_name).read_text(encoding="utf-8"))
+    return js
 
 def ths_hexin_v() -> str:
-    """同花顺 hexin-v cookie 签名。
+    """同花顺 hexin-v cookie 签名（vendor ths.js 的 v() 函数）。"""
+    return _engine("ths.js").call("v")
 
-    算法来源：akshare/utils/ths.js 的 v() 函数（纯时间戳+随机数哈希）。
-    返回值作为 Cookie: hexin-v=<value> 或 X-Requested-With 配套头。
-    """
-    # 翻译自 ths.js，~20 行 Python（具体实现待移植时填）
-    ...
-
-def legu_token(date: datetime | None = None) -> str:
-    """乐咕请求 token = hex(date_iso)。
-
-    算法来源：akshare stock_a_pe_and_pb.py 的 hash_code JS。
-    """
-    d = (date or datetime.now()).date().isoformat()
-    return hashlib.md5(...)  # 翻译自乐咕 hash_code
+def legu_token(date_iso: str | None = None) -> str:
+    """乐咕请求 token（vendor legulegu hash_code 的 hex() 函数）。"""
+    from datetime import datetime
+    d = date_iso or datetime.now().date().isoformat()
+    return _engine("legu_hash.js").call("hex", d).lower()
 ```
+
+**vendor 文件来源**（从 ref/akshare 拷贝）：
+- `akshare/stock_feature/ths.js`（39K，989 行）→ `asgk/_vendor/ths.js`
+- `akshare/stock_feature/stock_a_pe_and_pb.py` 内联的 `hash_code` 字符串 → `asgk/_vendor/legu_hash.js`
 
 **价值**：
 - 同花顺资金流/概念板块/技术选股（11+ 接口）共用 `ths_hexin_v()`
 - 乐咕全市场 PE/PB/巴菲特/股债利差共用 `legu_token()`
-- 复用 `cls_telegraph` 已验证的"JS→Python 签名翻译"模式
+- 上游 JS 变更时换 vendor 文件即可，无需逆向重写
 
-**对现有设计的影响**：零破坏。纯新增模块，`cls_telegraph` 后续可重构调用它（可选）。
+**对现有设计的影响**：零破坏。纯新增模块。`cls_telegraph` 现有内联签名可保留（已是纯 Python md5/sha1），也可后续迁移到本模块（可选）。
 
-### 3.2 升级二：轻量 HTML 解析（不引入 lxml/bs4）
+### 3.2 升级二：HTML 解析（用已装的 lxml，不引入 bs4）
 
 **问题**：同花顺资金流/龙虎榜（新浪）/乐咕赚钱效应返回 HTML 表格，akshare 用 `BeautifulSoup + lxml`。
 
-**asgk 约束**：不引入 bs4/lxml（重依赖，~30MB）。
-
-**升级方案对比**：
-
-| 方案 | 依赖 | 适用 | 推荐度 |
-|------|------|------|--------|
-| **(A) 纯正则解析 HTML 表格** | 零 | 简单表格（同花顺/新浪） | 🟢 推荐（轻量） |
-| **(B) stdlib `html.parser`** | 零（标准库） | 中等复杂 HTML | 🟢 推荐（标准库） |
-| **(C) 引入 `selectolax`** | ~2MB（lexbor C 绑定） | 复杂 HTML | 🟡 仅在 A/B 不够时 |
-| **(D) 引入 bs4+lxml** | ~30MB | 通用 | 🔴 违反轻依赖原则 |
-
-**推荐**：**方案 B（stdlib `html.parser`）为主，方案 A（正则）为辅**。
+**asgk 现状**：`lxml>=6.1.1` 已在 pyproject.toml 声明（虽代码里没用过，~12M 已装）。**直接用 lxml.etree，无需 bs4**（bs4 是上层封装，etree 更快且已装）。
 
 ```python
 # asgk/_htmltable.py（新增）
-"""轻量 HTML 表格解析（基于 stdlib html.parser，不引入 bs4/lxml）。
+"""HTML 表格解析（基于 lxml.etree，已装）。
 
 用于同花顺/新浪/乐咕返回的 HTML 表格数据。
 """
-from html.parser import HTMLParser
-
-class TableParser(HTMLParser):
-    """从 HTML 提取 <table> 为 list[list[str]]。"""
-    def __init__(self):
-        super().__init__()
-        self.tables: list[list[list[str]]] = []
-        self._cur_table: list[list[str]] | None = None
-        self._cur_row: list[str] | None = None
-        self._cur_cell: list[str] | None = None
-    def handle_starttag(self, tag, attrs):
-        if tag == "table": self._cur_table = []
-        elif tag == "tr" and self._cur_table is not None: self._cur_row = []
-        elif tag in ("td", "th") and self._cur_row is not None: self._cur_cell = []
-    def handle_endtag(self, tag):
-        if tag == "table" and self._cur_table is not None:
-            self.tables.append(self._cur_table); self._cur_table = None
-        elif tag == "tr" and self._cur_row is not None:
-            self._cur_table.append(self._cur_row); self._cur_row = None
-        elif tag in ("td", "th") and self._cur_cell is not None:
-            self._cur_row.append("".join(self._cur_cell)); self._cur_cell = None
-    def handle_data(self, data):
-        if self._cur_cell is not None: self._cur_cell.append(data.strip())
+from lxml import etree
 
 def parse_html_tables(html: str) -> list[list[list[str]]]:
-    p = TableParser(); p.feed(html); return p.tables
+    """提取所有 <table> 为 list[list[list[str]]]。"""
+    tree = etree.HTML(html)
+    tables = []
+    for table in tree.xpath("//table"):
+        rows = []
+        for row in table.xpath(".//tr"):
+            cells = [c.text_content().strip()
+                     for c in row.xpath(".//td|.//th")]
+            if cells:
+                rows.append(cells)
+        if rows:
+            tables.append(rows)
+    return tables
 ```
 
-**价值**：覆盖所有 HTML 表格接口（同花顺/新浪/乐咕），零新增依赖。
+**vs stdlib html.parser（之前误推的方案）**：
+- lxml etree ~15 行，stdlib 版 ~30 行
+- lxml 性能更快（C 实现），xpath 表达力更强
+- 已装，零新增依赖
 
-**对现有设计的影响**：零破坏。纯新增模块。
+**价值**：覆盖所有 HTML 表格接口（同花顺/新浪/乐咕）。
+
+**对现有设计的影响**：零破坏。纯新增模块。从这一刻起 asgk 实际开始用 lxml（之前只声明没用）。
 
 ### 3.3 升级三：扩展 `@source` 装饰器的 via 字段
 
@@ -268,14 +263,64 @@ class SourceMeta:
 
 ## 5. asgk 设计升级汇总
 
+### 5.1 依赖事实修正（重要）
+
+**前期分析的"零重依赖"前提是错的。** 核查 asgk 的 `uv.lock` 真实闭包：
+
+| 依赖 | 体积 | asgk 现状 | 性质 |
+|------|------|----------|------|
+| pandas | 50M | ✅ 已装（mootdx 传递） | 可用 |
+| numpy | 33M | ✅ 已装（pandas 传递） | 可用 |
+| py-mini-racer | 48M | ✅ 已装（mootdx 传递） | 可用 |
+| lxml | 12M | ✅ 已装（asgk 直接声明） | 可用（之前声明但没用） |
+| requests | 480K | ✅ 已装（asgk 直接） | 已用 |
+| mootdx | ~100K | ✅ 已装（asgk 直接） | 已用（TCP 行情） |
+
+**asgk 真实安装闭包 ~160MB+**，不是早期误称的 ~5MB。pandas/numpy/mini-racer 都是 mootdx 拉进来的——akshare 的"重依赖"大部分 asgk 早就在了。
+
+**真正值得拒绝的依赖**（有独立工程代价、非 mootdx 拉入）：
+- `curl_cffi` (31M)：TLS 指纹绕过工具，本质反反爬对抗；asgk 已有 em_get 走网关，不需要每客户端带 JA3 伪装
+- `akshare` 全量包：400+ 接口直连绕过 sgw，违反 §2
+
+**修正后的设计原则**（替换原来错误的"零重依赖"）：
+- ✅ 风控源经 sgw 网关（§2 合规，这是真正不可妥协的）
+- ✅ 实现层可自由用 pandas/lxml/mini-racer（反正已装）
+- ✅ 契约层返回 `list[dict]`（理由：调用方友好 + 跨版本稳定，**不是**"零依赖"）
+- ✅ 拒绝 curl_cffi（避免反反爬对抗，走网关层解决）
+
+### 5.2 升级清单（评审已定方案）
+
 | 升级 | 类型 | 依赖变化 | 破坏性 | 必要性 |
 |------|------|---------|--------|--------|
-| `_signing.py` 本地签名工具 | 新增模块 | 零 | 无 | 必需（覆盖乐咕+同花顺 15+ 接口） |
-| `_htmltable.py` HTML 表格解析 | 新增模块 | 零（stdlib） | 无 | 必需（覆盖 HTML 接口） |
+| `_signing.py` vendor JS + mini-racer | 新增模块 | 零（mini-racer 已装） | 无 | 必需（覆盖乐咕+同花顺 15+ 接口） |
+| `_htmltable.py` 用 lxml.etree | 新增模块 | 零（lxml 已声明） | 无 | 必需（覆盖 HTML 接口） |
+| `to_df()` 包装函数 | 新增辅助 | 零 | 无 | 必需（双契约，调用方按需转 DataFrame） |
 | `@source` 加 `sign`/`parse` 字段 | 契约扩展 | 零 | 向后兼容 | 可选（元数据更完整） |
 | sgw 新增 `legu`/`exchange` 组 | config 扩展 | 零 | 无 | 可选（按源决策） |
 
-**核心结论**：asgk 设计升级的代价是**新增 2 个轻量工具模块（~150 行）**，零新增重依赖，零破坏现有契约。这足以消化 akshare 所有 A 股难点接口。
+### 5.3 返回类型契约（评审已定：双契约）
+
+asgk 现有 50 个函数全部返回 `list[dict]`。评审决定保持这一契约，同时提供 `to_df()` 包装：
+
+```python
+# asgk/_dataframe.py（新增）
+"""DataFrame 包装：把 list[dict] 业务结果转 DataFrame，调用方按需用。"""
+import pandas as pd
+
+def to_df(data: list[dict]) -> pd.DataFrame:
+    """list[dict] → DataFrame。"""
+    return pd.DataFrame(data)
+
+# 使用示例
+from asgk import margin_trading, to_df
+df = to_df(margin_trading("600519"))  # 调用方需要 DataFrame 时
+```
+
+**为什么是双契约而不是直接返 DataFrame**：
+- 现有 50 函数契约不变（向后兼容）
+- `list[dict]` 对所有调用方友好（含不用 pandas 的）
+- pandas 跨版本 API 变动大，asgk 作为基础设施应稳定
+- 需要分析能力时调用方一行 `to_df()` 即可
 
 ---
 
@@ -286,32 +331,36 @@ class SourceMeta:
 **完全可行。** 核查 akshare 全部 A 股模块：
 
 - **P0（11 接口）**：100% 纯 JSON，零难点，与 asgk 现有范式同构
-- **P1 难点（10+ 接口）**：100% 可移植，需 2 个轻量工具模块前置
+- **P1 难点（10+ 接口）**：100% 可移植，需 2 个工具模块前置（vendor JS + etree）
 - **真正不可移植**：仅 2 类（交易所 Excel / curl_cffi JA3），都在 P2 外且有替代源
 
 ### 6.2 asgk 设计需要升级吗？
 
-**需要，但代价极小**：
-- 新增 `_signing.py`（本地签名工具，~80 行）
-- 新增 `_htmltable.py`（HTML 表格解析，~70 行，基于 stdlib）
+**需要，代价极小**：
+- 新增 `_signing.py`（vendor JS + mini-racer，~40 行）
+- 新增 `_htmltable.py`（lxml.etree，~15 行）
+- 新增 `_dataframe.py`（`to_df()` 包装，~5 行）
 - 可选：`@source` 扩展 `sign`/`parse` 元数据字段（向后兼容）
 - 可选：sgw 新增乐咕/交易所限流组（config 级）
 
-**关键设计原则不变**：
-- ✅ 零重依赖（不引入 pandas/lxml/bs4/mini-racer/curl_cffi）
-- ✅ 风控源经 sgw 网关（§2 合规）
-- ✅ `list[dict]` 返回（与现有 50 函数一致）
+**修正后的关键设计原则**（替换错误的"零重依赖"）：
+- ✅ 风控源经 sgw 网关（§2 合规）— 这是真正不可妥协的
+- ✅ 实现层自由用 pandas/lxml/mini-racer（已装，零新增成本）
+- ✅ 契约层返回 `list[dict]` + `to_df()` 包装（双契约）
 - ✅ `@source` + tier/via 契约（向后兼容）
+- 🔴 拒绝 curl_cffi（反反爬对抗走网关层，不进客户端）
 
 ### 6.3 关键证据：mini-racer 子场景 (c) 不存在
 
-akshare 全部 A 股模块里，**没有"JS 解密加密响应"的场景**（子场景 c）。所有 mini-racer 用法都是签名（a）或算法（b），都可纯 Python 重写。这是方案 C 可行的**决定性证据**——意味着没有任何接口"必须依赖 JS 引擎"。
+akshare 全部 A 股模块里，**没有"JS 解密加密响应"的场景**（子场景 c）。所有 mini-racer 用法都是签名（a）或算法（b）。
+评审决定直接 vendor akshare 的 JS 用 mini-racer 执行（已装），无需纯 Python 重写——这是方案 C 工程量进一步降低的关键。
 
 ### 6.4 对合成方案执行 plan 的修订建议
 
-[akshare-merge-design.md](akshare-merge-design.md) 的阶段拆解需补一处前置：
+[akshare-merge-design.md](akshare-merge-design.md) 的阶段拆解需补两处前置：
 
-- **新增阶段 0.5**：实现 `_signing.py` + `_htmltable.py` 两个工具模块
+- **新增阶段 0.5**：实现 `_signing.py` + `_htmltable.py` + `_dataframe.py` 三个工具模块 + vendor JS 文件
+- **新增阶段 0.6**：清理 asgk `pyproject.toml`——显式声明已用依赖（lxml 之前声明没用，现在要真用；如需 bs4 则加）
 - **阶段 1 P0**：不变（纯 JSON，无需工具模块）
 - **阶段 2 P1**：依赖阶段 0.5 的工具模块
 
@@ -319,8 +368,10 @@ akshare 全部 A 股模块里，**没有"JS 解密加密响应"的场景**（子
 
 ## 7. 待评审决策点
 
-1. **`_signing.py` 的算法来源**：直接翻译 akshare 的 `ths.js` / 乐咕 `hash_code`，还是先逆向验证？（倾向直接翻译 + 真机验证）
-2. **`_htmltable.py` 的实现**：stdlib `html.parser`（推荐）vs 正则 vs selectolax？
-3. **`@source` 是否扩展 `sign`/`parse` 字段**？（倾向是，元数据驱动文档生成）
-4. **sgw 乐咕/交易所限流组**：进网关 vs 直连？（倾向：乐咕直连，交易所进网关）
-5. **CYQ 筹码算法**：翻译 akshare 的 JS 实现 vs 参考公开算法独立实现？（倾向后者，更易维护）
+> 评审已定三条（见 §3.1/§3.2/§5.3）：① vendor JS + mini-racer；② 双契约 list[dict] + to_df；③ 显式声明已用依赖。
+> 以下尚未定：
+
+1. **vendor JS 的同步策略**：akshare 上游 ths.js 变了怎么感知？（倾向：CI 定期 diff ref/akshare，变了告警人工更新）
+2. **`@source` 是否扩展 `sign`/`parse` 字段**？（倾向是，元数据驱动文档生成）
+3. **sgw 乐咕/交易所限流组**：进网关 vs 直连？（倾向：乐咕直连，交易所进网关）
+4. **CYQ 筹码算法**：vendor akshare 的 JS 实现 vs 参考公开算法独立实现？（倾向后者，更易维护）
