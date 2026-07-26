@@ -91,20 +91,48 @@
 
 **关键发现**：核查 akshare 全部 A 股模块，**子场景 (c) 不存在**。所有 mini-racer 用法都是 (a) 签名或 (b) 算法，都可以纯 Python 重写。这是方案 C 可行的决定性证据。
 
-### 2.4 真正"难以移植"的接口（仅 2 类）
+### 2.4 "Excel 响应"接口分类（修正：多数可移植，勿一概跳过）
 
-| 接口类型 | 例子 | 难点 | 建议 |
-|---------|------|------|------|
-| **交易所 Excel 下载** | `stock_margin_underlying_info_szse`（深交所标的 Excel） | 需 openpyxl | **跳过**（asgk 已有东财 margin 源） |
-| **curl_cffi JA3 绕过** | `news_stock_em`（东财搜索 api）、`news_baidu` | 需 TLS 指纹伪装 | **暂缓**（asgk 已有 `eastmoney_stock_news` 替代） |
+> **修正（2026-07-27）**：早先版本笼统称"交易所 Excel 下载，建议跳过"。核查后发现 akshare 的 Excel 接口有**两种本质不同**的形态，其中深交所系列其实零难度可移植。混为一谈会把 `stock_margin_detail_szse`（融资融券官方容灾源）等 5+ 接口误判丢弃。
 
-这两类都不在 P0/P1 候选里，且 asgk 已有替代源，**不影响合成方案**。
+**类型 A：HTTP API 返回 xlsx 二进制流（深交所 ShowReport 系列）→ ✅ 可移植**
+
+URL 是 `https://www.szse.cn/api/report/ShowReport`（**不是下载 .xls 文件**），通过 `SHOWTYPE=xlsx` 参数让一个普通 HTTP API 返回 xlsx 格式的 bytes 响应。GET 请求，sgw 可代理。
+
+| 接口 | 数据 | 价值 |
+|------|------|------|
+| `stock_margin_detail_szse` | 融资融券明细（深交所官方） | 🔴 **东财被封时的官方容灾源**（见 integration-analysis §4） |
+| `stock_margin_underlying_info_szse` | 融资融券标的名单 | 中 |
+| `stock_szse_summary` / `_area_summary` / `_sector_summary` | 深交所市场总貌/地区/行业成交 | 大盘情绪 |
+| `stock_info_sz_name_code` | 深市代码表 | 基础设施 |
+| `stock_sgt_*_exchange_rate_szse`（2 个） | 沪深港通汇率 | 北向配套 |
+
+**移植方式**：和 JSON 接口同构，只是 `em_get` 拿到的 `response.content`（bytes）丢给 `pd.read_excel(BytesIO(content))`。openpyxl 3.1.5 已装（pandas 传递依赖），**零新依赖**。需新增 `asgk/_xlsx.py` 工具（~10 行）。
+
+**类型 B：真·静态 .xls 文件下载（申万行业分类）→ ⚠️ 需权衡，仅 1 个接口**
+
+唯一接口：`stock_industry_clf_hist_sw`，URL `https://www.swsresearch.com/.../StockClassifyUse_stock.xls`，是真实的 .xls（老 BIFF 格式）静态文件。
+
+难点：
+- `.xls`（非 .xlsx）需 xlrd，但 **xlrd 2.0+ 默认不支持 .xls**（需 `xlrd<2.0` 或转 .xlsx）
+- 申万研究所偶有访问不稳定
+
+权衡选项（倾向 2）：
+1. 装 `xlrd<2.0`（增加一个依赖，仅为 1 个接口）
+2. **改用东财源拿申万行业**（akshare 有 `stock_industry_*_em` 替代，零依赖）
+3. 跳过
+
+**类型 C：curl_cffi JA3 绕过 → ⏸️ 暂缓（akshare 独有，非 Excel）**
+
+`news_stock_em`（东财搜索 api）、`news_baidu` 需 TLS 指纹伪装。asgk 已有 `eastmoney_stock_news` 替代源，**P2 按需**。
+
+**裁决**：类型 A 全部可移植（含重要的融资融券官方容灾源）；类型 B 单接口建议改源；类型 C 暂缓。**无"必须跳过"的 Excel 接口。**
 
 ---
 
 ## 3. asgk 设计升级方案（针对难点）
 
-针对 §2.2 的难点接口，asgk 需要三处设计升级。**这些都是新增能力，不破坏现有契约**。
+针对 §2.2 的难点接口，asgk 需要五处设计升级。**这些都是新增能力，不破坏现有契约**。
 
 ### 3.1 升级一：本地签名工具模块 `_signing.py`
 
@@ -197,7 +225,44 @@ def parse_html_tables(html: str) -> list[list[list[str]]]:
 
 **对现有设计的影响**：零破坏。纯新增模块。从这一刻起 asgk 实际开始用 lxml（之前只声明没用）。
 
-### 3.3 升级三：扩展 `@source` 装饰器的 via 字段
+### 3.3 升级三：xlsx 流解析工具 `_xlsx.py`（深交所 ShowReport 系列）
+
+**问题**：深交所 `ShowReport` API 用 `SHOWTYPE=xlsx` 返回 xlsx bytes 流（见 §2.4 类型 A），需解析。涉及 5+ 接口，含融资融券官方容灾源。
+
+**asgk 现状**：openpyxl 3.1.5 已装（pandas 传递依赖），pandas 也已装。**零新依赖**。
+
+```python
+# asgk/_xlsx.py（新增）
+"""xlsx 二进制流解析（深交所 ShowReport 系列用）。
+
+openpyxl 已装（pandas 传递依赖），零新依赖。
+"""
+from io import BytesIO
+import pandas as pd
+
+def parse_xlsx(content: bytes, dtype: dict | None = None) -> list[dict]:
+    """HTTP 响应的 xlsx bytes → list[dict]。"""
+    df = pd.read_excel(BytesIO(content), engine="openpyxl", dtype=dtype)
+    return df.to_dict("records")
+```
+
+**使用**（深交所融资融券明细）：
+
+```python
+@source(tier="S", via="gateway")
+def margin_detail_szse(date: str) -> list[dict]:
+    r = em_get("https://www.szse.cn/api/report/ShowReport",
+               params={"SHOWTYPE": "xlsx", "CATALOGID": "1837_xxpl",
+                       "txtDate": f"{date[:4]}-{date[4:6]}-{date[6:]}", ...},
+               headers={"Referer": "https://www.szse.cn/disclosure/margin/margin/index.html"})
+    return parse_xlsx(r.content, dtype={"证券代码": str})
+```
+
+**价值**：覆盖深交所 ShowReport 全系列（5+ 接口），尤其补齐融资融券的**官方容灾源**（东财被封时兜底）。
+
+**对现有设计的影响**：零破坏。纯新增模块。
+
+### 3.4 升级四：扩展 `@source` 装饰器的 via 字段
 
 **问题**：现有 `Via = Literal["gateway", "direct"]` 只区分"经网关"和"直连"。但难点接口需要更细的标注：
 
@@ -225,7 +290,7 @@ class SourceMeta:
 
 **对现有设计的影响**：向后兼容。现有 50 个函数无需改动；新函数可选挂 `sign`/`parse`。
 
-### 3.4 升级四：sgw 新增乐咕/交易所限流组（可选）
+### 3.5 升级五：sgw 新增乐咕/交易所限流组（可选）
 
 **问题**：乐咕（`legulegu.com`/`eniu.com`）和交易所（`query.sse.com.cn`）不在 sgw 现有 `PROXIED_DOMAIN_SUFFIXES` 里。
 
@@ -242,7 +307,7 @@ class SourceMeta:
 
 ## 4. 难点接口的移植可行性裁决
 
-逐个裁决 §2.2 的难点接口，确认是否可移植：
+逐个裁决 §2.2（签名/HTML 难点）+ §2.4 类型 A（xlsx 流）的接口，确认是否可移植：
 
 | 接口 | 升级依赖 | 裁决 | 工作量 |
 |------|---------|------|--------|
@@ -256,8 +321,12 @@ class SourceMeta:
 | 同花顺技术选股（11 个） | 升级一 + 升级二 | ✅ 可移植 | 中（~200 行，11 接口共用基建） |
 | 新浪龙虎榜 | 升级二（HTML） | ✅ 可移植 | 低（~50 行） |
 | 乐咕赚钱效应 | 升级二（HTML） | ✅ 可移植 | 低（~50 行） |
+| **深交所融资融券明细**（官方容灾源） | 升级三（xlsx 流） | ✅ 可移植 | 低（~40 行） |
+| **深交所市场总貌/代码表/汇率**（4 个） | 升级三（xlsx 流） | ✅ 可移植 | 低（~80 行，4 接口共用） |
 
-**裁决结论**：**全部难点接口可移植**，无"无法移植"项。需要的前置升级是 §3.1 + §3.2（两个轻量新模块），都是纯新增、零破坏。
+**裁决结论**：**全部难点接口可移植**，无"无法移植"项。需要的前置升级是 §3.1 + §3.2 + §3.3（三个轻量新模块），都是纯新增、零破坏。
+
+> **修正（2026-07-27）**：早先裁决表漏列了深交所 xlsx 系列接口（5 个，含融资融券官方容灾源），现补齐。详见 §2.4 类型 A。
 
 ---
 
@@ -294,6 +363,7 @@ class SourceMeta:
 |------|------|---------|--------|--------|
 | `_signing.py` vendor JS + mini-racer | 新增模块 | 零（mini-racer 已装） | 无 | 必需（覆盖乐咕+同花顺 15+ 接口） |
 | `_htmltable.py` 用 lxml.etree | 新增模块 | 零（lxml 已声明） | 无 | 必需（覆盖 HTML 接口） |
+| `_xlsx.py` 深交所 ShowReport 流解析 | 新增模块 | 零（openpyxl 已装） | 无 | 必需（覆盖深交所 5+ 接口，含融资融券官方容灾源） |
 | `to_df()` 包装函数 | 新增辅助 | 零 | 无 | 必需（双契约，调用方按需转 DataFrame） |
 | `@source` 加 `sign`/`parse` 字段 | 契约扩展 | 零 | 向后兼容 | 可选（元数据更完整） |
 | sgw 新增 `legu`/`exchange` 组 | config 扩展 | 零 | 无 | 可选（按源决策） |
@@ -331,14 +401,15 @@ df = to_df(margin_trading("600519"))  # 调用方需要 DataFrame 时
 **完全可行。** 核查 akshare 全部 A 股模块：
 
 - **P0（11 接口）**：100% 纯 JSON，零难点，与 asgk 现有范式同构
-- **P1 难点（10+ 接口）**：100% 可移植，需 2 个工具模块前置（vendor JS + etree）
-- **真正不可移植**：仅 2 类（交易所 Excel / curl_cffi JA3），都在 P2 外且有替代源
+- **P1 难点（10+ 接口）**：100% 可移植，需 3 个工具模块前置（vendor JS + etree + xlsx 流）
+- **真正需权衡**：仅申万 .xls（1 个，建议改东财源）+ curl_cffi JA3（P2 暂缓，有替代源）
 
 ### 6.2 asgk 设计需要升级吗？
 
 **需要，代价极小**：
 - 新增 `_signing.py`（vendor JS + mini-racer，~40 行）
 - 新增 `_htmltable.py`（lxml.etree，~15 行）
+- 新增 `_xlsx.py`（深交所 ShowReport 流解析，~10 行）
 - 新增 `_dataframe.py`（`to_df()` 包装，~5 行）
 - 可选：`@source` 扩展 `sign`/`parse` 元数据字段（向后兼容）
 - 可选：sgw 新增乐咕/交易所限流组（config 级）
@@ -359,10 +430,10 @@ akshare 全部 A 股模块里，**没有"JS 解密加密响应"的场景**（子
 
 [akshare-merge-design.md](akshare-merge-design.md) 的阶段拆解需补两处前置：
 
-- **新增阶段 0.5**：实现 `_signing.py` + `_htmltable.py` + `_dataframe.py` 三个工具模块 + vendor JS 文件
+- **新增阶段 0.5**：实现 `_signing.py` + `_htmltable.py` + `_xlsx.py` + `_dataframe.py` 四个工具模块 + vendor JS 文件
 - **新增阶段 0.6**：清理 asgk `pyproject.toml`——显式声明已用依赖（lxml 之前声明没用，现在要真用；如需 bs4 则加）
 - **阶段 1 P0**：不变（纯 JSON，无需工具模块）
-- **阶段 2 P1**：依赖阶段 0.5 的工具模块
+- **阶段 2 P1**：依赖阶段 0.5 的工具模块。**深交所融资融券官方源**（`margin_detail_szse`）原属"容灾候选"，现确认可移植，建议在本阶段移植以补齐东财被封兜底
 
 ---
 

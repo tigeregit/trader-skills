@@ -222,7 +222,7 @@ def margin_trading(code, page_size=30):
 
 ### 5.2 交易所源（sse/szse）处置
 
-融资融券官方源（`query.sse.com.cn` / `report.szse.cn`）是非风控源，但请求频率高（日级全市场）。建议走 sgw 新建 `exchange` 组，与东财组隔离（避免交易所源被东财封禁牵连）。
+融资融券官方源（`query.sse.com.cn` / `www.szse.cn`）是非风控源。上交所返回 JSON，深交所 `ShowReport` API 返回 xlsx 流（见 [port-feasibility §2.4 类型 A](akshare-port-feasibility.md)，已确认可移植）。建议走 sgw 新建 `exchange` 组，与东财组隔离（避免交易所源被东财封禁牵连）。
 
 ### 5.3 POST 接口（akshare 7%）
 
