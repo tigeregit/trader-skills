@@ -134,6 +134,8 @@ ETF期权、舆情、估值(PEG/PE分位)、股东明细、业绩预告/快报�
 
 ### 阶段 0：基础设施核查（不重构，仅确认）
 
+> **修订提示（2026-07-27）**：后续可行性分析（[akshare-port-feasibility.md §6.4](akshare-port-feasibility.md)）建议在阶段 0 与阶段 1 之间补**阶段 0.5（实现 `_signing.py`/`_htmltable.py`/`_dataframe.py` + vendor JS）**和**阶段 0.6（清理 pyproject.toml 依赖声明）**。阶段 1（P0 纯 JSON）不依赖它们，阶段 2（P1 难点）依赖。本节阶段编号暂未调整，审核时请结合该修订建议。
+
 - [ ] 确认 sgw 网关 `PROXIED_DOMAIN_SUFFIXES` 已覆盖东财/同花顺 → ✅ 已核对（`packages/sgw/sgw/proxy.py:37`）
 - [ ] 确认 `em_get` / `_datacenter` / `@source` 契约稳定 → ✅ 已核对
 - [ ] **新增**：乐咕网（`legulegu.com` / `eniu.com`）限流决策
@@ -270,7 +272,7 @@ ETF期权、舆情、估值(PEG/PE分位)、股东明细、业绩预告/快报�
 | SKILL.md 路由表膨胀超 300 行 | 低 | 二级分组 + reference 分层吸收，预估扩到 ~28 行路由（远低于上限） |
 | commit 粒度过细（P0 9 接口 9 commit） | 低 | 便于二分定位；若评审认为太碎，可按模块合并（holders 2 接口合 1 commit） |
 | akshare 上游接口废弃 | 低 | ref 蓝本不追新；移植时记录 akshare 版本号 |
-| 移植引入 pandas 依赖膨胀 | 中 | asgk 现有模式是返回 `list[dict]`，移植时**不引入 pandas**，用纯字典解析（参考 capital.py） |
+| 移植引入新依赖 | 低 | 实现层用已装依赖（pandas/lxml/mini-racer 已是 mootdx 传递依赖）；契约层返回 `list[dict]` + `to_df()` 包装。详见 [akshare-port-feasibility.md §5](akshare-port-feasibility.md) |
 
 ---
 

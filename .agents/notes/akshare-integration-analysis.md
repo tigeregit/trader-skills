@@ -64,7 +64,7 @@ temp_df = pd.DataFrame(data_json["result"]["data"])  # ← 解析
 def datacenter(report_name, filter_str="", page_size=50, ...):
     # 同样的 datacenter-web.eastmoney.com/api/data/v1/get
     # 同样的 reportName/columns 参数
-    # 返回 list[dict]（不引入 pandas）
+    # 返回 list[dict]（契约层统一类型；实现层可用 pandas 解析后转 dict）
 ```
 
 **结论**：akshare 的东财接口与 asgk 的 `_datacenter()` 调用的是**同一个端点**，参数结构相同，唯一区别是 akshare 用 pandas 解析、asgk 用纯 dict 解析。
@@ -73,15 +73,17 @@ def datacenter(report_name, filter_str="", page_size=50, ...):
 
 | 维度 | akshare 全量 | asgk 现状 |
 |------|-------------|----------|
-| pandas + numpy | ✅ 必需 | ❌ 不用 |
-| lxml + beautifulsoup4 | ✅ 必需 | ❌ 不用 |
+| pandas + numpy | ✅ 必需 | ⚠️ 已装（mootdx 传递依赖，asgk 未直接用） |
+| lxml + beautifulsoup4 | ✅ 必需 | ⚠️ lxml 已声明（asgk pyproject 有但未真用）；bs4 未装 |
 | openpyxl + xlrd | ✅ 必需（读 Excel） | ❌ 不用 |
 | curl_cffi | ✅ 必需（JA3 绕过） | ❌ 不用 |
-| mini-racer / akracer | ✅ 必需（JS 执行） | ❌ 不用 |
+| mini-racer / akracer | ✅ 必需（JS 执行） | ⚠️ py-mini-racer 已装（mootdx 传递依赖） |
 | jsonpath | ✅ 必需 | ❌ 不用 |
-| 估算安装体积 | **~80-120MB** | ~5MB |
+| 估算安装体积 | **~80-120MB** | ~160MB+（已含 mootdx 拉入的 pandas/numpy/mini-racer） |
 
-asgk 刻意保持零 pandas 依赖（返回 `list[dict]`），是为 100~1000 并发场景降低内存与冷启动开销。引入 akshare 全量会**逆转这一设计**。
+> **修正（2026-07-27）**：早先版本误称 asgk "零重依赖 ~5MB"。核查 `uv.lock` 后纠正：pandas(50M)/numpy(33M)/py-mini-racer(48M)/lxml(12M) 早已是 mootdx 传递依赖，asgk 实际闭包 ~160MB+。详见 [akshare-port-feasibility.md §5.1](akshare-port-feasibility.md)。
+>
+> 因此 asgk 与 akshare 在 pandas/lxml/mini-racer 上**依赖重叠**，方案对比的真正差异不在"是否引入重依赖"，而在：① curl_cffi（akshare 需 JA3 绕过，asgk 走网关无需）② akshare 全量包绕过 sgw（违反 §2）③ akshare 无统一请求门面无法 hook。
 
 ### 1.4 akshare 没有统一的"请求门面"
 
@@ -119,17 +121,18 @@ akshare 有 `utils/func.py:fetch_paginated_data`（分页辅助）和 `request.p
 
 | 问题 | 影响 |
 |------|------|
-| 引入 ~100MB 重依赖（pandas/lxml/bs4/curl_cffi/mini-racer） | 逆转 asgk 的轻依赖设计；100~1000 并发场景内存爆炸 |
-| akshare 绕过 sgw 直连东财 | **违反 AGENTS.md §2**（风控源必经网关），1000 agent 并发直接封 IP |
+| akshare 绕过 sgw 直连东财 | **违反 AGENTS.md §2**（风控源必经网关），1000 agent 并发直接封 IP — 这是首要否决理由 |
 | akshare 的请求层无 hook | 无法强制让 akshare 走 sgw（akshare 函数体内直接 `requests.get`） |
-| mini-racer/akracer 是 JS 引擎依赖 | 部分 akshare 接口（同花顺热度）靠它执行 JS 拿 token，asgk 不应承担 |
+| 引入 curl_cffi (31M) | TLS 指纹绕过是反反爬对抗；asgk 已有 em_get 走网关，不需要每客户端带 JA3 |
 | 上游 break 风险 | akshare 接口签名/返回结构频繁变动，封装层脆弱 |
 
-**结论**：方案 B 违反项目核心约束（§2 流量管控 + 轻依赖），**不可行**。
+> 注：pandas/lxml/mini-racer 的体积**不是**否决理由（asgk 已通过 mootdx 间接装了）。真正致命的是绕过 sgw + 无请求 hook。
+
+**结论**：方案 B 违反项目核心约束 §2（风控源必经网关），**不可行**。
 
 ### 方案 C：akshare 作 ref 蓝本，移植解析逻辑到 asgk（前一轮的合成方案）
 
-**设想**：akshare 仅作只读参考（像 `ref/a-stock-data`），asgk 新增模块时**复制其端点 + 参数 + 字段映射逻辑**，但用 asgk 自己的 `em_get`/`_datacenter`（走 sgw）+ 纯 dict 解析（不引入 pandas）。
+**设想**：akshare 仅作只读参考（像 `ref/a-stock-data`），asgk 新增模块时**复制其端点 + 参数 + 字段映射逻辑**，用 asgk 自己的 `em_get`/`_datacenter`（走 sgw）。实现层可自由用已装依赖（pandas/lxml/mini-racer），契约层返回 `list[dict]` + `to_df()` 包装。
 
 **这正是 asgk 现有模块的做法**。核对 `asgk/capital.py`：
 
@@ -145,7 +148,7 @@ def margin_trading(code, page_size=30):
 | 维度 | 表现 |
 |------|------|
 | 流量管控 | ✅ 所有东财请求经 sgw（复用 `em_get`/`_datacenter`） |
-| 依赖体积 | ✅ 零新增依赖（保持纯 dict 解析） |
+| 依赖体积 | ✅ 零新增（实现层用已装的 pandas/lxml/mini-racer） |
 | 并发安全 | ✅ 共享 sgw 限流配额 |
 | 上游隔离 | ✅ akshare break 不影响 asgk（只参考其端点/字段） |
 | 实现成本 | 中（每接口 ~30-60 行，参考 capital.py 范式） |
@@ -155,7 +158,7 @@ def margin_trading(code, page_size=30):
 - 移植需逐接口手写（不能自动同步上游）
 - akshare 的非东财源（乐咕/雪球/百度股市通）需新增直连客户端
 
-**结论**：方案 C 是**唯一同时满足 §2 流量管控 + 轻依赖 + 并发安全**的方案，且与 asgk 现有架构完全一致。
+**结论**：方案 C 是**唯一同时满足 §2 流量管控 + 并发安全 + 不绕过网关**的方案，且与 asgk 现有架构完全一致。
 
 ---
 
@@ -165,7 +168,7 @@ def margin_trading(code, page_size=30):
 |------|------------------|----------------|-------------------|
 | 是否新建基础设施 | A.1 无需（sgw 已覆盖）/ A.2 需建胖网关 | 否 | **否** |
 | §2 流量管控合规 | A.1 ✅ / A.2 ✅ | ❌ 绕过 sgw | **✅** |
-| 依赖体积 | ✅ | ❌ ~100MB | **✅ 零新增** |
+| 依赖体积 | ✅ | ❌ 引入 curl_cffi | **✅ 零新增（复用已装依赖）** |
 | 并发安全（100~1000 agent） | ✅ | ❌ 直连封 IP | **✅** |
 | 业务逻辑归属 | 网关（A.2）或客户端 | akshare 内 | **asgk 客户端** |
 | 上游同步 | 不适用 | 自动（但脆弱） | **手动按需** |
@@ -235,13 +238,13 @@ sgw 当前是 GET-only。若未来要移植 akshare 的 POST 接口（巨潮热�
 
 ### 是否封装 akshare package？
 
-**不可行**。违反 §2 流量管控（绕过 sgw 直连）+ 引入 ~100MB 重依赖（逆转 asgk 轻依赖设计）。
+**不可行**。首要否决理由是违反 §2 流量管控（绕过 sgw 直连东财，1000 agent 并发封 IP）；其次是 akshare 无统一请求门面无法 hook 走网关；再次是引入 curl_cffi（反反爬对抗，asgk 走网关无需）。
 
 ### 推荐方案
 
 **方案 C：akshare 作 ref 蓝本，移植解析逻辑到 asgk**。这是唯一同时满足：
 - §2 流量管控（经 sgw）
-- 轻依赖（零 pandas）
+- 复用已装依赖（pandas/lxml/mini-racer 已是 mootdx 传递依赖）
 - 并发安全（共享限流配额）
 - 与 asgk 现有架构完全一致
 
