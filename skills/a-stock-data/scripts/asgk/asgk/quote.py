@@ -191,7 +191,8 @@ def _parse_baidu_kline(d: dict, code: str) -> dict:
     """解析百度股市通 K 线返回，对风控/异常结构给出清晰错误。
 
     百度 observed 返回形态：
-      - 正常: {"ResultCode":"0", "Result":{"newMarketData":{"headers":[...], "marketData":"..."}}}
+      - 正常: {"ResultCode":"0", "Result":{"newMarketData":{"keys":[英文...], "headers":[中文...], "marketData":"..."}}}
+        （keys 与 headers 同长度，前者英文字段名后者中文；本函数取 keys）
       - 风控: {"ResultCode":"403", "Result":[]}  ← 客户端 TLS 指纹被识别（非 IP 问题）
       - 其它非 0 ResultCode 也按错误处理。
     """
