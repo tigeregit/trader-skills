@@ -26,7 +26,7 @@ from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Optional
-from urllib.parse import urlparse, parse_qs
+from urllib.parse import urlparse, parse_qs, urlencode, urlunparse
 
 import requests
 
@@ -35,6 +35,23 @@ DEFAULT_CONFIG = HERE / "config.toml"
 
 # 东财/同花顺等风控源走网关；其余(腾讯/百度/新浪/mootdx-TCP)直连不经网关
 PROXIED_DOMAIN_SUFFIXES = (".eastmoney.com", ".10jqka.com.cn")
+
+
+def _canonical_url(url: str, params: dict | None = None) -> str:
+    """规范化 URL：合并 target_url 自带 query 与 params，按 key 排序，统一编码。
+
+    用于 cache key：确保 (url, {a:1,b:2}) 与 (url, {b:2,a:1}) 与
+    (url?a=1, {b:2}) 产生同一 key，且不同 params 产生不同 key。
+    """
+    parsed = urlparse(url)
+    # 合并 url 自带 query 与 params（params 优先，覆盖同名）
+    merged: dict[str, list[str]] = parse_qs(parsed.query, keep_blank_values=True)
+    if params:
+        for k, v in params.items():
+            merged[k] = [str(v)]
+    # 规范 query：按 key 排序，标准 urlencoding
+    sorted_query = urlencode(sorted(merged.items()), doseq=True)
+    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", sorted_query, ""))
 
 
 # ── 令牌桶：按域名组，全局串行限流 ─────────────────────────────
@@ -325,8 +342,9 @@ class Gateway:
         tier = tier_header if tier_header in ("P", "L", "S", "R", "N") else self.fallback_tier(parsed.path)
         ttl = self.ttl_for_tier(tier)
 
-        # 缓存 key = tier + 完整 URL（含 query）
-        cache_key = f"{tier}|{target_url}"
+        # 缓存 key = tier + canonical URL（含合并后的 query）
+        # 必须含 params，否则不同股票/日期/页码会串缓存
+        cache_key = f"{tier}|{_canonical_url(target_url, params)}"
         cached = self.cache.get(cache_key) if ttl > 0 else None
         if cached:
             body, headers = cached
@@ -347,9 +365,7 @@ class Gateway:
         bucket.acquire()
         self.group_reqs[group] += 1
 
-        # 请求外网（合并原始 params 与 target_url 自带 query）
-        sep = "&" if "?" in target_url else "?"
-        full_url = target_url if not params else f"{target_url}{sep}" + "&".join(f"{k}={v}" for k, v in params.items())
+        # 请求外网（params 由 requests.get 的 params 参数转发）
         headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
         last_err = None
         for attempt in range(3):
