@@ -72,8 +72,11 @@ def repurchase() -> list[dict]:
         page_size=500, sort_columns="UPDATEDATE", sort_types="-1",
         tier="S", all_pages=True,
     )
-    # 进度代码 → 中文（akshare 原样返回代码，这里做易读映射）
-    _PROGRESS = {"001": "实施中", "002": "完成", "003": "失败"}
+    # 进度代码 → 中文（对齐 akshare stock_repurchase_em.py:94-101 的真实代码表）
+    _PROGRESS = {
+        "001": "董事会预案", "002": "股东大会通过", "003": "股东大会否决",
+        "004": "实施中", "005": "停止实施", "006": "完成实施",
+    }
     return [{
         "code": _s(row.get("DIM_SCODE")),
         "name": _s(row.get("SECURITYSHORTNAME")),

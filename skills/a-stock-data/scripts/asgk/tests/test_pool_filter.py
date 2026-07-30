@@ -62,6 +62,15 @@ class TestPledgeRatio:
         with patch("asgk.pool_filter._datacenter", return_value=[]):
             assert pledge_ratio("20240906") == []
 
+    def test_pledge_ratio_is_percentage_point(self):
+        """pledge_ratio 单位是百分点（75.09=75.09%），非小数。
+        真机样本：海德股份 PLEDGE_RATIO=75.09（高质押股），证明是百分点。"""
+        raw = {**_PLEDGE_RAW, "SECURITY_CODE": "000567", "SECURITY_NAME_ABBR": "海德股份",
+               "PLEDGE_RATIO": 75.09, "PLEDGE_MARKET_CAP": 672248.0948}
+        with patch("asgk.pool_filter._datacenter", return_value=[raw]):
+            result = pledge_ratio("20240906")
+        assert result[0]["pledge_ratio"] == 75.09  # 百分点，非 0.7509
+
 
 class TestGoodwill:
     def test_filter_uses_iso_date(self):

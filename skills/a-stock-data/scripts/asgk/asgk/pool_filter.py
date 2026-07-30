@@ -33,9 +33,9 @@ def pledge_ratio(date: str) -> list[dict]:
         date: 交易日，YYYYMMDD（如 "20240906"），非股票代码
     Returns:
         [{code, name, industry, trade_date,
-          pledge_ratio(质押比例,小数 0.02=2%),
+          pledge_ratio(质押比例,百分点 75.09=75.09%),
           pledge_deal_num(质押笔数),
-          pledge_market_cap(质押市值,亿元),
+          pledge_market_cap(质押市值,万元),
           repurchase_balance(购回余额,万元),
           unrepurchase_balance(未购回余额,万元)}, ...]
     """
@@ -50,9 +50,9 @@ def pledge_ratio(date: str) -> list[dict]:
         "name": _s(row.get("SECURITY_NAME_ABBR")),
         "industry": _s(row.get("INDUSTRY")),
         "trade_date": str(row.get("TRADE_DATE", ""))[:10],
-        "pledge_ratio": row.get("PLEDGE_RATIO"),
+        "pledge_ratio": row.get("PLEDGE_RATIO"),  # 百分点（75.09=75.09%）
         "pledge_deal_num": row.get("PLEDGE_DEAL_NUM", 0),
-        "pledge_market_cap": row.get("PLEDGE_MARKET_CAP"),  # 亿元
+        "pledge_market_cap": row.get("PLEDGE_MARKET_CAP"),  # 万元
         "repurchase_balance": row.get("REPURCHASE_BALANCE"),
         "unrepurchase_balance": row.get("REPURCHASE_UNLIMITED_BALANCE"),
     } for row in data]

@@ -68,6 +68,10 @@ class TestMgmtTrade:
         assert r["hold_after"] == 40130058
         assert r["hold_type"] == "A股"
 
+    def test_empty_returns_empty_list(self):
+        with patch("asgk.risk_event._datacenter", return_value=[]):
+            assert mgmt_trade() == []
+
 
 class TestRepurchase:
     def test_all_pages_true(self):
@@ -89,7 +93,7 @@ class TestRepurchase:
         assert r["notice_date"] == "2026-07-31"
         assert r["start_date"] == "2026-07-30"
         assert r["end_date"] == "2026-10-30"
-        assert r["progress"] == "实施中"  # 001 映射
+        assert r["progress"] == "董事会预案"  # 001 映射（akshare 真实代码表）
         assert r["plan_amt_lower"] == 50000000
         assert r["plan_amt_upper"] == 100000000
         assert r["plan_num_lower"] == 412300
@@ -97,12 +101,25 @@ class TestRepurchase:
         assert r["price_cap"] == 121.28
         assert r["done_amt"] is None
 
+    def test_progress_all_codes(self):
+        """全部 6 个真实进度代码正确映射（akshare stock_repurchase_em.py:94-101）。"""
+        codes = {"001": "董事会预案", "002": "股东大会通过", "003": "股东大会否决",
+                 "004": "实施中", "005": "停止实施", "006": "完成实施"}
+        for code, expected in codes.items():
+            raw = {**_REPUR_RAW, "REPURPROGRESS": code}
+            with patch("asgk.risk_event._datacenter", return_value=[raw]):
+                assert repurchase()[0]["progress"] == expected
+
     def test_unknown_progress_keeps_raw(self):
         """未知进度代码保留原始值。"""
         raw = {**_REPUR_RAW, "REPURPROGRESS": "999"}
         with patch("asgk.risk_event._datacenter", return_value=[raw]):
             result = repurchase()
         assert result[0]["progress"] == "999"
+
+    def test_empty_returns_empty_list(self):
+        with patch("asgk.risk_event._datacenter", return_value=[]):
+            assert repurchase() == []
 
 
 class TestInstituteResearch:

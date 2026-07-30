@@ -16,10 +16,10 @@ from asgk import pledge_ratio, goodwill
 
 # 股权质押（某交易日全市场）
 pr = pledge_ratio("20240906")  # date=YYYYMMDD 交易日
-high = [p for p in pr if (p["pledge_ratio"] or 0) > 0.5]
+high = [p for p in pr if (p["pledge_ratio"] or 0) > 50]
 print(f"质押比例>50%的高风险股:{len(high)}家")
 for p in high[:3]:
-    print(f"  {p['name']} 质押率{p['pledge_ratio']*100:.1f}% 质押{p['pledge_deal_num']}笔")
+    print(f"  {p['name']} 质押率{p['pledge_ratio']:.2f}% 质押{p['pledge_deal_num']}笔 市值{p['pledge_market_cap']/1e4:.2f}亿")
 
 # 商誉（某报告期全市场，按商誉金额降序）
 gw = goodwill("20231231")  # date=YYYYMMDD 报告期
@@ -30,8 +30,8 @@ for g in gw[:3]:
 
 ## 注意
 - 参数 `date` 是**交易日**（质押）或**报告期**（商誉），YYYYMMDD 格式，非股票代码。
-- `pledge_ratio` 是小数（0.02 = 2%），非百分比。
-- 质押市值 `pledge_market_cap` 单位是**亿元**；商誉/净利润单位是**元**（注意换算）。
+- `pledge_ratio` 是**百分点**（75.09 = 75.09%），非小数。
+- `pledge_market_cap` 质押市值单位是**万元**；商誉/净利润单位是**元**（注意换算）。
 - 商誉接口需固定 token（已内置，非动态签名），报告期常见为季报末 `0331`/`0630`/`0930`/`1231`。
 - 非交易日/非报告期返回空列表（正常，非报错）。
 - 质押是日级盘后定稿（S档），商誉是季度定稿（L档）。

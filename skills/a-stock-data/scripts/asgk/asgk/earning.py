@@ -17,6 +17,11 @@ def _date_to_iso(date: str) -> str:
     return f"{date[:4]}-{date[4:6]}-{date[6:]}"
 
 
+def _s(val) -> str:
+    """None → 空串（原始字段可能为 null）。"""
+    return val or ""
+
+
 @source(tier="L", via="gateway")
 def earning_forecast(date: str) -> list[dict]:
     """业绩预告（全市场，按报告期扫描）。
@@ -40,16 +45,16 @@ def earning_forecast(date: str) -> list[dict]:
     )
     return [{
         "code": row.get("SECURITY_CODE", ""),
-        "name": row.get("SECURITY_NAME_ABBR", ""),
+        "name": _s(row.get("SECURITY_NAME_ABBR")),
         "notice_date": str(row.get("NOTICE_DATE", ""))[:10],
         "report_date": str(row.get("REPORT_DATE", ""))[:10],
-        "predict_finance": row.get("PREDICT_FINANCE", ""),
+        "predict_finance": _s(row.get("PREDICT_FINANCE")),
         "predict_lower": row.get("PREDICT_AMT_LOWER"),
         "predict_upper": row.get("PREDICT_AMT_UPPER"),
         "add_amp_lower": row.get("ADD_AMP_LOWER"),
         "add_amp_upper": row.get("ADD_AMP_UPPER"),
-        "predict_type": row.get("PREDICT_TYPE", ""),
-        "predict_content": row.get("PREDICT_CONTENT", ""),
+        "predict_type": _s(row.get("PREDICT_TYPE")),
+        "predict_content": _s(row.get("PREDICT_CONTENT")),
         "preyear_same": row.get("PREYEAR_SAME_PERIOD"),
     } for row in data]
 
@@ -78,7 +83,7 @@ def earning_express(date: str) -> list[dict]:
     )
     return [{
         "code": row.get("SECURITY_CODE", ""),
-        "name": row.get("SECURITY_NAME_ABBR", ""),
+        "name": _s(row.get("SECURITY_NAME_ABBR")),
         "notice_date": str(row.get("NOTICE_DATE", ""))[:10],
         "report_date": str(row.get("REPORT_DATE", ""))[:10],
         "eps": row.get("BASIC_EPS"),
