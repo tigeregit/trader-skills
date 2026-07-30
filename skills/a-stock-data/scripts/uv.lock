@@ -38,6 +38,7 @@ source = { editable = "asgk" }
 dependencies = [
     { name = "lxml" },
     { name = "mootdx" },
+    { name = "py-mini-racer" },
     { name = "requests" },
 ]
 
@@ -51,6 +52,7 @@ dev = [
 requires-dist = [
     { name = "lxml", specifier = ">=6.1.1" },
     { name = "mootdx", specifier = ">=0.11.7" },
+    { name = "py-mini-racer", specifier = ">=0.6.0" },
     { name = "requests", specifier = ">=2.31" },
 ]
 

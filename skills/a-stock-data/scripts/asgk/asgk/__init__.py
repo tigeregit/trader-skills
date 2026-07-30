@@ -25,6 +25,7 @@ from asgk.holders import (
     top10_holders, top10_free_holders, holder_change, holder_teamwork,
 )
 from asgk.board import board_constituents
+from asgk.chip import chip_distribution
 from asgk.news import eastmoney_stock_news, cls_telegraph, eastmoney_global_news
 from asgk.client import tdx_client
 from asgk.base import mootdx_finance, mootdx_f10, eastmoney_stock_info, sina_financial_report
@@ -62,6 +63,8 @@ __all__ = [
     "top10_holders", "top10_free_holders", "holder_change", "holder_teamwork",
     # 板块层
     "board_constituents",
+    # 筹码层
+    "chip_distribution",
     # 新闻层
     "eastmoney_stock_news", "cls_telegraph", "eastmoney_global_news",
     # 基础数据
