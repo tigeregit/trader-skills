@@ -238,7 +238,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-EARN-001 / 002 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit 38bda00) / 3 |
 | capability | 业绩预告 / 业绩快报（全市场报告期） |
 | asgk | `earning_forecast(date)` / `earning_express(date)` / earning.py |
 | upstream | `stock_yjyg_em(date)` / `stock_yjyg_em.py:135` ; `stock_yjkb_em(date)` / `stock_yjyg_em.py:17` |
