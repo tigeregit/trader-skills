@@ -118,3 +118,34 @@ class TestGroupOfRegression:
         g = _make_gateway()
         assert g.group_of("www.szse.cn") is None
         assert g.group_of("legulegu.com") is None
+
+    # ── inventory 涉及的新归组 host ──
+    def test_emweb_securities_routable(self):
+        """AKP-HOLD-001/002 十大股东用的 host（emweb.securities）。"""
+        g = _make_gateway()
+        assert g.group_of("emweb.securities.eastmoney.com") == "eastmoney"
+
+    def test_datacenter_securities_routable(self):
+        """AKP-EARN-001/002 业绩用的 host（datacenter.eastmoney.com）。"""
+        g = _make_gateway()
+        assert g.group_of("datacenter.eastmoney.com") == "eastmoney"
+
+    def test_push2_unnumbered_routable(self):
+        """AKP-BOARD 板块接口主用无编号 push2（已归组，回归确认）。"""
+        g = _make_gateway()
+        assert g.group_of("push2.eastmoney.com") == "eastmoney"
+
+    def test_push2_numbered_not_in_group(self):
+        """编号 push2 子域（29./79./91.）不归组——主用无编号，编号仅备选。"""
+        g = _make_gateway()
+        assert g.group_of("29.push2.eastmoney.com") is None
+        assert g.group_of("79.push2.eastmoney.com") is None
+
+    def test_handle_routes_new_hosts(self):
+        """emweb/datacenter 经 handle 不再返回 400 domain not proxied。"""
+        g = _make_gateway()
+        with patch("sgw.proxy.requests.get", return_value=_fake_resp()):
+            s1, _, _ = g.handle("https://emweb.securities.eastmoney.com/PC_HSF10/x", {}, "L")
+            s2, _, _ = g.handle("https://datacenter.eastmoney.com/securities/api/x", {}, "L")
+        assert s1 != 400  # 不再被 host-missing 拒绝
+        assert s2 != 400
