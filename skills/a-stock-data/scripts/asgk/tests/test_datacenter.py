@@ -127,3 +127,34 @@ class TestSourceParam:
                    return_value=_resp([{"a": 1}], pages=1)) as m:
             datacenter("RPT_TEST", source="HSF10")
         assert m.call_args.kwargs["params"]["source"] == "HSF10"
+
+
+class TestExtraParams:
+    def test_extra_params_merged(self):
+        """extra_params 合并到请求参数（如商誉的固定 token）。"""
+        with patch("asgk._datacenter.em_get",
+                   return_value=_resp([{"a": 1}], pages=1)) as m:
+            datacenter("RPT_TEST", extra_params={"token": "abc123"})
+        p = m.call_args.kwargs["params"]
+        assert p["token"] == "abc123"
+        # 基础参数仍在
+        assert p["reportName"] == "RPT_TEST"
+
+    def test_no_extra_params_backward_compat(self):
+        """不传 extra_params 时行为不变（向后兼容）。"""
+        with patch("asgk._datacenter.em_get",
+                   return_value=_resp([{"a": 1}], pages=1)) as m:
+            datacenter("RPT_TEST")
+        assert "token" not in m.call_args.kwargs["params"]
+
+    def test_extra_params_all_pages(self):
+        """all_pages 模式下 extra_params 也透传到每一页。"""
+        responses = [
+            _resp([{"p": 1}], pages=2),
+            _resp([{"p": 2}], pages=2),
+        ]
+        with patch("asgk._datacenter.em_get", side_effect=responses) as m:
+            datacenter("RPT_TEST", all_pages=True, extra_params={"token": "x"})
+        # 两页都应带 token
+        for call in m.call_args_list:
+            assert call.kwargs["params"]["token"] == "x"

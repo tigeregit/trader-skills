@@ -13,7 +13,7 @@ DATACENTER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 def datacenter(report_name: str, filter_str: str = "", page_size: int = 50,
                sort_columns: str = "", sort_types: str = "-1", tier: str = "S",
                *, all_pages: bool = False, max_pages: int | None = None,
-               source: str = "WEB") -> list[dict]:
+               source: str = "WEB", extra_params: dict | None = None) -> list[dict]:
     """东财数据中心统一查询（经网关，已内置限流）。
 
     Args:
@@ -26,12 +26,13 @@ def datacenter(report_name: str, filter_str: str = "", page_size: int = 50,
             默认 False 只取第一页（向后兼容现有调用方）。
         max_pages: all_pages=True 时的最大页数上限（防失控，None=不限）。
         source: 东财端点 source 参数（datacenter-web 用 WEB；securities 端点用 HSF10）
+        extra_params: 额外查询参数（如商誉接口需 token=894050c76...）
     Returns:
         record 列表（原样返回 datacenter 的 data 数组），空则 []
     """
     if not all_pages:
         return _query_page(report_name, filter_str, page_size,
-                           sort_columns, sort_types, tier, 1, source)
+                           sort_columns, sort_types, tier, 1, source, extra_params)
 
     # 全量分页：遍历 result.pages，聚合所有 data
     records: list[dict] = []
@@ -39,7 +40,7 @@ def datacenter(report_name: str, filter_str: str = "", page_size: int = 50,
     while True:
         page_data, total_pages = _query_page_with_meta(
             report_name, filter_str, page_size,
-            sort_columns, sort_types, tier, page, source,
+            sort_columns, sort_types, tier, page, source, extra_params,
         )
         records.extend(page_data)
         # 终止条件：无 pages 元信息 / 已到末页 / 触达 max_pages
@@ -53,18 +54,20 @@ def datacenter(report_name: str, filter_str: str = "", page_size: int = 50,
 
 def _query_page(report_name: str, filter_str: str, page_size: int,
                 sort_columns: str, sort_types: str, tier: str,
-                page_number: int, source: str) -> list[dict]:
+                page_number: int, source: str,
+                extra_params: dict | None = None) -> list[dict]:
     """查询单页，返回 data 数组（空则 []）。"""
     data, _ = _query_page_with_meta(
         report_name, filter_str, page_size,
-        sort_columns, sort_types, tier, page_number, source,
+        sort_columns, sort_types, tier, page_number, source, extra_params,
     )
     return data
 
 
 def _query_page_with_meta(report_name: str, filter_str: str, page_size: int,
                           sort_columns: str, sort_types: str, tier: str,
-                          page_number: int, source: str) -> tuple[list[dict], int]:
+                          page_number: int, source: str,
+                          extra_params: dict | None = None) -> tuple[list[dict], int]:
     """查询单页，返回 (data 数组, 总页数)。
 
     总页数取自 result.pages；缺失或 result 为空时返回 ([], 0)。
@@ -76,6 +79,8 @@ def _query_page_with_meta(report_name: str, filter_str: str, page_size: int,
         "sortColumns": sort_columns, "sortTypes": sort_types,
         "source": source, "client": "WEB",
     }
+    if extra_params:
+        params.update(extra_params)
     r = em_get(DATACENTER_URL, params=params, timeout=15, tier=tier)
     d = r.json()
     result = d.get("result")

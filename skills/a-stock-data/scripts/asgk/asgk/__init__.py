@@ -20,6 +20,7 @@ from asgk.capital import (
 )
 from asgk.earning import earning_forecast, earning_express
 from asgk.risk_event import mgmt_trade, repurchase, institute_research
+from asgk.pool_filter import pledge_ratio, goodwill
 from asgk.news import eastmoney_stock_news, cls_telegraph, eastmoney_global_news
 from asgk.client import tdx_client
 from asgk.base import mootdx_finance, mootdx_f10, eastmoney_stock_info, sina_financial_report
@@ -51,6 +52,8 @@ __all__ = [
     "earning_forecast", "earning_express",
     # 事件层
     "mgmt_trade", "repurchase", "institute_research",
+    # 风险/筛选层
+    "pledge_ratio", "goodwill",
     # 新闻层
     "eastmoney_stock_news", "cls_telegraph", "eastmoney_global_news",
     # 基础数据

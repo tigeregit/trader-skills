@@ -25,6 +25,7 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 | 资金流 | `stock_fund_flow_120d` | capital |
 | 业绩预告/快报 | `earning_forecast`/`earning_express` | [earning](references/earning.md) |
 | 高管增减持/回购/机构调研 | `mgmt_trade`/`repurchase`/`institute_research` | [risk_event](references/risk_event.md) |
+| 股权质押/商誉 | `pledge_ratio`/`goodwill` | [pool_filter](references/pool_filter.md) |
 | 财联社电报/新闻 | `cls_telegraph`/`eastmoney_stock_news` | [news](references/news.md) |
 | 财务三表 | `sina_financial_report` | [base](references/base.md) |
 | F10/股本/上市日 | `mootdx_f10`/`eastmoney_stock_info` | base |
