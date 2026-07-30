@@ -160,7 +160,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-HOLD-001 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit fad9ae2) / 3 |
 | capability | 十大股东明细 |
 | asgk | `top10_holders(symbol, date) -> list[dict]` / holders.py / holders.md |
 | upstream | `stock_gdfx_top_10_em(symbol, date)` / `stock_gdfx_em.py:452` |
@@ -181,7 +181,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-HOLD-002 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit fad9ae2) / 3 |
 | capability | 十大流通股东明细 |
 | asgk | `top10_free_holders(symbol, date) -> list[dict]` / holders.py |
 | upstream | `stock_gdfx_free_top_10_em(symbol, date)` / `stock_gdfx_em.py:393` |
@@ -199,7 +199,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-HOLD-003 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit fad9ae2) / 3 |
 | capability | 股东持股变化（全市场统计） |
 | asgk | `holder_change(date) -> list[dict]` / holders.py |
 | upstream | `stock_gdfx_holding_change_em(date)` / `stock_gdfx_em.py:313` |
@@ -217,7 +217,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-HOLD-004 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit fad9ae2) / 3 |
 | capability | 股东协同（按股东类型） |
 | asgk | `holder_teamwork(holder_type="全部") -> list[dict]` / holders.py |
 | upstream | `stock_gdfx_holding_teamwork_em(symbol)` / `stock_gdfx_em.py:953` |
@@ -259,7 +259,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-CHIP-001 |
 |---|---|
-| status / phase | candidate / 4 |
+| status / phase | **implemented** (commit f9f679b) / 4 |
 | capability | 筹码分布 + 主力成本 |
 | asgk | `chip_distribution(symbol, adjust="") -> list[dict]` / chip.py |
 | upstream | `stock_cyq_em(symbol, adjust)` / `stock_cyq_em.py:16` |
@@ -282,7 +282,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-BOARD-001 / 002 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit c3b6a70) / 3 |
 | capability | 概念板块 / 行业板块成份股 |
 | asgk | `board_constituents(symbol, kind) -> list[dict]` / board.py（一个函数用 kind 区分概念/行业，一行） |
 | upstream | `stock_board_concept_cons_em(symbol)` / `stock_board_concept_em.py:428` ; `stock_board_industry_cons_em(symbol)` / `stock_board_industry_em.py:461` |
@@ -401,7 +401,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-VAL-001 / 002 |
 |---|---|
-| status / phase | candidate / 4 |
+| status / phase | **implemented** (commit 328a4e1) / 4 |
 | capability | 全市场 PE / PB 历史（乐咕） |
 | asgk | `market_pe_lg(market) / market_pb_lg(market) -> list[dict]` / valuation_hist.py |
 | upstream | `stock_market_pe_lg(symbol)` / `stock_a_pe_and_pb.py:322` ; `stock_market_pb_lg` / `:463` |
@@ -422,7 +422,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-FAILOVER-001 |
 |---|---|
-| status / phase | candidate / 5 |
+| status / phase | **implemented** (commit cbd3e21) / 5 |
 | capability | 深交所融资融券明细（官方容灾源） |
 | asgk | `margin_detail_szse(date) -> list[dict]`（归属待定：capital.py 还是新模块） |
 | upstream | `stock_margin_detail_szse(date)` / `stock_margin_szse.py:93` |
