@@ -27,6 +27,7 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 | 高管增减持/回购/机构调研 | `mgmt_trade`/`repurchase`/`institute_research` | [risk_event](references/risk_event.md) |
 | 股权质押/商誉 | `pledge_ratio`/`goodwill` | [pool_filter](references/pool_filter.md) |
 | 十大股东/流通股东/股东变化/协同 | `top10_holders`/`top10_free_holders`/`holder_change`/`holder_teamwork` | [holders](references/holders.md) |
+| 板块成份股 | `board_constituents` | [board](references/board.md) |
 | 财联社电报/新闻 | `cls_telegraph`/`eastmoney_stock_news` | [news](references/news.md) |
 | 财务三表 | `sina_financial_report` | [base](references/base.md) |
 | F10/股本/上市日 | `mootdx_f10`/`eastmoney_stock_info` | base |

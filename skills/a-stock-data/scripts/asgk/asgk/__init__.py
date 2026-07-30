@@ -24,6 +24,7 @@ from asgk.pool_filter import pledge_ratio, goodwill
 from asgk.holders import (
     top10_holders, top10_free_holders, holder_change, holder_teamwork,
 )
+from asgk.board import board_constituents
 from asgk.news import eastmoney_stock_news, cls_telegraph, eastmoney_global_news
 from asgk.client import tdx_client
 from asgk.base import mootdx_finance, mootdx_f10, eastmoney_stock_info, sina_financial_report
@@ -59,6 +60,8 @@ __all__ = [
     "pledge_ratio", "goodwill",
     # 股东层
     "top10_holders", "top10_free_holders", "holder_change", "holder_teamwork",
+    # 板块层
+    "board_constituents",
     # 新闻层
     "eastmoney_stock_news", "cls_telegraph", "eastmoney_global_news",
     # 基础数据
