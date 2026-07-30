@@ -1,265 +1,472 @@
-# Draft Plan: 合成 akshare 能力到 a-stock-data
+# 合成 akshare 能力到 a-stock-data（执行计划）
 
 > **状态**：Draft，待评审
 > **分支**：`feat/akshare-merge`
-> **日期**：2026-07-26
-> **来源**：基于 temp/akshare 源码核对 + asgk 契约核对起草
+> **最后修订**：2026-07-31
+> **关联**：
+> - [akshare-integration-analysis.md](akshare-integration-analysis.md)：为什么选 ref-port（架构方案比较）
+> - [akshare-port-feasibility.md](akshare-port-feasibility.md)：技术模式与可移植性证据
 
 ---
 
-## 0. TL;DR
+## 0. 参考基线与适用范围
 
-**决策**：把 akshare 的 A 股独有能力**合成进现有 `skills/a-stock-data`**，不新增独立 skill。
-akshare 仅作 ref 蓝本，移植接口用 asgk 现有架构（`em_get`/`_datacenter`/`@source`/sgw 网关）重写，**零基础设施重构**。
+**AkShare 参考基线**（所有"akshare 源码事实"仅针对此 snapshot，不外推到上游最新版）：
 
-**规模**：分 3 阶段，P0（9 接口）→ P1（11 接口）→ P2（按需）。每阶段独立可交付、可回滚。
+- 本地路径：`.agents/temp/akshare`
+- version：`1.18.64`
+- commit：`fcdbf25aa864a218c54864c3f6ab6a2ed19cce28`
+- commit date：`2026-05-27`
 
-**前置约束（不可协商）**：
-- AGENTS.md §2 流量管控：东财/同花顺源**必须**经 sgw 网关，禁止直连
-- AGENTS.md §6：基于 ref 改造，不 `pip install akshare`
-- 所有移植函数必须挂 `@source` 声明 tier/via，纳入缓存分档
+> 上游接口签名、字段、host 可能漂移；真正实现时若发现 snapshot 与现网不符，以现网为准并回写本文档，但不追 akshare 新版本。
 
 ---
 
-## 1. 背景与决策依据
+## 1. TL;DR
 
-### 1.1 调研结论（双向差异）
+**决策**：把 akshare 的 A 股独有能力**合成进现有 `skills/a-stock-data`**，不新增独立 skill。akshare 仅作 ref 蓝本，按固定 snapshot 逐接口移植到 asgk 现有架构（`em_get`/`_datacenter`/`@source`/sgw 网关）。**不 `pip install akshare`。**
 
-**akshare 相对 a-stock-data 独有**（广度优势，200+ A 股接口）：
-1. 股东维度：十大股东/十大流通股东明细、股东协同、一致行动人
-2. 估值历史数据源：个股 PE/PB/股息率分位、全市场 PE/PB、股债利差、巴菲特指标
-3. 业绩三件套：业绩预告/业绩快报/预约披露（独立全市场扫描）
-4. 筹码分布 + 主力成本（`stock_cyq_em`，独有）
-5. 概念板块 → 成份股反向查询 + 板块历史K线
-6. 四个事件类：股权质押、商誉、高管增减持、股票回购
-7. 股票池构建：A+H 溢价、次新股池、ST/退市名单、IPO 全流程
-8. 同花顺技术选股 11 类（突破/放量/洗盘等现成清单）
+**不是零基础设施**：现有 sgw 和 `_datacenter` 存在移植前必须修正的正确性缺口（host 精确归组、请求头透传、query-aware 缓存键、datacenter 全量分页）。详见 §3 阶段 2 和 [integration-analysis §1](akshare-integration-analysis.md)。
 
-**a-stock-data 相对 akshare 独有**（深度+架构优势）：
-1. 通达信 mootdx TCP 层（五档盘口 46 字段、逐笔、季报快照、F10）— akshare 完全不用
-2. 腾讯实时报价完整字段（PE/PB/市值/换手/涨跌停一把抓）— akshare 走东财快照
-3. 百度K线带均线 — akshare 无百度K线
-4. 打板情绪温度计（炸板率/连板梯队聚合）— akshare 只给原始四池
-5. PEG / 前向PE / PE消化年数（本地估值计算）— akshare 只给原始 EPS
-6. **架构级**：sgw 共享网关 + `@source` 缓存分档 + failover 矩阵 — akshare 作为单 agent 库完全没有
+**规模**：按 [§4 interface inventory](#4-authoritative-interface-inventory) 的稳定 ID 推进，每个公开 asgk 函数一行、独立验收；不再用"P0 9 接口 / P1 11 接口"这种混淆"能力数 / 上游函数数 / 公开函数数"的口径。
 
-### 1.2 为什么"合成"而非"拆 2 skill"
+**核心约束**（来自 AGENTS.md，不可协商）：
+- §2 流量管控：东财/同花顺风控源**必须**经 sgw 网关，禁止直连；无 IP 风控源可直连。
+- §6：基于 ref 改造，不 `pip install akshare`。
 
-曾考虑拆 2 个 skill（实时 vs 研究），推翻理由：
+---
+
+## 2. 背景与决策依据
+
+### 2.1 双向差异（候选能力领域）
+
+**akshare 相对 a-stock-data 独有**（广度优势，候选领域）：
+1. 股东维度：十大股东/十大流通股东明细、股东持股变化（全市场）、股东协同（按股东类型）
+2. 估值历史数据源：全市场 PE/PB、指数 PE/PB（乐咕）；**注意 snapshot 中无个股 PE/PB 接口**，个股估值已由现有 `valuation` 层本地计算覆盖
+3. 业绩三件套：业绩预告/业绩快报（全市场报告期扫描）
+4. 筹码分布 + 主力成本（本地 CYQ 算法，依赖 K 线 + mini-racer）
+5. 板块 → 成份股反向查询（概念/行业）
+6. 四类事件：股权质押（全市场）、商誉（全市场）、高管增减持（全市场明细）、股票回购（全市场）
+7. 机构调研（全市场，按开始日期）
+
+**a-stock-data 相对 akshare 独有**（深度+架构优势，不复述细节）：
+mootdx TCP 层、腾讯实时报价完整字段、百度K线带均线、打板情绪温度计、PEG/前向PE/PE消化（本地估值计算）、sgw 共享网关 + `@source` 缓存分档 + failover 矩阵。
+
+### 2.2 为什么"合成"而非"拆 2 skill"
 
 | 维度 | 拆 2 skill | 合成 1 skill |
 |------|-----------|-------------|
-| 基础设施重构 | **必须**（`em_get`/`@source`/failover 下沉到 `packages/asgk-core/`） | **不用**（akshare 接口 9/10 走东财，复用现成） |
-| 交叉接口归属 | 每次判断（龙虎榜/融资融券/三表归哪边） | 不存在（同 skill 内主源+备源） |
-| agent 路由层数 | 2 层（先选 skill 再选 reference） | 1 层（直接选 reference） |
-| 代码重复 | 4 项完全等价接口需协调 | 0 |
-| progressive disclosure | 一般 | **更好**（references 分层是原设计） |
+| 基础设施 | 需下沉 `em_get`/`@source`/failover | 复用现有 |
+| 交叉接口归属 | 每次判断（融资融券/三表归哪边） | 同 skill 内主源+备源 |
+| agent 路由层数 | 2 层 | 1 层（直接选 reference） |
+| 代码重复 | 等价接口需协调 | 0 |
+| progressive disclosure | 一般 | 更好（references 分层是原设计） |
 
-**关键证据**：核对 akshare 10 个 P0 接口的真实数据源，9 个走东财域名（`datacenter-web.eastmoney.com` / `push2his.eastmoney.com` / `push2.eastmoney.com`），**全部命中 sgw 现有限流组**（`PROXIED_DOMAIN_SUFFIXES = (.eastmoney.com, .10jqka.com.cn)`），无需新增网关分组。合成方案的基础设施成本确实为零。
+合成方案胜出。**但"9/10 走东财且命中 sgw 现有组"的旧结论不准确**——见 [§3 阶段 2](#阶段-2请求基础设施正确性前置)，akshare 用的若干东财子域（`datacenter.eastmoney.com`、`emweb.securities.eastmoney.com`）当前未在 sgw `config.toml` 精确归组，需逐项核验。板块接口的编号 push2 子域已决策主用无编号 host（[§7 决策7](#7-决策记录)），编号仅作备选。
 
-### 1.3 边界声明（合成后的 skill 自我描述）
+### 2.3 合成后的 skill 自我描述
 
-`a-stock-data` 涵盖「实时交易时序数据 + 研究型结构性数据」两类，经同一 sgw 网关。
-不再额外拆分；akshare 上游仅作 ref，按需移植，不追新。
-
----
-
-## 2. 合成后的目标结构
-
-```
-skills/a-stock-data/
-├── SKILL.md                  # 路由表扩为「实时数据 / 研究数据」二级分组（< 300 行）
-├── references/
-│   ├── (现有 11 个不动)
-│   │   quote / signal / capital / base / report / news / announce
-│   │   limitup / option / sentiment / valuation / failover
-│   └── (新增 8 个，按 P0/P1 分批落)
-│       ├── holders.md        # P0: 十大股东/流通股东/股东协同
-│       ├── valuation_hist.md # P0: 个股 PE/PB 分位（乐咕）
-│       ├── earning.md        # P0: 业绩预告/快报/预约披露
-│       ├── chip.md           # P0: 筹码分布/主力成本
-│       ├── board.md          # P0: 板块成份股反向 + 板块K线
-│       ├── risk_event.md     # P0: 高管增减持/回购/机构调研/行业PE
-│       ├── macro_value.md    # P1: 全市场择时（巴菲特/股债利差/拥挤度/破净）
-│       └── pool_filter.md    # P1: ST/次新/A+H/IPO + 质押/商誉/限售明细
-└── scripts/asgk/asgk/
-    ├── (现有 12 个模块不动)
-    └── (新增 8 个，与 references 一一对应)
-        ├── holders.py
-        ├── valuation_hist.py
-        ├── earning.py
-        ├── chip.py
-        ├── board.py
-        ├── risk_event.py
-        ├── macro_value.py
-        └── pool_filter.py
-```
-
-**SKILL.md 路由表写法**（二级分组，暗示交叉但不重复）：
-
-```markdown
-## 实时数据（盘中/日级，R-S 档）
-| 需求 | 函数 | 参考 |
-| 实时价/PE/PB | tencent_quote | quote |
-| ...（现有内容保持不变） |
-
-## 研究数据（季度/事件定稿，L-P 档）
-| 需求 | 函数 | 参考 |
-| 十大股东明细 | top10_holders | holders |
-| 历史PE/PB分位 | pe_pb_percentile | valuation_hist |
-| 业绩预告 | earning_forecast | earning |
-| 筹码分布/主力成本 | chip_distribution | chip |
-| 板块成份股 | board_constituents | board |
-| 高管增减持/回购 | mgmt_trade / repurchase | risk_event |
-| ST/次新/A+H名单 | pool_filters | pool_filter |
-```
-
-**description 字段**（互指消失，改为内部分组提示）：
-
-```
-A股全量取数——实时行情(K线/五档/PE/PB/市值)、盘口逐笔、研报与一致预期EPS、
-信号(热点/北向/龙虎榜/解禁/行业)、资金面(融资融券/大宗/股东户数与十大股东/
-分红/资金流)、财务三表与F10、公告、新闻流、打板(涨停池/情绪温度计)、
-ETF期权、舆情、估值(PEG/PE分位)、股东明细、业绩预告/快报、筹码分布、
-板块成份股、质押/商誉/回购/高管增减持、ST/次新/A+H/IPO、技术选股。
-覆盖实时交易时序与研究型结构性两类数据，经共享流量网关支持单 IP 多 agent 并发。
-仅在需要取数时使用。
-```
+`a-stock-data` 涵盖「实时交易时序数据 + 研究型结构性数据」两类，经同一 sgw 网关。研究型接口的**全市场扫描**与**单证券查询**由函数签名明确区分，不伪装成统一的 `code` 参数。
 
 ---
 
 ## 3. 阶段拆解
 
-每阶段遵循 AGENTS.md §5 的 commit 规则：**一 commit = 一逻辑变更，代码库始终可工作**。
+每阶段遵循 AGENTS.md §5：**一 commit = 一逻辑变更，代码库始终可工作**。
 
-### 阶段 0：基础设施核查（不重构，仅确认）
+### 阶段 1：事实冻结与接口契约
 
-> **修订提示（2026-07-27）**：后续可行性分析（[akshare-port-feasibility.md §6.4](akshare-port-feasibility.md)）建议在阶段 0 与阶段 1 之间补**阶段 0.5（实现 `_signing.py`/`_htmltable.py`/`_dataframe.py` + vendor JS）**和**阶段 0.6（清理 pyproject.toml 依赖声明）**。阶段 1（P0 纯 JSON）不依赖它们，阶段 2（P1 难点）依赖。本节阶段编号暂未调整，审核时请结合该修订建议。
+- [ ] 冻结 AkShare snapshot（已完成，见 §0）
+- [ ] 完成 [§4 interface inventory](#4-authoritative-interface-inventory)，每行确定：稳定 ID、目标函数签名（按真实上游参数语义，非统一 `code`）、host/path/method、分页、tier/via、依赖、验收
+- [ ] 逐项核验 inventory 的 `upstream_host` 是否已在 `packages/sgw/sgw/config.toml` 精确归组，标记 `gateway_readiness`
 
-- [ ] 确认 sgw 网关 `PROXIED_DOMAIN_SUFFIXES` 已覆盖东财/同花顺 → ✅ 已核对（`packages/sgw/sgw/proxy.py:37`）
-- [ ] 确认 `em_get` / `_datacenter` / `@source` 契约稳定 → ✅ 已核对
-- [ ] **新增**：乐咕网（`legulegu.com` / `eniu.com`）限流决策
-  - 乐咕是非风控源（无 IP 封禁历史），按 AGENTS.md §2 可直连
-  - 但需在 `asgk` 侧加进程内自律限流（对齐 `em_proxy._direct_throttle` 模式）
-  - **决策点**：是放进 sgw 网关新建 `legu` 组，还是 asgk 内直连+自律限流？
-    - 倾向 **asgk 内直连**（乐咕无封 IP 风险，进网关反而增加单点依赖）
-- [ ] **不动作**：不动 `packages/sgw/`，不动 `em_proxy.py`，不动 `_contract.py`
+**交付**：本文档 §4（已起草，评审时定稿）。无代码变更。
 
-**交付物**：一份 `.agents/notes/legu-source-decision.md`（30 行内，记录乐咕源处置决策）
-**回滚**：无代码变更，仅文档
+### 阶段 2：请求基础设施正确性前置
 
----
+> 这些是移植任何东财/同花顺/交易所接口前的**正确性前置**，不是可选增强。详见 [integration-analysis §1](akshare-integration-analysis.md)。
 
-### 阶段 1：P0 移植（9 接口，最高优先级）
+- [ ] **sgw host 精确归组**：当前 `proxy.py` 先按 `PROXIED_DOMAIN_SUFFIXES` 后缀准入，再按 `config.toml` 精确 host 归组（`proxy.py:243-248`）。需在 config 补齐 inventory 涉及的东财子域（`emweb`/`datacenter.eastmoney.com`/`push2.eastmoney.com` 无编号等）。板块编号 host 不做 wildcard 归组（[§7 决策7](#7-决策记录) 主用无编号，编号仅备选走另路径）
+- [ ] **请求头白名单透传**：当前 sgw 转发上游时丢弃客户端 headers，只用固定 User-Agent（`proxy.py:349-356`）。需设计显式白名单（`User-Agent`/`Referer`/`Cookie`/`X-CSRF-Token`/`Accept`），覆盖深交所 Referer、同花顺 `hexin-v` 等
+- [ ] **query-aware canonical cache key**：当前 `cache_key = f"{tier}|{target_url}"` 不含 params（`proxy.py`），不同股票/日期/页码会串缓存。改为基于 canonical prepared URL（target query + params 合并、排序、编码统一）
+- [ ] **`_datacenter` 全量分页**：当前固定 `pageNumber=1`（`_datacenter.py:12-35`）。扩展为支持 `all_pages`/`max_pages`，处理 `result.pages`/`result.count`/空结果/部分页失败，且每页 tier 传入、page 进入 cache key
+- [ ] **通用/分源请求客户端边界**：`em_get` 当前只服务东财/同花顺（`em_proxy.py:18`）。若交易所/乐咕要经网关，需泛化为 `gateway_get()` 或新增独立客户端；**或者**按 §7 决策走直连。GET-only 边界需明确
+- [ ] 上述各项配 mock 单元测试（host 路由、header 转发、query cache key、datacenter 多页、`600519` vs `000001` 不串缓存）
 
-每接口一个 commit，便于二分定位。每个 commit 包含：函数实现 + reference 文件 + SKILL.md 路由表新增一行 + `__init__.py` 导出。
+**交付**：sgw/asgk 基础设施变更 + 单元测试。**本阶段不移植任何 akshare 业务接口。**
 
-| 序 | 接口 | akshare 蓝本 | asgk 函数 | 源 | via | tier | 新模块 |
-|----|------|-------------|----------|----|----|------|--------|
-| 1.1 | 十大股东/十大流通股东 | `stock_gdfx_top_10_em` / `_free_top_10_em` | `top10_holders(code)` | 东财 datacenter | gateway | L | holders.py |
-| 1.2 | 股东持股变化/协同 | `stock_gdfx_holding_change_em` / `_teamwork_em` | `holder_change(code)` / `holder_teamwork(code)` | 东财 datacenter | gateway | L | holders.py |
-| 1.3 | 个股 PE/PB 分位 | `stock_a_indicator_lg` | `pe_pb_percentile(code)` | 乐咕 | direct（自律限流） | L | valuation_hist.py |
-| 1.4 | 业绩预告/快报 | `stock_yjyg_em` / `stock_yjkb_em` | `earning_forecast(code)` / `earning_express(code)` | 东财 datacenter | gateway | L | earning.py |
-| 1.5 | 筹码分布 | `stock_cyq_em` | `chip_distribution(code)` | 东财 push2his | gateway | S | chip.py |
-| 1.6 | 概念/行业板块成份股 | `stock_board_concept_cons_em` / `_industry_cons_em` | `board_constituents(board)` | 东财 push2 | gateway | S | board.py |
-| 1.7 | 高管增减持 | `stock_hold_management_detail_em` | `mgmt_trade(code)` | 东财 datacenter | gateway | S | risk_event.py |
-| 1.8 | 股票回购 | `stock_repurchase_em` | `repurchase(code)` | 东财 datacenter | gateway | P | risk_event.py |
-| 1.9 | 机构调研 | `stock_jgdy_detail_em` | `institute_research(code)` | 东财 datacenter | gateway | S | risk_event.py |
+### 阶段 3：纯 JSON、低基建接口
 
-**阶段验收标准**：
-- [ ] 9 个函数全部挂 `@source`，tier/via 声明正确
-- [ ] 每函数配 reference 文件（< 50 行，含调用示例 + 字段说明）
-- [ ] SKILL.md 路由表新增「研究数据」分组
-- [ ] `__init__.py` 导出 9 个新函数
-- [ ] 真机验证：每个函数至少 1 个 code 实测返回非空（用 600519/000001 验证）
-- [ ] 经网关验证：东财源确认走 `em_get`/`_datacenter`，乐咕源确认走直连+限流
+只移植 inventory 中满足全部条件的行：host 已可路由、GET、header 已支持、JSON、分页已正确实现、参数契约已确定。
 
-**回滚**：9 个独立 commit，可逐个 revert
+典型候选：十大股东、股东持股变化、股东协同、业绩预告/快报、股权质押、商誉、高管增减持、回购、机构调研、板块成份股。**注意**：其中多数是**全市场/报告期/日期/股东关键词/板块名**接口，不是单股 `code` 查询——按 inventory 行的 `asgk_input` 实现真实签名。
 
----
+按领域切片提交（一个可独立工作的领域切片 = 一 commit，含实现+测试+reference+`__init__.py` 导出+SKILL.md 路由）。SKILL.md 路由只在能力真正可用时更新。
 
-### 阶段 2：P1 移植（11 接口，补强价值）
+### 阶段 4：HTML / 签名 / xlsx / 算法接口
 
-| 序 | 接口 | asgk 函数 | 源 | via | tier | 新/扩模块 |
-|----|------|----------|----|----|------|----------|
-| 2.1 | 全市场 PE/PB 历史 | `market_pe_pb()` | 乐咕 | direct | L | macro_value.py |
-| 2.2 | 股债利差 / 巴菲特指标 | `equity_bond_spread()` / `buffett_indicator()` | 乐咕 | direct | L | macro_value.py |
-| 2.3 | 破净股/创新高统计/拥挤度 | `market_bread()` | 乐咕 | direct | S | macro_value.py |
-| 2.4 | 股权质押（市场+个股） | `pledge_ratio(code)` / `pledge_overview()` | 东财 datacenter | gateway | S | pool_filter.py |
-| 2.5 | 商誉（市场+个股） | `goodwill(code)` / `goodwill_overview()` | 东财 datacenter | gateway | L | pool_filter.py |
-| 2.6 | 限售解禁明细（按股东/队列） | `lockup_detail(code)` / `lockup_queue()` | 东财 datacenter | gateway | S | 扩 signal.py（已有 `lockup_expiry`） |
-| 2.7 | 次新股池/打新收益率 | `sub_new_pool(date)` / `ipo_yield()` | 东财 push2ex | gateway | S | pool_filter.py |
-| 2.8 | 新股 IPO 全流程 | `ipo_pipeline()` | 东财 datacenter | gateway | P | pool_filter.py |
-| 2.9 | 停复牌全市场 | `suspension_pool()` | 东财 datacenter | gateway | S | pool_filter.py |
-| 2.10 | A+H 溢价/行情 | `ah_premium(code)` | 东财 datacenter | gateway | R | pool_filter.py |
-| 2.11 | ST/退市/次新名单 | `pool_filters(category)` | 东财 push2 / 交易所 | gateway/direct | S | pool_filter.py |
+按 inventory 的 structured 类行按需实现，对应 [port-feasibility §3](akshare-port-feasibility.md) 的技术模式：
+- 筹码分布（CYQ 本地算法）
+- 乐咕全市场 PE/PB（JS 版 MD5 token + CSRF）
+- 深交所 ShowReport xlsx 流（融资融券官方容灾源、市场总貌等）
+- 同花顺签名/HTML 接口（若纳入范围）
 
-**阶段验收标准**：同阶段 1
-**回滚**：11 个独立 commit
+按需新增 helper（`_signing.py`/`_htmltable.py`/`_xlsx.py`/`_dataframe.py`），**有 approved inventory 消费者才新增**；vendor JS 写明来源/commit/license/hash；asgk 直接 import 的第三方包显式声明到 `pyproject.toml`。
+
+### 阶段 5：真正的独立源 failover 与按需扩展
+
+把 akshare 的**不同风控面独立源**（交易所官方等）补进现有模块作容灾，写入 `references/failover.md`。注意区分：
+- **source failover**：不同 host 的独立源容灾（如交易所官方 vs 东财）——有价值
+- **dimension complement**：同源不同维度（如东财个股 + 东财营业部统计）——不是封禁容灾
+
+P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪球/百度舆情、ESG/杜邦、股东大会日历等。
 
 ---
 
-### 阶段 3：交叉接口容灾化 + P2 按需
+## 4. Authoritative interface inventory
 
-#### 3a. 交叉接口容灾化（高价值，提升鲁棒性）
+> **本节是三份文档中唯一的接口清单**。`integration-analysis.md` 和 `port-feasibility.md` 只引用此处的 ID，不复制表格。
+> **行粒度**：一行 = 一个拟新增的 asgk 公共函数。不按"能力包"或上游文件计数。
+> **快照**：akshare 1.18.64 / `fcdbf25`（见 §0）。源码路径证据见 `upstream_evidence`。
+> **状态字段**：`candidate`（评审中）/ `approved`（评审通过可实施）/ `blocked` / `implemented` / `deferred` / `rejected`。
+> **gateway_readiness**：`ready`（host 已归组）/ `host-missing` / `header-missing` / `method-missing`（POST）/ `direct`（决策直连）。
 
-把 akshare 同名接口作为 a-stock-data 主源的**第二源**补进现有模块，写入 `references/failover.md`：
+### 4.0 字段说明
 
-| 现有主源 | 补 akshare 第二源 | asgk 新函数 | 价值 |
-|---------|------------------|------------|------|
-| `margin_trading`（东财） | 沪深交易所官方 | `margin_trading_sse/szse` | 东财被封时兜底 |
-| 财报三表（新浪） | 东财 `stock_three_report_em` | `em_balance_sheet` 等 | 多源冗余 |
-| 龙虎榜（东财个股） | 东财营业部/机构统计 | `lhb_yyb_rank` | 维度补强 |
-| 涨停四池（东财） | 强势股池/次新股池 | `em_strong_pool` / `em_sub_new_pool` | 维度补强 |
-| 一致预期 EPS（同花顺） | 东财 `stock_profit_forecast_em` | `em_eps_forecast` | 源冗余 |
+| 字段 | 说明 |
+|---|---|
+| id | 稳定 ID，文档间唯一引用键 |
+| status / phase | 状态 / 阶段（见 §3） |
+| capability | 用户能力名 |
+| asgk_function / target_module / reference_doc | 目标公开函数 / 文件 / reference |
+| upstream_function / upstream_evidence | AkShare 蓝本函数 / 源码路径:行号 |
+| upstream_host / path / method | 精确上游信息（不写"东财 datacenter"模糊词） |
+| request_params | 固定 + 动态参数 |
+| required_headers | Referer/Cookie/UA 等；无写 `none` |
+| response_kind | JSON/HTML/xlsx/text |
+| pagination | none / pages / count / cursor；page 参数名、终止条件、默认/最大页数 |
+| upstream_input | AkShare 原始签名及语义 |
+| asgk_input | 拟定公开签名（按真实语义） |
+| input_mapping | code 前缀、日期格式、板块名→代码等转换 |
+| output_type / output_schema | 返回类型 / 稳定字段名+类型+单位+nullable |
+| tier / via / gateway_readiness | 缓存档 / gateway 或 direct / 网关就绪状态 |
+| dependencies | 直接依赖 + helper |
+| existing_overlap | 现有函数及 duplicate/complement/failover 关系 |
+| fixture_args | 合法测试样例参数（按接口类型，不统一用 600519/000001） |
+| acceptance | 行级验收标准 |
+| notes | 其他 |
 
-#### 3b. P2 按需移植（不列时间表，按实际需求触发）
+### 4.1 股东领域（holders.py / holders.md）
 
-- 同花顺技术选股 11 类（`stock_rank_*_ths`）
-- 千股千评主力控盘/机构参与度（`stock_comment_detail_*`）
-- 雪球/百度舆情多源
-- ESG 评级 / 杜邦对比 / 一致行动人
-- 股东大会/股市日历
+| id | AKP-HOLD-001 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 十大股东明细 |
+| asgk | `top10_holders(symbol, date) -> list[dict]` / holders.py / holders.md |
+| upstream | `stock_gdfx_top_10_em(symbol, date)` / `stock_gdfx_em.py:452` |
+| host/path/method | `emweb.securities.eastmoney.com` / `/PC_HSF10/ShareholderResearch/PageSDGD` / GET |
+| params | symbol + date（拼 YYYY-MM-DD） |
+| headers | none |
+| response | JSON（取 `sdgd`） |
+| pagination | none（单页） |
+| upstream_input | `symbol="sh688686"`（**带市场前缀**，内部 `.upper()`）, `date="20210630"`（报告期） |
+| asgk_input | `top10_holders(symbol: str, date: str)`；symbol 接受 `sh688686`/`sz000420` |
+| input_mapping | asgk 可提供便捷封装 `code="688686"`→按 6/0/3 判定前缀，但须在 reference 标注 |
+| output | list[dict] |
+| tier/via/readiness | L / gateway / **host-missing**（`emweb.securities.eastmoney.com` 未在 config） |
+| deps | `_datacenter` **不适用**（非 datacenter 端点，需直接 `em_get`） |
+| overlap | complement 现有 `holder_count`（股东户数） |
+| fixture | `("sh688686","20240930")` / `("sh600519","20240930")` |
+| acceptance | 指定 symbol+报告期返回 10 条左右；字段含股东名/持股数/比例/性质；非报告期返回空且不报错 |
+
+| id | AKP-HOLD-002 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 十大流通股东明细 |
+| asgk | `top10_free_holders(symbol, date) -> list[dict]` / holders.py |
+| upstream | `stock_gdfx_free_top_10_em(symbol, date)` / `stock_gdfx_em.py:393` |
+| host/path/method | `emweb.securities.eastmoney.com` / `/PC_HSF10/ShareholderResearch/PageSDLTGD` / GET |
+| params | symbol + date |
+| headers | none |
+| response | JSON（取 `sdltgd`） |
+| pagination | none |
+| upstream_input | `symbol="sh688686"`（带前缀）, `date="20240930"` |
+| asgk_input | `top10_free_holders(symbol: str, date: str)` |
+| tier/via/readiness | L / gateway / **host-missing**（同 001，需 `em_get` 直调） |
+| deps | `_datacenter` 不适用 |
+| fixture | `("sh688686","20240930")` |
+| acceptance | 同 001，字段为流通股东维度 |
+
+| id | AKP-HOLD-003 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 股东持股变化（全市场统计） |
+| asgk | `holder_change(date) -> list[dict]` / holders.py |
+| upstream | `stock_gdfx_holding_change_em(date)` / `stock_gdfx_em.py:313` |
+| host/path/method | `datacenter-web.eastmoney.com` / `/api/data/v1/get` / GET |
+| params | reportName=`RPT_HOLDERS_BASIC_INFO`, filter=`END_DATE`, pageNumber/pageSize |
+| headers | none |
+| response | JSON（`result.data`） |
+| pagination | **pages**（`result.pages`，遍历 1..total） |
+| upstream_input | `date="20210930"`（**报告期，无股票代码**） |
+| asgk_input | `holder_change(date: str)`；如提供 `code` 过滤，须标明是上游 filter 还是本地过滤 |
+| tier/via/readiness | L / gateway / **host-missing 风险低**（datacenter-web 已归组，但需确认）+ **依赖阶段2分页** |
+| deps | `_datacenter`（需 all_pages） |
+| fixture | `("20240930",)` |
+| acceptance | 返回全市场多页记录；末页正确；总记录数 = sum(pages) |
+
+| id | AKP-HOLD-004 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 股东协同（按股东类型） |
+| asgk | `holder_teamwork(holder_type="全部") -> list[dict]` / holders.py |
+| upstream | `stock_gdfx_holding_teamwork_em(symbol)` / `stock_gdfx_em.py:953` |
+| host/path/method | `datacenter-web.eastmoney.com` / `/api/data/v1/get` / GET |
+| params | reportName, filter=`HOLDER_TYPE`（仅非"全部"时）, pageNumber/pageSize |
+| headers | none |
+| response | JSON |
+| pagination | pages |
+| upstream_input | `symbol="社保"`（**股东类型关键词**，非股票代码；取值：全部/个人/基金/QFII/社保/券商/信托） |
+| asgk_input | `holder_teamwork(holder_type: str = "全部")`；参数名用 `holder_type` 避免与股票代码混淆 |
+| input_mapping | 校验 holder_type ∈ 枚举 |
+| tier/via/readiness | L / gateway / 同 003 |
+| deps | `_datacenter`（需 all_pages） |
+| fixture | `("社保",)` / `("基金",)` |
+| acceptance | 不同 holder_type 返回不同记录集；"全部"返回最多 |
+
+### 4.2 业绩领域（earning.py / earning.md）
+
+| id | AKP-EARN-001 / 002 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 业绩预告 / 业绩快报（全市场报告期） |
+| asgk | `earning_forecast(date)` / `earning_express(date)` / earning.py |
+| upstream | `stock_yjyg_em(date)` / `stock_yjyg_em.py:135` ; `stock_yjkb_em(date)` / `stock_yjyg_em.py:17` |
+| host/path/method | **`datacenter.eastmoney.com`** / `/securities/api/data/v1/get` / GET（**注意与 datacenter-web 不同 host+path**） |
+| params | reportName（`RPT_PUBLIC_OP_NEWPREDICT` / `RPT_FCI_PERFORMANCEE`）, filter=`REPORT_DATE`, pageNumber/pageSize |
+| headers | none |
+| response | JSON |
+| pagination | pages |
+| upstream_input | `date="20200331"` / `"20211231"`（**报告期，无股票代码**） |
+| asgk_input | `earning_forecast(date: str)` / `earning_express(date: str)` |
+| tier/via/readiness | L / gateway / **host-missing**（`datacenter.eastmoney.com` 未归组）+ 依赖阶段2分页 |
+| deps | 需新的 securities-datacenter helper 或扩展 `_datacenter` 支持 base_url 切换 |
+| fixture | `("20240930",)` |
+| acceptance | 报告期有数据返回多页；非报告期返回空且不报错；报告名映射正确 |
+| notes | **不能**直接复用现有 `_datacenter()`（host/path 不同）；需验证 reportName 是否在 datacenter-web 也可用，否则新增 helper |
+
+### 4.3 筹码领域（chip.py / chip.md）
+
+| id | AKP-CHIP-001 |
+|---|---|
+| status / phase | candidate / 4 |
+| capability | 筹码分布 + 主力成本 |
+| asgk | `chip_distribution(symbol, adjust="") -> list[dict]` / chip.py |
+| upstream | `stock_cyq_em(symbol, adjust)` / `stock_cyq_em.py:16` |
+| host/path/method | `push2his.eastmoney.com` / `/api/qt/stock/kline/get` / GET（取近 210 根 K 线） |
+| params | secid（由 symbol 拼出）, lmt=210, adjust |
+| headers | none |
+| response | JSON K 线 → **本地 JS 计算 CYQ**（`py_mini_racer` 执行 `CYQCalculator`，返回最近 90 行） |
+| pagination | none（单次 K 线请求） |
+| upstream_input | `symbol="000001"`（**纯数字不带前缀**，市场由首字符 6 判定）, `adjust ∈ {"","qfq","hfq"}` |
+| asgk_input | `chip_distribution(symbol: str, adjust: str = "")` |
+| input_mapping | symbol 纯数字；secid = `1.{symbol}` 若 6 开头 else `0.{symbol}` |
+| tier/via/readiness | S / gateway / host-missing 风险低（push2his 需确认） |
+| deps | `py-mini-racer`（直接 import→需显式声明直接依赖）+ vendor CYQ JS（来源/commit/license/hash）。**决策已定：vendor JS（方案 A），不 Python 重写** |
+| overlap | complement 现有 K 线接口（百度/mootdx），筹码是独有维度 |
+| fixture | `("000001",)` / `("600519",)` |
+| acceptance | 返回 ~90 行筹码分布；不同 adjust 返回不同成本；CYQ JS 线程安全（阶段4并发测试，thread-local/锁） |
+| notes | CYQ 是**业务算法**（非响应解密），纯数学零 DOM 依赖（`stock_cyq_em.py:27-218`）。决策选 vendor JS + py_mini_racer（与上游完全一致，上游改了只换文件）。py_mini_racer 并发安全须阶段4 测试 + thread-local/锁保护 |
+
+### 4.4 板块领域（board.py / board.md）
+
+| id | AKP-BOARD-001 / 002 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 概念板块 / 行业板块成份股 |
+| asgk | `board_constituents(symbol, kind) -> list[dict]` / board.py（一个函数用 kind 区分概念/行业，一行） |
+| upstream | `stock_board_concept_cons_em(symbol)` / `stock_board_concept_em.py:428` ; `stock_board_industry_cons_em(symbol)` / `stock_board_industry_em.py:461` |
+| host/path/method | `push2.eastmoney.com` / `/api/qt/clist/get` / GET（**主用无编号 canonical host**，asgk 现有 5 处 push2 调用均验证可用） |
+| params | pn/pz=100, fid, ut=bd1d9ddb..., fields |
+| headers | none |
+| response | JSON（`data.diff`） |
+| pagination | **count**（经 `fetch_paginated_data`，pn 递增，sleep 0.5-1.5s） |
+| upstream_input | `symbol="融资融券"` / `"小金属"`（**板块名称或代码 BK0655/BK1027**） |
+| asgk_input | `board_constituents(symbol: str, kind: str = "concept")` |
+| input_mapping | 名称→板块代码（内部辅助请求）；kind ∈ {concept, industry} |
+| tier/via/readiness | S / gateway / host-missing 风险低（无编号 push2.eastmoney.com 需确认是否已归组，易补） |
+| deps | 通用 push2 helper |
+| failover | **编号子域作备选**：无编号 host 失败时降级到 akshare 蓝本的编号 host（`29.push2`/`79.push2` 等），需在 sgw 归组或直连降级路径中处理 |
+| overlap | complement 现有 `em_hot_concept`（个股→概念），此处是反向（板块→成份股） |
+| fixture | `("融资融券","concept")` / `("小金属","industry")` |
+| acceptance | 稳定板块名返回多页成份股；分页完整；名称与代码两种输入均可；无编号 host 失败时备选编号 host 可降级 |
+| notes | push2 clist 分页参数是 `pn`（非 `pageNumber`），与 datacenter 不同。akshare 蓝本用编号 host 是因东财前端服务器分配，asgk 统一无编号便于网关归组 |
+
+### 4.5 事件领域（risk_event.py / risk_event.md）
+
+| id | AKP-EVT-001 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 高管增减持明细（全市场，无参数） |
+| asgk | `mgmt_trade() -> list[dict]` / risk_event.py |
+| upstream | `stock_hold_management_detail_em()` / `stock_hold_control_em.py:14` |
+| host/path/method | `datacenter-web.eastmoney.com` / `/api/data/v1/get` / GET |
+| params | reportName=`RPT_EXECUTIVE_HOLD_DETAILS`, pageNumber/pageSize=5000（注：上游冗余传 p/pageNo/pageNum 但生效的是 pageNumber） |
+| headers | none |
+| response | JSON |
+| pagination | pages |
+| upstream_input | **无参数** |
+| asgk_input | `mgmt_trade()`（如需 code 过滤，标明本地过滤 + 时间窗口） |
+| tier/via/readiness | S / gateway / host-missing 风险低 + 依赖阶段2分页 |
+| deps | `_datacenter`（需 all_pages + 大 pageSize） |
+| fixture | 无参；验收按 schema |
+| acceptance | 返回全市场多页；schema 稳定；不要求特定股票出现 |
+
+| id | AKP-EVT-002 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 股票回购（全市场，无参数） |
+| asgk | `repurchase() -> list[dict]` / risk_event.py |
+| upstream | `stock_repurchase_em()` / `stock_repurchase_em.py:14` |
+| host/path/method | `datacenter-web.eastmoney.com` / `/api/data/v1/get` / GET |
+| params | reportName=`RPTA_WEB_GETHGLIST_NEW`, pageNumber/pageSize=500 |
+| headers | none |
+| response | JSON |
+| pagination | pages |
+| upstream_input | **无参数** |
+| asgk_input | `repurchase()` |
+| tier/via/readiness | **S**（进行中回购状态会更新，**不应 P 档**）/ gateway / 同 001 |
+| deps | `_datacenter`（all_pages） |
+| fixture | 无参 |
+| acceptance | 全市场多页；进行中状态字段可变 |
+
+| id | AKP-EVT-003 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 机构调研（全市场，按开始日期） |
+| asgk | `institute_research(date) -> list[dict]` / risk_event.py |
+| upstream | `stock_jgdy_detail_em(date)` / `stock_jgdy_em.py:108` |
+| host/path/method | `datacenter-web.eastmoney.com` / `/api/data/v1/get` / GET |
+| params | reportName=`RPT_ORG_SURVEY`, filter=`RECEIVE_START_DATE`, pageNumber/**pageSize=50** |
+| headers | none |
+| response | JSON |
+| pagination | pages（pageSize=50，注意较小） |
+| upstream_input | `date="20241211"`（**开始时间，无股票代码**） |
+| asgk_input | `institute_research(date: str)` |
+| tier/via/readiness | S / gateway / 同上 |
+| deps | `_datacenter`（all_pages，注意 pageSize=50 页数多） |
+| fixture | `("20241201",)` |
+| acceptance | 按日期返回多页；page_size 正确 |
+
+### 4.6 风险领域（pool_filter.py / pool_filter.md）
+
+| id | AKP-RISK-001 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 股权质押比例（全市场，按交易日） |
+| asgk | `pledge_ratio(date) -> list[dict]` / pool_filter.py |
+| upstream | `stock_gpzy_pledge_ratio_em(date)` / `stock_gpzy_em.py:88` |
+| host/path/method | `datacenter-web.eastmoney.com` / `/api/data/v1/get` / GET |
+| params | reportName=`RPT_CSDC_LIST`, filter=`TRADE_DATE`, pageNumber/pageSize=500 |
+| headers | none |
+| response | JSON |
+| pagination | pages |
+| upstream_input | `date="20240906"`（**交易日，无股票代码**） |
+| asgk_input | `pledge_ratio(date: str)` |
+| tier/via/readiness | S / gateway / 同上 |
+| deps | `_datacenter`（all_pages） |
+| fixture | `("20240906",)` |
+| acceptance | 按交易日全市场多页 |
+
+| id | AKP-RISK-002 |
+|---|---|
+| status / phase | candidate / 3 |
+| capability | 商誉明细（全市场，按报告期） |
+| asgk | `goodwill(date) -> list[dict]` / pool_filter.py |
+| upstream | `stock_sy_em(date)` / `stock_sy_em.py:294` |
+| host/path/method | `datacenter-web.eastmoney.com` / `/api/data/v1/get` / GET |
+| params | reportName=`RPT_GOODWILL_STOCKDETAILS`, filter=`REPORT_DATE`, pageNumber/pageSize=5000, **token=894050c76...（硬编码固定值）** |
+| headers | none |
+| response | JSON |
+| pagination | pages |
+| upstream_input | `date="20231231"`（**报告期**） |
+| asgk_input | `goodwill(date: str)` |
+| tier/via/readiness | L / gateway / 同上 |
+| deps | `_datacenter`（all_pages）；固定 token 作为常量 |
+| fixture | `("20231231",)` |
+| acceptance | 报告期多页；固定 token 生效 |
+| notes | token 是**硬编码固定值**（非动态签名），作为模块常量即可 |
+
+### 4.7 估值领域（valuation_hist.py / valuation_hist.md）
+
+| id | AKP-VAL-001 / 002 |
+|---|---|
+| status / phase | candidate / 4 |
+| capability | 全市场 PE / PB 历史（乐咕） |
+| asgk | `market_pe_lg(market) / market_pb_lg(market) -> list[dict]` / valuation_hist.py |
+| upstream | `stock_market_pe_lg(symbol)` / `stock_a_pe_and_pb.py:322` ; `stock_market_pb_lg` / `:463` |
+| host/path/method | `legulegu.com` / `/api/stock-data/market-pe`（PB 分支 `/market-pb`，科创版分支 `/api/stockdata/get-ke-chuang-ban-pe`） / GET |
+| params | token + symbol |
+| headers | **Cookie + `X-CSRF-Token`**（经 `get_cookie_csrf`） |
+| response | JSON |
+| pagination | none |
+| upstream_input | `symbol="深证"`（**市场关键词**：上证/深证/创业板/科创版） |
+| asgk_input | `market_pe_lg(market: str)` / `market_pb_lg(market: str)` |
+| tier/via/readiness | L / **direct（待评审，见 §7）** / direct |
+| deps | token = **JS 版 MD5**（内联 `hash_code`，py_mini_racer 执行 `hex(date)`）+ CSRF cookie；`py-mini-racer` 直接依赖 |
+| fixture | `("深证",)` / `("上证",)` |
+| acceptance | 返回时间序列；token 与 CSRF 双重生效 |
+| notes | snapshot 中**无个股 PE/PB 接口**（`stock_a_indicator_lg` 不存在）；个股估值已由现有 `valuation` 层覆盖，不移植。token 算法见 [port-feasibility §2.3](akshare-port-feasibility.md) |
+
+### 4.8 failover 领域（扩 failover.md）
+
+| id | AKP-FAILOVER-001 |
+|---|---|
+| status / phase | candidate / 5 |
+| capability | 深交所融资融券明细（官方容灾源） |
+| asgk | `margin_detail_szse(date) -> list[dict]`（归属待定：capital.py 还是新模块） |
+| upstream | `stock_margin_detail_szse(date)` / `stock_margin_szse.py:93` |
+| host/path/method | **`www.szse.cn`** / `/api/report/ShowReport` / GET |
+| params | SHOWTYPE=xlsx, CATALOGID=1837_xxpl, TABKEY=tab2, tab2PAGENO=1 |
+| headers | **`Referer: https://www.szse.cn/disclosure/margin/margin/index.html` + UA** |
+| response | **xlsx**（bytes） |
+| pagination | none（单页，上游未遍历多页） |
+| upstream_input | `date="20230925"`（交易日） |
+| asgk_input | `margin_detail_szse(date: str)` |
+| input_mapping | date→YYYY-MM-DD |
+| tier/via/readiness | S / **gateway（待评审，见 §7）** / **host-missing + header-missing**（www.szse.cn 未归组，且 Referer 当前不透传） |
+| deps | `_xlsx.py`（openpyxl，**当前未装，需显式声明直接依赖**） |
+| overlap | **failover** 现有 `margin_trading`（东财主源）——东财被封时官方兜底 |
+| fixture | `("20230925",)` |
+| acceptance | 返回 xlsx 解析为 list[dict]；证券代码保前导零（dtype=str）；Referer 透传到上游 |
+
+> 其余 ShowReport 系列（市场总貌/标的名单/汇率/代码表）结构相同，实施时按同模式批量处理并各自占 inventory 一行。
+
+### 4.9 统计
+
+> 由本表重算，禁止再用"P0 N 接口"口径。inventory 共 14 个 id 块，其中 EARN/BOARD/VAL 各为 2 函数合并块，展开为 17 个候选公共函数。
+
+- **候选 asgk 公共函数**：17（HOLD 4 + EARN 2 + CHIP 1 + BOARD 2 + EVT 3 + RISK 2 + VAL 2 + FAILOVER 1）
+- **unique upstream 蓝本函数**：18（候选函数 17 + BOARD 的 `board_constituents(kind=)` 一个 asgk 函数对应概念/行业 2 个上游函数，多出 1 个）
+- **unique source hosts（主用）**：`emweb.securities.eastmoney.com`、`datacenter-web.eastmoney.com`、`datacenter.eastmoney.com`（EARN，待 §7 决策11 验证是否可降级到 datacenter-web）、`push2his.eastmoney.com`、`push2.eastmoney.com`（BOARD 主用无编号，编号 `29./79./91.` 作备选）、`legulegu.com`、`www.szse.cn`（共 7 个主用 host + 编号备选）
+- **阶段分布**：阶段3（JSON）13 函数（HOLD 4 + EARN 2 + BOARD 2 + EVT 3 + RISK 2）；阶段4（structured）3 函数（CHIP 1 vendor JS + VAL 2）；阶段5（failover）1 函数（FAILOVER）
+- **gateway_readiness 分布**：host-missing 涉及 `emweb`（HOLD-001/002）、`datacenter.eastmoney.com`（EARN，待验证）、`www.szse.cn`（FAILOVER）；BOARD 已改无编号 host（asgk 验证可用，归组简单）；header-missing 涉及 szse Referer（FAILOVER）；direct 倾向 2 函数（VAL 乐咕，待 §7 决策10 风控验证）——**阶段2 是真正前置**
 
 ---
 
-## 4. 交叉接口归属表（合成方案的核心优势）
+## 5. 交叉接口关系矩阵（替换旧"归属表"）
 
-合成后无需决策"归哪个 skill"，只需标注主源/备源。下表写入 `references/failover.md`：
+合成后无需决策"归哪个 skill"，只标注关系：
 
-| 能力 | 主源 | 备源（akshare 移植） | 关系 |
+| 能力 | 主源（现有） | akshare 移植（备/补） | 关系 |
 |------|------|---------------------|------|
-| 龙虎榜 | 东财个股+全市场（现有） | 东财营业部/机构统计 | 维度互补 |
-| 融资融券 | 东财明细（现有） | 沪深交易所官方 | 源不同（容灾） |
-| 北向资金 | hexin.cn 直连（现有） | 东财持股明细 | 维度互补 |
-| 财联社电报 | cls.cn 本地签名（现有） | — | 完全等价，不重复 |
-| 财报三表 | 新浪（现有） | 东财三表 | 源不同（容灾） |
-| 涨停四池 | 东财四池（现有） | 强势/次新池 | 维度互补 |
-| 板块 | 个股→概念命中（现有） | 板块→成份股 | 方向不同 |
-| 研报 | 东财个股研报（现有） | — | 完全等价，不重复 |
-| 一致预期 EPS | 同花顺（现有） | 东财 | 源不同（容灾） |
-| 互动易 | 巨潮 irm（现有） | — | 完全等价，不重复 |
-| 股东户数 | 东财变化（现有） | 十大股东明细 | 维度互补 |
-
----
-
-## 5. akshare 仓库处置
-
-**建议**：移到 `ref/akshare`，与 `ref/a-stock-data` 并列，作为长期移植蓝本。
-
-理由：
-- 移植是多阶段过程（P0→P1→P2 跨多次会话），需要稳定的 ref 位置
-- `ref/` 的语义就是"只读对照，不直接用于生产"（AGENTS.md §3）
-- 与 `ref/a-stock-data` 同等地位，二者都是 asgk 的改造蓝本
-
-**操作**：
-- 从 `.agents/temp/akshare` 移到 `ref/akshare`
-- 加入 `.gitmodules`（与 `ref/a-stock-data` 同样以 submodule 形式，或直接 vendor）
-- **决策点**：submodule vs vendor？
-  - 倾向 **vendor（直接 commit 到 ref/akshare）**：akshare 上游更新频繁，但本项目只取特定 snapshot 作蓝本，不追新；submodule 反而引入同步负担
-  - 与 `ref/a-stock-data` 的 submodule 形式不一致，需评审是否破坏一致性
-
-**当前 temp/akshare 的处置**：先保留，待 ref/akshare 落定后删除。
+| 龙虎榜 | 东财个股+全市场 | （东财营业部统计若移植） | dimension complement（同源不同维度，非封禁容灾） |
+| 融资融券 | 东财明细 | 深交所官方（AKP-FAILOVER-001） | **source failover**（独立源，东财被封可兜底） |
+| 财报三表 | 新浪 | （东财三表若移植） | source failover |
+| 板块 | 个股→概念命中（现有） | 板块→成份股（AKP-BOARD-001） | **direction complement**（反向查询） |
+| 股东户数 | 东财变化（现有） | 十大股东明细（AKP-HOLD-001/002） | dimension complement |
+| 一致预期 EPS | 同花顺（现有） | （东财预测若移植） | source failover |
+| 个股估值 | PEG/前向PE（现有本地计算） | — | akshare 无个股 PE/PB，不重复 |
 
 ---
 
@@ -267,39 +474,92 @@ ETF期权、舆情、估值(PEG/PE分位)、股东明细、业绩预告/快报�
 
 | 风险 | 严重度 | 缓解 |
 |------|-------|------|
-| 乐咕源限流策略不当（高频打被封） | 中 | 阶段 0 先出 `.agents/notes/legu-source-decision.md`，确定直连+自律限流的参数 |
-| 东财端点字段漂移（akshare 蓝本版本与现网不一致） | 中 | 每接口真机验证（用 600519/000001），字段缺失时记录在 reference 的"已知限制" |
-| SKILL.md 路由表膨胀超 300 行 | 低 | 二级分组 + reference 分层吸收，预估扩到 ~28 行路由（远低于上限） |
-| commit 粒度过细（P0 9 接口 9 commit） | 低 | 便于二分定位；若评审认为太碎，可按模块合并（holders 2 接口合 1 commit） |
-| akshare 上游接口废弃 | 低 | ref 蓝本不追新；移植时记录 akshare 版本号 |
-| 移植引入新依赖 | 低 | 实现层用已装依赖（pandas/lxml/mini-racer 已是 mootdx 传递依赖）；契约层返回 `list[dict]` + `to_df()` 包装。详见 [akshare-port-feasibility.md §5](akshare-port-feasibility.md) |
+| **sgw 后缀通过但 exact-host 未归组**，接口静默 400 | 高 | 阶段2 逐 host 核验 config；板块接口主用无编号 host（已验证可用），降低归组复杂度 |
+| **sgw 不透传 Referer/Cookie/CSRF**，交易所/同花顺接口失效 | 高 | 阶段2 设计 header 白名单 + 测试 |
+| **cache key 忽略 params，不同股票/页串缓存** | 高 | 阶段2 canonical prepared URL；测试 600519≠000001 |
+| **`_datacenter` 只取第一页**，全市场接口静默截断 | 高 | 阶段2 all_pages + 末页验收 |
+| **乐咕/交易所真机风控未知**，移植后才发现被封 | 高 | §7 决策10：用最保守策略（1req/10s）真机测试，禁压力测试；被封则升级风控或放弃 |
+| akshare 端点字段漂移（snapshot vs 现网） | 中 | 每接口按 fixture 真机验证，字段缺失记入 reference"已知限制"；不追上游 |
+| 传递依赖（pandas/mini-racer 经 mootdx）未来消失 | 中 | asgk 直接 import 的包显式声明到 pyproject |
+| snapshot 中接口已不存在（如 `stock_a_indicator_lg`） | 中 | 已核验并在 inventory 标注；实现前复核 |
+| vendor JS 许可证/来源 | 低 | submodule 保留上游 MIT LICENSE；vendor 文件加来源/commit/hash（§7 决策6/9） |
+| mini-racer 并发非线程安全 | 中 | 阶段4 CYQ 用 thread-local context/锁 + 并发测试 |
+| 无编号 push2 host 失败 | 低 | 编号子域作降级备选（§7 决策7） |
+| SKILL.md 路由表膨胀 | 低 | 二级分组 + reference 分层吸收 |
 
 ---
 
-## 7. 不在本计划范围
+## 7. 决策记录
 
-明确排除，避免 scope 蔓延：
+> 散落三文档的决策点集中于此。区分"已裁决"和"实施前待验证"。
+
+### 已裁决
+1. **不新增 skill**：合成进 a-stock-data（§2.2）。
+2. **不 `pip install akshare`**：作 ref 蓝本移植（AGENTS.md §6）。
+3. **interface inventory 唯一存放本文件**：另两文档只引用 ID。
+4. **`@source sign/parse` 字段不扩展**：当前无明确消费者（无 registry 导出/文档生成器）。`@source` 只是声明元数据，**不驱动缓存 tier**——实际 tier 仍由函数体内 `em_get(..., tier=...)` 决定，验收须同时校验装饰器声明与运行时 `X-Cache-Tier` 一致。
+5. **POST 接口不预先扩展 sgw**：当前候选全是 GET，P2 按需。
+6. **akshare 仓库处置 = submodule**：借鉴的 repo 作 `ref/akshare` submodule（与 `ref/a-stock-data` 同等地位，符合 AGENTS.md §6 ref 语义）。`.agents/temp/akshare` 仅探索用，submodule 落定后删除。固定 commit `fcdbf25`，不追上游。
+7. **编号 push2 host 策略 = 主用无编号 + 编号备选**：inventory 板块接口主用无编号 canonical `push2.eastmoney.com`（asgk 现有 5 处验证可用）；akshare 蓝本的编号 host（`29./79./91.`）作**失败降级备选**。sgw 不需为编号 host 做 wildcard 归组，降级路径另处理。
+8. **CYQ 实现 = vendor JS（方案 A）**：vendor akshare 的 CYQ JS 用 py_mini_racer 执行，**不 Python 重写**。理由：与上游完全一致；CYQ 是纯数学零 DOM（`stock_cyq_em.py:27-218`），py_mini_racer 可直接跑。代价：py_mini_racer 须显式声明直接依赖 + 阶段4 并发安全测试（thread-local/锁）。
+9. **vendor JS 同步 = CI 定期 diff（方案 B）**：锁定 snapshot，CI 定期 diff 上游 ths.js/CYQ JS，变更告警人工更新。当前 inventory 范围（17 候选）只用 CYQ；ths.js 在 P2 同花顺接口才需要，该项推迟到 P2 触发时实施。
+
+### 实施前待验证（go/no-go spike）
+
+> 以下两项需真机验证，但**用最保守风控策略测试，不做压力测试**（避免真的被封 IP）。
+
+10. **乐咕/交易所是否进网关（风控验证）**：
+    - **测试原则**：用当前最保守风控策略（低频单发，如 1 req/10s）真机打 `legulegu.com`、`www.szse.cn`、`query.sse.com.cn`，观察是否被封。
+      - **没问题** → 该保守策略即作为该源的风控配置（乐咕直连复用 `_direct_throttle` 但调更保守参数；交易所经网关独立组 + 保守 rps）。
+      - **被封了** → 说明该源有风控，需设置更严格策略或评估是否值得移植。
+    - **禁止压力测试**：不并发、不高频，避免触发真实封禁污染 IP。
+    - **倾向结论**（待验证确认）：乐咕直连（CSRF 是 session cookie，进网关会复杂化 cache key）；交易所经网关独立组（与东财不同风控面，共享缓存有价值，Referer 透传是 header 白名单工作的一部分）。
+    - **静态线索**（不足以定论）：akshare 源码对这三源无 retry/throttle 代码；乐咕风控=md5(日期)token+CSRF；szse/sse 仅 Referer+UA。
+11. **`datacenter.eastmoney.com` vs `datacenter-web` reportName 互通性**：
+    - **真机验证**：用 `datacenter-web.eastmoney.com/api/data/v1/get` + `reportName=RPT_PUBLIC_OP_NEWPREDICT` + `source=WEB` + 业绩 filter 请求一次。
+      - **互通** → AKP-EARN 复用 `_datacenter()`（host 改 datacenter-web，`_datacenter` 加 source 参数），零新 helper。
+      - **不通** → 新增 `_securities_datacenter()` helper（host=datacenter.eastmoney.com，path=/securities/api/...，约 30 行）。
+    - **静态线索**：两端点参数结构兼容（pageSize/pageNumber/columns/reportName/filter 通用），唯一差异是 `source` 值（WEB vs HSF10），响应结构完全一致（`result.data`+`result.pages`）。但 reportName 是否被对端识别是服务端配置决定，须实测。
+    - 此项工作量小（一次 curl），不阻塞架构决策，阶段2 顺手做。
+
+---
+
+## 8. 不在本计划范围
+
 - ❌ akshare 港股/美股/期货/期权（非 ETF）/外汇/加密/基金/债券接口
-- ❌ akship 蛋卷基金/宏观中国/经济数据等非 A 股方向
-- ❌ 基础设施重构（`em_get`/`@source`/sgw 保持现状）
+- ❌ 蛋卷基金/宏观中国/经济数据等非 A 股方向
 - ❌ 拆分为多个 skill
-- ❌ 追 akshare 上游新版本
+- ❌ 追 akshare 上游新版本（锁 snapshot `fcdbf25`）
+- ❌ 个股 PE/PB（snapshot 无此接口，且现有 `valuation` 已覆盖本地计算）
+- ❌ **保持 sgw/_datacenter 现状**——阶段2 的基础设施修正是**范围内**的（旧文档误列为"范围外"）
 
 ---
 
-## 8. 待评审决策点（需用户拍板）
+## 9. akshare 仓库处置（submodule）
 
-1. **akshare 仓库处置**：`ref/akshare` vendor vs submodule vs 留 temp？
-2. **乐咕源限流**：进 sgw 网关新建 `legu` 组 vs asgk 内直连+自律限流？（倾向后者）
-3. **commit 粒度**：每接口 1 commit vs 每模块 1 commit？（倾向前者，便于二分）
-4. **阶段 1 启动条件**：是否等阶段 0 的乐咕源决策文档落定后才开始 P0 移植？
-5. **本 draft plan 的归宿**：晋升到 `.agents/notes/skill-merge-design.md`（长期）vs 留 temp（一次性）？
+**决策（§7 决策6）**：作 `ref/akshare` submodule，与 `ref/a-stock-data` 并列。
+
+理由：
+- AGENTS.md §6 的 ref 语义是"只读对照，不直接用于生产"。借鉴的 repo 作 submodule 符合此语义，与 `ref/a-stock-data`（同为改造蓝本）形式一致。
+- submodule 固定 commit `fcdbf25`，不追上游频繁更新。
+- LICENSE 为 MIT（版权 Albert King 2019-2026），submodule 保留上游完整 LICENSE，vendor 出来的 JS 文件另加来源/commit/hash 注释。
+
+**落地动作**（实现开始前）：
+- [ ] `git submodule add <akshare upstream url> ref/akshare`
+- [ ] 在 submodule 内 checkout 到 `fcdbf25aa864a218c54864c3f6ab6a2ed19cce28`
+- [ ] 提交 `.gitmodules` + submodule 指针
+- [ ] 删除 `.agents/temp/akshare`（探索用，已 gitignored，submodule 落定后无需保留）
+
+**vendor 出来的文件**（如 `asgk/_vendor/cyq.js`、`asgk/_vendor/ths.js`）是 submodule 内容的**子集拷贝**，每个文件头注明：来源路径、snapshot commit、LICENSE 归属、local hash、同步策略（§7 决策9 CI diff）。
 
 ---
 
-## 9. 下一步（等评审通过后）
+## 10. 下一步（评审通过后）
 
-1. 评审通过 → 本文档晋升到 `.agents/notes/skill-merge-design.md`
-2. akshare 仓库按决策点 1 处置
-3. 按阶段 0 → 1 → 2 → 3 顺序执行，每阶段交付后回归测试
-4. 在 `.agents/todo/` 拆出对应可执行待办（P0 9 项、P1 11 项）
+1. 评审通过 → 本 §4 inventory 各行 status 从 `candidate` 转 `approved`
+2. **akshare submodule 落地**（§9），删除 temp
+3. 执行 §7 决策10/11 的两项真机验证（保守风控 + reportName 互通），不阻塞阶段2 基础设施
+4. 执行阶段2（基础设施正确性），配单元测试，不移植业务接口
+5. 执行阶段3（JSON 接口），按领域切片提交，每切片含实现+测试+reference+路由
+6. 执行阶段4/5，按需新增 helper（含 vendor CYQ JS）与显式依赖
+7. 真正可认领的执行项拆到 `.agents/todo/`（按领域切片，非按上游函数）

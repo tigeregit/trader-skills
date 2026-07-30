@@ -1,155 +1,106 @@
-# 方案 C 可行性探索：akshare 移植到 asgk 的难点与 asgk 设计升级
+# 方案 C 可行性探索：akshare 移植到 asgk 的技术模式与证据
 
-> **状态**：Draft，可行性探索（非执行计划）
+> **状态**：技术可行性分析（非执行计划）
 > **分支**：`feat/akshare-merge`
-> **日期**：2026-07-26
+> **最后修订**：2026-07-31
 > **关联**：
-> - [akshare-integration-analysis.md](akshare-integration-analysis.md)（已确立选方案 C）
-> - [akshare-merge-design.md](akshare-merge-design.md)（合成方案执行 plan）
+> - [akshare-merge-design.md](akshare-merge-design.md)：**唯一执行计划与权威 interface inventory**（本文只引用其 ID）
+> - [akshare-integration-analysis.md](akshare-integration-analysis.md)：架构方案比较
+> **职责**：本文只描述"各技术获取/解析模式能否移植、需哪些 helper、有哪些已知缺口"。接口范围、阶段排序、参数签名见 merge-design。
+> **参考基线**：akshare 1.18.64 / commit `fcdbf25`（见 [merge-design §0](akshare-merge-design.md)）。所有 akshare 源码事实仅针对此 snapshot，不外推到上游最新版。
 
 ---
 
 ## 0. 问题
 
-方案 C（akshare 作 ref 蓝本，移植解析逻辑到 asgk）是否真的可行？是否存在**无法或难以移植**的接口？如果存在，asgk 现有设计需要怎样升级才能消化？
+方案 C（akshare 作 ref 蓝本，移植到 asgk）技术上是否可行？是否存在**无法或难以移植**的获取/解析模式？如存在，asgk 需怎样升级？
 
-本文基于 akshare 全量源码的依赖使用点核查 + 解析模式分类，给出结论。
+本文基于 akshare 固定 snapshot 的源码模式核查给出结论。**这是静态分析**，未做真实网络/并发/许可证验证——见 §5 终极结论的限定。
 
 ---
 
 ## 1. akshare 接口按"获取+解析模式"分类
 
-核查 akshare 所有 A 股相关模块，按**数据获取方式 × 响应解析方式**两维度分类：
+> 旧版曾写"~50%/~20%/~10%"等比例，但未附可复现扫描脚本和去重规则，**已删除**。如需量化，须固定扫描目录、文件 glob、去重口径和 snapshot commit 后才能给出。
 
-### 1.1 数据获取方式（4 类）
+### 1.1 数据获取模式（观察到的类别）
 
-| 获取方式 | 占比 | asgk 兼容性 |
-|---------|------|------------|
-| **东财 datacenter GET**（`datacenter-web.eastmoney.com/api/data/v1/get`） | ~50% | ✅ 完全兼容，复用 `_datacenter()` |
-| **东财 push2 GET**（`push2his.eastmoney.com` / `push2.eastmoney.com`） | ~20% | ✅ 完全兼容，复用 `em_get()` |
-| **同花顺 GET + hexin-v 签名**（`data.10jqka.com.cn` / `q.10jqka.com.cn`） | ~10% | ⚠️ 需本地 JS 签名（asgk 已有先例） |
-| **乐咕/eNiu GET + token 签名**（`legulegu.com` / `eniu.com`） | ~5% | ⚠️ 需本地 JS 签名 + HTML 拿 CSRF |
-| 其他（新浪 HTML / 巨潮 POST / 交易所 GET / 雪球） | ~15% | 多数兼容，个别需特殊处理 |
+| 获取模式 | 示例（snapshot 证据） | asgk 兼容性 |
+|---|---|---|
+| 东财 datacenter-web GET | `stock_repurchase_em.py:21` (`datacenter-web.eastmoney.com/api/data/v1/get`) | 可复用 `_datacenter()`（须补分页） |
+| 东财 **securities** datacenter GET | `stock_yjyg_em.py:144` (`datacenter.eastmoney.com/securities/api/data/v1/get`) | **不能直接复用** `_datacenter()`（host/path 不同），需新 helper 或验证 reportName 跨端点等价 |
+| 东财 **emweb** GET（F10 股东） | `stock_gdfx_em.py:465` (`emweb.securities.eastmoney.com/PC_HSF10/...`) | 非 datacenter，需 `em_get` 直调 |
+| 东财 push2his GET（K线） | `stock_cyq_em.py:223` (`push2his.eastmoney.com/api/qt/stock/kline/get`) | 可复用 `em_get`，但响应经本地 JS 计算 |
+| 东财 **编号 push2** GET（板块 clist） | `stock_board_concept_em.py:444` (`29.push2.eastmoney.com/api/qt/clist/get`) | 需决策编号 host 归组策略 |
+| 同花顺 GET + hexin-v 签名 | `data.10jqka.com.cn` | 需本地签名 + HTML 解析 |
+| 乐咕 GET + JS-MD5 token + CSRF | `stock_a_pe_and_pb.py:335` (`legulegu.com`) | 需签名 + CSRF cookie |
+| eNiu GET（纯 JSON） | `stock_a_indicator.py:69` (`eniu.com/chart/...`) | 无 token/CSRF/Referer，直连即可（注：snapshot 中是**港股**指标） |
+| 深交所 ShowReport GET + xlsx | `stock_margin_szse.py:102` (`www.szse.cn/api/report/ShowReport`) | 需 Referer + xlsx 解析 |
+| 巨潮/东财热度 POST | （不在当前 inventory 范围） | sgw GET-only，P2 按需 |
 
-### 1.2 响应解析方式（4 类）
+### 1.2 响应解析模式
 
-| 解析方式 | akshare 用法 | asgk 兼容性 |
-|---------|------------|------------|
-| **纯 JSON** | `r.json()["result"]["data"]` | ✅ 直接复用，返回 `list[dict]` |
-| **HTML + lxml/bs4** | `BeautifulSoup(r.text).find(...)` | ⚠️ 需引入轻量 HTML 解析（见 §3.2） |
-| **JS 算法执行（mini-racer）** | 三种子场景，见 §2.2 | ⚠️ 需区分对待 |
-| **Excel（openpyxl/xlrd）** | 交易所下载 Excel 解析 | ❌ 个别接口，建议跳过 |
+| 解析模式 | akshare 用法 | asgk 兼容性 |
+|---|---|---|
+| 纯 JSON | `r.json()["result"]["data"]` | ✅ 直接复用 |
+| HTML 表格 | `BeautifulSoup` + lxml | ⚠️ 用已声明的 lxml（不引入 bs4） |
+| JS 算法执行（mini-racer） | 三种子场景，见 §2.3 | ⚠️ 需区分 |
+| xlsx bytes（openpyxl） | 深交所 ShowReport | ⚠️ openpyxl **当前未装**，需显式声明 |
 
 ---
 
-## 2. 难点接口清单与根因分析
+## 2. mini-racer 用法拆解（关键）
 
-### 2.1 P0 接口（11 个）——**全部可移植，零难点**
+核查 snapshot 中 mini-racer 的使用点，分为**三种本质不同的子场景**：
 
-逐一核查 P0 候选接口的解析模式：
-
-| 接口 | 获取 | 解析 | 难度 |
-|------|------|------|------|
-| 十大股东 `stock_gdfx_top_10_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-| 股东持股变化 `stock_gdfx_holding_change_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-| 业绩预告 `stock_yjyg_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-| 业绩快报 `stock_yjkb_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-| 回购 `stock_repurchase_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-| 高管增减持 `stock_hold_management_detail_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-| 机构调研 `stock_jgdy_detail_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-| 概念板块成份股 `stock_board_concept_cons_em` | 东财 push2 | 纯 JSON | 🟢 极易 |
-| 行业板块成份股 `stock_board_industry_cons_em` | 东财 push2 | 纯 JSON | 🟢 极易 |
-| 股权质押 `stock_gpzy_pledge_ratio_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-| 商誉 `stock_sy_em` | 东财 datacenter | 纯 JSON | 🟢 极易 |
-
-**结论**：P0 全部是东财 datacenter/push2 的纯 JSON 接口，与 asgk 现有 `capital.py`/`signal.py` 范式**完全同构**，移植工作量极低（每接口 ~30-50 行）。
-
-### 2.2 P1 难点接口（mini-racer + HTML）
-
-这些是真正需要设计升级才能消化的接口：
-
-| 接口 | 难点 | 根因 |
-|------|------|------|
-| **个股 PE/PB 分位** `stock_a_indicator_lg` | HTML + CSRF | eNiu 需先 GET HTML 拿 `_csrf` token，再带 token 请求 JSON |
-| **全市场 PE/PB** `stock_market_pe_lg` | mini-racer | 乐咕请求需 `hex(date)` 签名 token |
-| **筹码分布** `stock_cyq_em` | mini-racer | CYQ 算法在 JS 里实现（不是解密，是计算） |
-| **同花顺资金流** `stock_fund_flow_individual` | mini-racer + HTML | 同花顺 `hexin-v` cookie 签名 + HTML 表格解析 |
-| **同花顺概念板块** `stock_board_concept_ths` | mini-racer + HTML | 同上 |
-| **同花顺技术选股** `stock_rank_*_ths`（11 个） | mini-racer + HTML | 同上 |
-| **新浪龙虎榜** `stock_lhb_detail_daily_sina` | HTML | 新浪返回 HTML 表格 |
-| **乐咕赚钱效应** `stock_market_activity_legu` | HTML | 乐咕返回 HTML |
-
-### 2.3 mini-racer 的三种子场景（关键拆解）
-
-核查所有 mini-racer 使用点，发现**三种本质不同的用法**，难度天差地别：
-
-| 子场景 | 用例 | 本质 | asgk 应对 |
+| 子场景 | 用例（snapshot 证据） | 本质 | asgk 应对 |
 |--------|------|------|----------|
-| **(a) JS 算请求签名 token** | 乐咕 `hex(date)`、同花顺 `hexin-v` | JS 函数 → 纯 Python 重写（几行） | 🟢 已有先例：`cls_telegraph` 的 `md5(sha1(qs))` |
-| **(b) JS 实现业务算法** | 东财筹码 CYQ | 纯算法，JS 与 Python 等价表达 | 🟢 翻译成 Python（公开算法） |
-| **(c) JS 解密加密响应** | （akshare A 股里**未发现**） | 真正需要 JS 引擎 | 🔴 本项目范围内**不存在** |
+| **(a) JS 算请求签名 token** | 乐咕 `hash_code`（`stock_a_pe_and_pb.py:17-319`，JS 版 MD5，`py_mini_racer` 执行 `hex(date)`）；同花顺 `hexin-v` | JS 函数 → 可纯 Python 重写或 vendor JS 执行 | ⚠️ vendor JS 或 Python 重写（见 §3.1） |
+| **(b) JS 实现业务算法** | 东财筹码 CYQ（`stock_cyq_em.py:27-218` `CYQCalculator`） | 纯算法，JS 与 Python 等价 | ⚠️ 翻译成 Python 或 vendor JS |
+| **(c) JS 解密加密响应** | （snapshot 已扫描的 A 股模块中**未发现**） | 真正需要 JS 引擎解密 | 🔴 本 snapshot 范围内不存在 |
 
-**关键发现**：核查 akshare 全部 A 股模块，**子场景 (c) 不存在**。所有 mini-racer 用法都是 (a) 签名或 (b) 算法，都可以纯 Python 重写。这是方案 C 可行的决定性证据。
+### 2.1 子场景 (c) 不存在的限定
 
-### 2.4 "Excel 响应"接口分类（修正：多数可移植，勿一概跳过）
+> 旧版曾写"核查 akshare 全部 A 股模块，子场景 (c) 不存在，这是方案 C 可行的决定性证据"。该表述**过强**：本次为静态源码扫描，未覆盖上游所有版本，也未做真机验证。准确表述是：
 
-> **修正（2026-07-27）**：早先版本笼统称"交易所 Excel 下载，建议跳过"。核查后发现 akshare 的 Excel 接口有**两种本质不同**的形态，其中深交所系列其实零难度可移植。混为一谈会把 `stock_margin_detail_szse`（融资融券官方容灾源）等 5+ 接口误判丢弃。
+**在本次扫描的 A 股目标模块范围内、固定 snapshot `fcdbf25` 中，未发现"JS 解密加密响应"的模式；所有 mini-racer 用法都是签名 (a) 或算法 (b)。** 此结论不外推到整个 akshare 或未来 snapshot。
 
-**类型 A：HTTP API 返回 xlsx 二进制流（深交所 ShowReport 系列）→ ✅ 可移植**
+### 2.2 乐咕 token 算法的事实修正
 
-URL 是 `https://www.szse.cn/api/report/ShowReport`（**不是下载 .xls 文件**），通过 `SHOWTYPE=xlsx` 参数让一个普通 HTTP API 返回 xlsx 格式的 bytes 响应。GET 请求，sgw 可代理。
+> 旧版笼统称"乐咕请求需 JS 签名"。核查发现 snapshot 中存在**多种**乐咕 token 协议，不能合并：
 
-| 接口 | 数据 | 价值 |
-|------|------|------|
-| `stock_margin_detail_szse` | 融资融券明细（深交所官方） | 🔴 **东财被封时的官方容灾源**（见 integration-analysis §4） |
-| `stock_margin_underlying_info_szse` | 融资融券标的名单 | 中 |
-| `stock_szse_summary` / `_area_summary` / `_sector_summary` | 深交所市场总貌/地区/行业成交 | 大盘情绪 |
-| `stock_info_sz_name_code` | 深市代码表 | 基础设施 |
-| `stock_sgt_*_exchange_rate_szse`（2 个） | 沪深港通汇率 | 北向配套 |
+- `stock_market_pe_lg` / `stock_market_pb_lg`（`stock_a_pe_and_pb.py`）：token = **JS 版 MD5**（内联 `hash_code`，`py_mini_racer` 执行 `hex(date)`）+ CSRF cookie（`get_cookie_csrf` 取 `<meta name="_csrf">`，以 `X-CSRF-Token` 头 + cookie 请求）。对应 AKP-VAL-001/002。
+- 其他乐咕接口（buffett/congestion/all_pb/ttm 等）：token = **纯 Python `hashlib.md5`**（`get_token_lg`，`stock_a_indicator.py:40-51`）+ CSRF。
+- `stock_hk_indicator_eniu`（`stock_a_indicator.py:54`）：**完全无需 token/CSRF/Referer**，仅通用 UA（注意是港股）。
 
-**移植方式**：和 JSON 接口同构，只是 `em_get` 拿到的 `response.content`（bytes）丢给 `pd.read_excel(BytesIO(content))`。openpyxl 3.1.5 已装（pandas 传递依赖），**零新依赖**。需新增 `asgk/_xlsx.py` 工具（~10 行）。
+→ 设计上**不能**统一成单个 `legu_token()` 函数。每个 endpoint 须在 inventory 单独记录 token 算法、CSRF、Referer、是否需 session。
 
-**类型 B：真·静态 .xls 文件下载（申万行业分类）→ ⚠️ 需权衡，仅 1 个接口**
+### 2.3 CYQ 筹码算法
 
-唯一接口：`stock_industry_clf_hist_sw`，URL `https://www.swsresearch.com/.../StockClassifyUse_stock.xls`，是真实的 .xls（老 BIFF 格式）静态文件。
-
-难点：
-- `.xls`（非 .xlsx）需 xlrd，但 **xlrd 2.0+ 默认不支持 .xls**（需 `xlrd<2.0` 或转 .xlsx）
-- 申万研究所偶有访问不稳定
-
-权衡选项（倾向 2）：
-1. 装 `xlrd<2.0`（增加一个依赖，仅为 1 个接口）
-2. **改用东财源拿申万行业**（akshare 有 `stock_industry_*_em` 替代，零依赖）
-3. 跳过
-
-**类型 C：curl_cffi JA3 绕过 → ⏸️ 暂缓（akshare 独有，非 Excel）**
-
-`news_stock_em`（东财搜索 api）、`news_baidu` 需 TLS 指纹伪装。asgk 已有 `eastmoney_stock_news` 替代源，**P2 按需**。
-
-**裁决**：类型 A 全部可移植（含重要的融资融券官方容灾源）；类型 B 单接口建议改源；类型 C 暂缓。**无"必须跳过"的 Excel 接口。**
+`stock_cyq_em`（AKP-CHIP-001）：服务端只返回 K 线，筹码分布由本地 `py_mini_racer` 执行 `CYQCalculator`（`stock_cyq_em.py:27-218`）计算。这是**业务算法**（子场景 b），非响应解密。**决策已定：vendor akshare JS 用 py_mini_racer 执行（方案 A），不 Python 重写**（[merge-design §7 决策8](akshare-merge-design.md)）。CYQ 是纯数学零 DOM 依赖，py_mini_racer 可直接跑；代价是须显式声明 py-mini-racer 直接依赖 + 阶段4 并发安全测试（thread-local/锁）。
 
 ---
 
-## 3. asgk 设计升级方案（针对难点）
+## 3. asgk 技术升级（按技术模式，非按接口）
 
-针对 §2.2 的难点接口，asgk 需要五处设计升级。**这些都是新增能力，不破坏现有契约**。
+> 这些是"技术能力"，**有 approved inventory 消费者时才落地**。是否扩展 `@source` 元数据见 §3.5（结论：不扩展）。
 
-### 3.1 升级一：本地签名工具模块 `_signing.py`
+### 3.1 本地签名工具 `_signing.py`
 
-**问题**：乐咕/同花顺/eNiu 都需要本地计算签名 token，asgk 目前只在 `cls_telegraph` 内联实现了一次。
+**触发条件**：inventory 批准了需 JS 签名的接口（如同花顺 `hexin-v`、乐咕 JS-MD5 token）。
 
-**升级**：抽出公共签名工具模块。
+**依赖与约束**：
+- `py-mini-racer` 当前是 mootdx 传递依赖；asgk 直接 import 时**必须提升为直接依赖**（`pyproject.toml`）。
+- vendor JS 文件须记录：upstream repo / snapshot commit / source path / LICENSE / local hash / sync policy。
 
-**决策（评审已定）**：**vendor akshare 的 JS + py-mini-racer 执行**。
-
-理由：py-mini-racer（48M）已是 mootdx 的传递依赖，asgk 环境里已装，**用起来零新增成本**。相比纯 Python 重写，vendor JS 的优势是上游 ths.js 变了只换文件、无需逆向重写。
+**示例（修正版，旧版有错）**：
 
 ```python
-# asgk/_signing.py（新增）
+# asgk/_signing.py
 """本地签名工具：vendor akshare 的 JS，用 py-mini-racer 执行。
 
-py-mini-racer 已是 mootdx 传递依赖（已装），无新增依赖成本。
-JS 文件 vendor 在 asgk/_vendor/，上游变更时换文件即可。
+py-mini-racer 若被 asgk 直接 import，须在 pyproject.toml 显式声明为直接依赖。
+JS 文件 vendor 在 asgk/_vendor/，每个文件头注明来源/commit/license/hash。
 """
 from functools import lru_cache
 from pathlib import Path
@@ -157,52 +108,48 @@ import py_mini_racer
 
 _VENDOR_DIR = Path(__file__).parent / "_vendor"
 
-@lru_cache(maxsize=1)
-def _engine(js_name: str) -> py_mini_racer.MiniRacer:
+# 旧版用 maxsize=1 是错的：多个 JS 文件（ths.js / legu_hash.js）会互相驱逐、反复 eval。
+@lru_cache(maxsize=None)
+def _engine(js_name: str) -> "py_mini_racer.MiniRacer":
     """加载并缓存 JS 引擎（首次 eval ~50ms，后续调用 <1ms）。"""
     js = py_mini_racer.MiniRacer()
     js.eval((_VENDOR_DIR / js_name).read_text(encoding="utf-8"))
     return js
 
 def ths_hexin_v() -> str:
-    """同花顺 hexin-v cookie 签名（vendor ths.js 的 v() 函数）。"""
     return _engine("ths.js").call("v")
 
-def legu_token(date_iso: str | None = None) -> str:
-    """乐咕请求 token（vendor legulegu hash_code 的 hex() 函数）。"""
+def legu_market_pe_token(date_iso: str | None = None) -> str:
+    """乐咕 market-pe/pb token（JS 版 MD5）。
+
+    注意：仅适用于 stock_market_pe_lg/pb_lg；其他乐咕接口用纯 Python md5，不在此。
+    """
     from datetime import datetime
     d = date_iso or datetime.now().date().isoformat()
     return _engine("legu_hash.js").call("hex", d).lower()
 ```
 
-**vendor 文件来源**（从 ref/akshare 拷贝）：
-- `akshare/stock_feature/ths.js`（39K，989 行）→ `asgk/_vendor/ths.js`
-- `akshare/stock_feature/stock_a_pe_and_pb.py` 内联的 `hash_code` 字符串 → `asgk/_vendor/legu_hash.js`
+**并发安全（关键）**：目标部署是 100–1000 agent 并发。MiniRacer context 的线程安全性须先验证；若不安全，用 thread-local context 或锁保护。阶段4 须配并发测试。
 
-**价值**：
-- 同花顺资金流/概念板块/技术选股（11+ 接口）共用 `ths_hexin_v()`
-- 乐咕全市场 PE/PB/巴菲特/股债利差共用 `legu_token()`
-- 上游 JS 变更时换 vendor 文件即可，无需逆向重写
+### 3.2 HTML 表格解析 `_htmltable.py`
 
-**对现有设计的影响**：零破坏。纯新增模块。`cls_telegraph` 现有内联签名可保留（已是纯 Python md5/sha1），也可后续迁移到本模块（可选）。
+**触发条件**：inventory 批准了 HTML 表格接口（如新浪龙虎榜、乐咕赚钱效应、同花顺部分接口）。
 
-### 3.2 升级二：HTML 解析（用已装的 lxml，不引入 bs4）
+**依赖**：`lxml`（asgk 已直接声明，此前未真用，从此开始真用）。不引入 bs4。
 
-**问题**：同花顺资金流/龙虎榜（新浪）/乐咕赚钱效应返回 HTML 表格，akshare 用 `BeautifulSoup + lxml`。
-
-**asgk 现状**：`lxml>=6.1.1` 已在 pyproject.toml 声明（虽代码里没用过，~12M 已装）。**直接用 lxml.etree，无需 bs4**（bs4 是上层封装，etree 更快且已装）。
+**示例（修正版，旧版 `etree._Element.text_content()` 不存在是错的）**：
 
 ```python
-# asgk/_htmltable.py（新增）
-"""HTML 表格解析（基于 lxml.etree，已装）。
+# asgk/_htmltable.py
+"""HTML 表格解析（基于 lxml，已声明依赖）。
 
-用于同花顺/新浪/乐咕返回的 HTML 表格数据。
+etree.HTML() 返回 lxml.etree._Element，没有 text_content()——那是 lxml.html.HtmlElement 的方法。
 """
-from lxml import etree
+# 方式一：用 lxml.html（有 text_content()）
+from lxml import html
 
-def parse_html_tables(html: str) -> list[list[list[str]]]:
-    """提取所有 <table> 为 list[list[list[str]]]。"""
-    tree = etree.HTML(html)
+def parse_html_tables_v1(content: str) -> list[list[list[str]]]:
+    tree = html.fromstring(content)
     tables = []
     for table in tree.xpath("//table"):
         rows = []
@@ -214,235 +161,178 @@ def parse_html_tables(html: str) -> list[list[list[str]]]:
         if rows:
             tables.append(rows)
     return tables
+
+# 方式二：保持 etree，用 itertext()
+from lxml import etree
+
+def parse_html_tables_v2(content: str) -> list[list[list[str]]]:
+    tree = etree.HTML(content)
+    tables = []
+    for table in tree.xpath("//table"):
+        rows = []
+        for row in table.xpath(".//tr"):
+            cells = ["".join(c.itertext()).strip()
+                     for c in row.xpath(".//td|.//th")]
+            if cells:
+                rows.append(cells)
+        if rows:
+            tables.append(rows)
+    return tables
 ```
 
-**vs stdlib html.parser（之前误推的方案）**：
-- lxml etree ~15 行，stdlib 版 ~30 行
-- lxml 性能更快（C 实现），xpath 表达力更强
-- 已装，零新增依赖
+**测试边界**（须覆盖，不能只测 happy path）：malformed HTML、空表、`rowspan`/`colspan`（简单 list[dict] parser 可能不足以替代 `pandas.read_html`，须评估）、嵌套标签、编码检测。
 
-**价值**：覆盖所有 HTML 表格接口（同花顺/新浪/乐咕）。
+### 3.3 xlsx 流解析 `_xlsx.py`
 
-**对现有设计的影响**：零破坏。纯新增模块。从这一刻起 asgk 实际开始用 lxml（之前只声明没用）。
+**触发条件**：inventory 批准了深交所 ShowReport 系列（AKP-FAILOVER-001 及同模式接口）。
 
-### 3.3 升级三：xlsx 流解析工具 `_xlsx.py`（深交所 ShowReport 系列）
+**依赖（关键修正）**：旧版称"openpyxl 3.1.5 已装（pandas 传递依赖），零新依赖"——**错误**。openpyxl 当前**不在** asgk lockfile（pandas 把它列为 `excel` optional extra，非默认依赖）。采用 xlsx 方案须：
+- `pandas` 提升为 asgk 直接依赖（当前是 mootdx→tdxpy 传递依赖）；
+- `openpyxl` **新增**直接依赖；
+- 更新 lockfile；
+- clean environment 安装测试（不能依赖开发机偶然状态）。
 
-**问题**：深交所 `ShowReport` API 用 `SHOWTYPE=xlsx` 返回 xlsx bytes 流（见 §2.4 类型 A），需解析。涉及 5+ 接口，含融资融券官方容灾源。
+也可选择不依赖 pandas，直接用 openpyxl 解析，减少一层依赖。
 
-**asgk 现状**：openpyxl 3.1.5 已装（pandas 传递依赖），pandas 也已装。**零新依赖**。
+**示例**：
 
 ```python
-# asgk/_xlsx.py（新增）
+# asgk/_xlsx.py
 """xlsx 二进制流解析（深交所 ShowReport 系列用）。
 
-openpyxl 已装（pandas 传递依赖），零新依赖。
+openpyxl 当前未安装，采用本模块须在 pyproject.toml 显式声明 openpyxl（及 pandas，若用 pd.read_excel）。
 """
 from io import BytesIO
-import pandas as pd
+import pandas as pd  # 若用此路径，pandas 须为直接依赖
 
 def parse_xlsx(content: bytes, dtype: dict | None = None) -> list[dict]:
-    """HTTP 响应的 xlsx bytes → list[dict]。"""
+    """HTTP 响应 xlsx bytes → list[dict]。"""
     df = pd.read_excel(BytesIO(content), engine="openpyxl", dtype=dtype)
     return df.to_dict("records")
 ```
 
-**使用**（深交所融资融券明细）：
+**使用**（AKP-FAILOVER-001，深交所融资融券明细）：
 
 ```python
 @source(tier="S", via="gateway")
 def margin_detail_szse(date: str) -> list[dict]:
     r = em_get("https://www.szse.cn/api/report/ShowReport",
                params={"SHOWTYPE": "xlsx", "CATALOGID": "1837_xxpl",
-                       "txtDate": f"{date[:4]}-{date[4:6]}-{date[6:]}", ...},
+                       "TABKEY": "tab2", "tab2PAGENO": "1",
+                       "txtDate": f"{date[:4]}-{date[4:6]}-{date[6:]}"},
                headers={"Referer": "https://www.szse.cn/disclosure/margin/margin/index.html"})
-    return parse_xlsx(r.content, dtype={"证券代码": str})
+    return parse_xlsx(r.content, dtype={"证券代码": str})  # 保前导零
 ```
 
-**价值**：覆盖深交所 ShowReport 全系列（5+ 接口），尤其补齐融资融券的**官方容灾源**（东财被封时兜底）。
+**测试边界**：表头偏移、空行、证券代码前导零（`dtype=str`）、多 sheet、空结果。
 
-**对现有设计的影响**：零破坏。纯新增模块。
+> 注意：`Referer` 当前**到不了上游**（sgw 不透传 headers，见 [integration-analysis §1.2](akshare-integration-analysis.md)）。此接口依赖阶段2 的 header 白名单透传完成。
 
-### 3.4 升级四：扩展 `@source` 装饰器的 via 字段
+### 3.4 `.xls`（老 BIFF）格式的事实修正
 
-**问题**：现有 `Via = Literal["gateway", "direct"]` 只区分"经网关"和"直连"。但难点接口需要更细的标注：
+> 旧版称"xlrd 2.0+ 默认不支持 .xls，需 xlrd<2.0"——**事实错误**。xlrd 2.x 移除的是 **`.xlsx`** 支持，`.xls`（老 BIFF）**仍支持**。
 
-- 同花顺源经网关，但需本地签名（`gateway + sign=ths`）
-- 乐咕源直连，但需本地签名 + CSRF（`direct + sign=legu`）
-- 东财 push2 经网关，纯 JSON（`gateway`）
+snapshot 中真正的 `.xls` 静态文件下载仅 `stock_industry_clf_hist_sw`（申万行业分类，`swsresearch.com/.../StockClassifyUse_stock.xls`）。处理方式（[merge-design 未列入候选](akshare-merge-design.md)，按需）：① 装 xlrd（支持 .xls）；② 改用东财源拿申万行业；③ 跳过。倾向②（零额外依赖）。
 
-**升级（可选，向后兼容）**：
+### 3.5 `@source sign/parse` 字段：**不扩展**
+
+旧版建议给 `@source` 加 `sign`/`parse` 元数据字段。**结论：不扩展**——当前无明确消费者（无 registry 导出、无文档生成器）。`@source` 是**纯声明元数据，不驱动行为**：实际 tier/via 仍由函数体内 `em_get(..., tier=...)` 决定。若 `@source(tier="L")` 而内部默认 S，运行时仍是 S。验收须同时校验装饰器声明与运行时 `X-Cache-Tier` 一致。除非将来出现明确的元数据消费者，否则不扩大契约面。
+
+---
+
+## 4. 模式级可移植性裁决
+
+> 旧版有一张逐接口裁决表，与 merge-design inventory 重复且冲突，**已删除**。此处只给**模式级**裁决，接口级归属见 inventory。
+
+| 技术模式 | 可否移植 | 必要 helper / 前置 | 已知缺口 | inventory 示例 |
+|---|---|---|---|---|
+| datacenter-web JSON（多页） | ✅ | `_datacenter` 补 all_pages | 分页只取首页 | AKP-HOLD-003/004, EVT, RISK |
+| **securities** datacenter JSON | ⚠️ | 新 helper 或验证跨端点等价 | host/path 不同 | AKP-EARN-001/002 |
+| emweb F10 JSON（非 datacenter） | ✅ | `em_get` 直调 | host 未归组 | AKP-HOLD-001/002 |
+| push2his K线 + 本地算法 | ✅ | CYQ Python/vendor + mini-racer | 线程安全 | AKP-CHIP-001 |
+| 编号 push2 clist JSON | ✅ | 通用 push2 helper | 主用无编号 host（asgk 已验证），编号作备选 | AKP-BOARD-001 |
+| 同花顺签名 + HTML | ✅ | `_signing` + `_htmltable` | header 透传 | （按需，P2） |
+| 乐咕 JS-MD5 token + CSRF | ✅ | `_signing`(legu_market_pe_token) + CSRF | 直连/网关待风控验证 | AKP-VAL-001/002 |
+| eNiu 纯 JSON | ✅ | 直连 | （snapshot 中是港股） | — |
+| 深交所 ShowReport xlsx | ✅ | `_xlsx` + Referer 透传 | openpyxl 未装 + header 未透传 + 风控待验证 | AKP-FAILOVER-001 |
+| POST | ⏸️ | sgw 扩展 POST | GET-only | （P2 按需） |
+| curl_cffi / JA3 | ⏸️ | — | asgk 走网关无需；有替代源 | （P2 按需） |
+
+---
+
+## 5. 终极可行性结论（有条件）
+
+### 5.1 方案 C 可行吗？
+
+**静态分析未发现原理性阻塞**。在固定 snapshot `fcdbf25` 已扫描的 A 股目标模块中：
+- mini-racer 只用于签名 (a) 和算法 (b)，未发现响应解密 (c)；
+- 所有技术模式都有对应 helper 或前置修正路径。
+
+**但"可移植"≠"零改造"**。以下必须先完成（[merge-design 阶段2](akshare-merge-design.md)）：
+- sgw host 精确归组（含编号 push2）；
+- 请求头白名单透传；
+- query-aware canonical cache key；
+- `_datacenter` 全量分页；
+- 直接依赖显式声明（pandas/mini-racer/openpyxl）。
+
+且静态分析不能证明：endpoint 当前在线、签名算法当前有效、经 sgw 后 headers 正确、mini-racer 在目标 Python/平台兼容、100–1000 agent 并发稳定、vendor JS 许可证合规、字段 schema 未漂移。**须由 go/no-go spike 真机验证**（每类协议至少一个真实请求 + 经 sgw 端到端 + 并发测试 + 许可证审查 + schema fixture）。
+
+> 旧版"全部难点接口 100% 可移植""P0 100% 纯 JSON 零难点""三个模块纯新增零破坏"等**绝对结论已删除**。
+
+### 5.2 asgk 设计需要升级吗？
+
+需要，但按技术模式按需落地（有 inventory 消费者才建），且**不是零新增依赖**：
+- `_signing.py`（vendor JS + mini-racer；mini-racer 须显式声明直接依赖）
+- `_htmltable.py`（lxml，已声明）
+- `_xlsx.py`（openpyxl + pandas，**新增直接依赖**）
+- `_dataframe.py`（`to_df`，pandas 须显式声明直接依赖）——见 §6
+- `_datacenter` 扩展 all_pages（阶段2）
+- `@source sign/parse`：**不扩展**（§3.5）
+
+### 5.3 依赖原则（替换旧版错误的"零重依赖"）
+
+- ✅ 风控源经 sgw（§2 合规，不可妥协）
+- ✅ asgk 直接 import 的第三方包**显式声明**为直接依赖（不依赖传递依赖长期存在）
+- ✅ 表格型新接口默认返回 `list[dict]`（调用方友好 + 跨版本稳定）
+- 🔴 拒绝 curl_cffi（反反爬对抗走网关层）
+
+---
+
+## 6. 返回类型契约（修正）
+
+> 旧版称"asgk 现有 50 个函数全部返回 `list[dict]`"——**不准确**。现有公共函数返回类型包括 `dict`、`dict[str,dict]`、`str`、`float`（如 `forward_pe` 返回 float、`tencent_quote` 返回 dict）。
+
+**契约**：**表格型新接口**默认返回 `list[dict]`；单对象、聚合结果或纯计算接口按领域自然返回（`dict`/`str`/`float`）。返回类型逐项写入 inventory 的 `output_type`。
+
+**`to_df()` 可选**：调用方完全可以直接 `pandas.DataFrame(records)`，是否有必要为五行包装扩展顶级 API 待评审。若提供，`to_df()` 只接受 `Sequence[Mapping]`，不适用于 dict/标量/字符串接口。pandas 须为直接依赖。
 
 ```python
-# asgk/_contract.py（扩展）
-Via = Literal["gateway", "direct"]
+# asgk/_dataframe.py（可选）
+import pandas as pd  # 须为直接依赖
 
-@dataclass
-class SourceMeta:
-    tier: Tier
-    via: Via
-    sign: str | None = None  # 新增：签名类型 "ths" / "legu" / "cls" / None
-    parse: str | None = None  # 新增：解析类型 "json" / "html_table" / "text"
-    cli: str | None = None
-    ...
+def to_df(records):
+    """list[dict] → DataFrame。仅适用于表格型接口。"""
+    return pd.DataFrame(records)
 ```
 
-**注意**：这是**可选升级**，目的是让 `@source` 元数据更完整（驱动文档生成/离线分析）。现有函数不挂 `sign`/`parse` 也能工作（默认 None）。
-
-**对现有设计的影响**：向后兼容。现有 50 个函数无需改动；新函数可选挂 `sign`/`parse`。
-
-### 3.5 升级五：sgw 新增乐咕/交易所限流组（可选）
-
-**问题**：乐咕（`legulegu.com`/`eniu.com`）和交易所（`query.sse.com.cn`）不在 sgw 现有 `PROXIED_DOMAIN_SUFFIXES` 里。
-
-**两个选项**（已在 integration-analysis.md §5 讨论）：
-
-| 选项 | 做法 | 推荐 |
-|------|------|------|
-| asgk 内直连 + 自律限流 | 复用 `em_proxy._direct_throttle` 模式 | 🟢 乐咕（无封 IP 风险） |
-| sgw 新增限流组 | config 加 `legu`/`exchange` 组 | 🟡 交易所源（与东财隔离更安全） |
-
-**对现有设计的影响**：sgw config 扩展，不改代码。零破坏。
-
 ---
 
-## 4. 难点接口的移植可行性裁决
+## 7. 决策同步
 
-逐个裁决 §2.2（签名/HTML 难点）+ §2.4 类型 A（xlsx 流）的接口，确认是否可移植：
+> 评审已定的技术决策（细节见 [merge-design §7](akshare-merge-design.md)）：
+> - vendor JS + py_mini_racer 执行（mini-racer 须显式声明直接依赖）
+> - 表格型接口 list[dict]，`to_df` 可选
+> - 显式声明直接依赖（不依赖传递依赖）
+> - **CYQ 实现 = vendor JS（方案 A）**：vendor akshare CYQ JS 用 py_mini_racer 执行，不 Python 重写（merge-design §7 决策8）
+> - **vendor JS 同步 = CI 定期 diff（方案 B）**：锁 snapshot，CI diff 上游 ths.js/CYQ JS 告警（merge-design §7 决策9）；当前 inventory 只用 CYQ，ths.js 推迟 P2
+> - **akshare 仓库 = submodule**：`ref/akshare` submodule 固定 commit `fcdbf25`，保留上游 MIT LICENSE（merge-design §7 决策6、§9）
+> - `@source sign/parse` **不扩展**（§3.5）
 
-| 接口 | 升级依赖 | 裁决 | 工作量 |
-|------|---------|------|--------|
-| 个股 PE/PB 分位（eNiu） | 升级一（CSRF）+ HTML 拿 token | ✅ 可移植 | 中（~80 行） |
-| 全市场 PE/PB（乐咕） | 升级一（`legu_token`） | ✅ 可移植 | 低（~40 行） |
-| 巴菲特指标（乐咕） | 升级一（`legu_token`） | ✅ 可移植 | 低（~30 行） |
-| 股债利差（乐咕） | 升级一（`legu_token`） | ✅ 可移植 | 低（~30 行） |
-| 筹码分布（东财） | 升级一无关，CYQ 算法 Python 重写 | ✅ 可移植 | 中（~100 行，含 CYQ 算法） |
-| 同花顺资金流 | 升级一（`ths_hexin_v`）+ 升级二（HTML） | ✅ 可移植 | 中（~80 行） |
-| 同花顺概念板块 | 升级一 + 升级二 | ✅ 可移植 | 中（~60 行） |
-| 同花顺技术选股（11 个） | 升级一 + 升级二 | ✅ 可移植 | 中（~200 行，11 接口共用基建） |
-| 新浪龙虎榜 | 升级二（HTML） | ✅ 可移植 | 低（~50 行） |
-| 乐咕赚钱效应 | 升级二（HTML） | ✅ 可移植 | 低（~50 行） |
-| **深交所融资融券明细**（官方容灾源） | 升级三（xlsx 流） | ✅ 可移植 | 低（~40 行） |
-| **深交所市场总貌/代码表/汇率**（4 个） | 升级三（xlsx 流） | ✅ 可移植 | 低（~80 行，4 接口共用） |
+> 实施前待真机验证（merge-design §7 决策10/11）：
+> - 乐咕/交易所风控：用最保守策略（1req/10s）真机测试，禁压力测试；被封则升级风控或放弃
+> - datacenter reportName 互通性：一次 curl 验证业绩 reportName 能否在 datacenter-web 跑
 
-**裁决结论**：**全部难点接口可移植**，无"无法移植"项。需要的前置升级是 §3.1 + §3.2 + §3.3（三个轻量新模块），都是纯新增、零破坏。
-
-> **修正（2026-07-27）**：早先裁决表漏列了深交所 xlsx 系列接口（5 个，含融资融券官方容灾源），现补齐。详见 §2.4 类型 A。
-
----
-
-## 5. asgk 设计升级汇总
-
-### 5.1 依赖事实修正（重要）
-
-**前期分析的"零重依赖"前提是错的。** 核查 asgk 的 `uv.lock` 真实闭包：
-
-| 依赖 | 体积 | asgk 现状 | 性质 |
-|------|------|----------|------|
-| pandas | 50M | ✅ 已装（mootdx 传递） | 可用 |
-| numpy | 33M | ✅ 已装（pandas 传递） | 可用 |
-| py-mini-racer | 48M | ✅ 已装（mootdx 传递） | 可用 |
-| lxml | 12M | ✅ 已装（asgk 直接声明） | 可用（之前声明但没用） |
-| requests | 480K | ✅ 已装（asgk 直接） | 已用 |
-| mootdx | ~100K | ✅ 已装（asgk 直接） | 已用（TCP 行情） |
-
-**asgk 真实安装闭包 ~160MB+**，不是早期误称的 ~5MB。pandas/numpy/mini-racer 都是 mootdx 拉进来的——akshare 的"重依赖"大部分 asgk 早就在了。
-
-**真正值得拒绝的依赖**（有独立工程代价、非 mootdx 拉入）：
-- `curl_cffi` (31M)：TLS 指纹绕过工具，本质反反爬对抗；asgk 已有 em_get 走网关，不需要每客户端带 JA3 伪装
-- `akshare` 全量包：400+ 接口直连绕过 sgw，违反 §2
-
-**修正后的设计原则**（替换原来错误的"零重依赖"）：
-- ✅ 风控源经 sgw 网关（§2 合规，这是真正不可妥协的）
-- ✅ 实现层可自由用 pandas/lxml/mini-racer（反正已装）
-- ✅ 契约层返回 `list[dict]`（理由：调用方友好 + 跨版本稳定，**不是**"零依赖"）
-- ✅ 拒绝 curl_cffi（避免反反爬对抗，走网关层解决）
-
-### 5.2 升级清单（评审已定方案）
-
-| 升级 | 类型 | 依赖变化 | 破坏性 | 必要性 |
-|------|------|---------|--------|--------|
-| `_signing.py` vendor JS + mini-racer | 新增模块 | 零（mini-racer 已装） | 无 | 必需（覆盖乐咕+同花顺 15+ 接口） |
-| `_htmltable.py` 用 lxml.etree | 新增模块 | 零（lxml 已声明） | 无 | 必需（覆盖 HTML 接口） |
-| `_xlsx.py` 深交所 ShowReport 流解析 | 新增模块 | 零（openpyxl 已装） | 无 | 必需（覆盖深交所 5+ 接口，含融资融券官方容灾源） |
-| `to_df()` 包装函数 | 新增辅助 | 零 | 无 | 必需（双契约，调用方按需转 DataFrame） |
-| `@source` 加 `sign`/`parse` 字段 | 契约扩展 | 零 | 向后兼容 | 可选（元数据更完整） |
-| sgw 新增 `legu`/`exchange` 组 | config 扩展 | 零 | 无 | 可选（按源决策） |
-
-### 5.3 返回类型契约（评审已定：双契约）
-
-asgk 现有 50 个函数全部返回 `list[dict]`。评审决定保持这一契约，同时提供 `to_df()` 包装：
-
-```python
-# asgk/_dataframe.py（新增）
-"""DataFrame 包装：把 list[dict] 业务结果转 DataFrame，调用方按需用。"""
-import pandas as pd
-
-def to_df(data: list[dict]) -> pd.DataFrame:
-    """list[dict] → DataFrame。"""
-    return pd.DataFrame(data)
-
-# 使用示例
-from asgk import margin_trading, to_df
-df = to_df(margin_trading("600519"))  # 调用方需要 DataFrame 时
-```
-
-**为什么是双契约而不是直接返 DataFrame**：
-- 现有 50 函数契约不变（向后兼容）
-- `list[dict]` 对所有调用方友好（含不用 pandas 的）
-- pandas 跨版本 API 变动大，asgk 作为基础设施应稳定
-- 需要分析能力时调用方一行 `to_df()` 即可
-
----
-
-## 6. 终极可行性结论
-
-### 6.1 方案 C 可行吗？
-
-**完全可行。** 核查 akshare 全部 A 股模块：
-
-- **P0（11 接口）**：100% 纯 JSON，零难点，与 asgk 现有范式同构
-- **P1 难点（10+ 接口）**：100% 可移植，需 3 个工具模块前置（vendor JS + etree + xlsx 流）
-- **真正需权衡**：仅申万 .xls（1 个，建议改东财源）+ curl_cffi JA3（P2 暂缓，有替代源）
-
-### 6.2 asgk 设计需要升级吗？
-
-**需要，代价极小**：
-- 新增 `_signing.py`（vendor JS + mini-racer，~40 行）
-- 新增 `_htmltable.py`（lxml.etree，~15 行）
-- 新增 `_xlsx.py`（深交所 ShowReport 流解析，~10 行）
-- 新增 `_dataframe.py`（`to_df()` 包装，~5 行）
-- 可选：`@source` 扩展 `sign`/`parse` 元数据字段（向后兼容）
-- 可选：sgw 新增乐咕/交易所限流组（config 级）
-
-**修正后的关键设计原则**（替换错误的"零重依赖"）：
-- ✅ 风控源经 sgw 网关（§2 合规）— 这是真正不可妥协的
-- ✅ 实现层自由用 pandas/lxml/mini-racer（已装，零新增成本）
-- ✅ 契约层返回 `list[dict]` + `to_df()` 包装（双契约）
-- ✅ `@source` + tier/via 契约（向后兼容）
-- 🔴 拒绝 curl_cffi（反反爬对抗走网关层，不进客户端）
-
-### 6.3 关键证据：mini-racer 子场景 (c) 不存在
-
-akshare 全部 A 股模块里，**没有"JS 解密加密响应"的场景**（子场景 c）。所有 mini-racer 用法都是签名（a）或算法（b）。
-评审决定直接 vendor akshare 的 JS 用 mini-racer 执行（已装），无需纯 Python 重写——这是方案 C 工程量进一步降低的关键。
-
-### 6.4 对合成方案执行 plan 的修订建议
-
-[akshare-merge-design.md](akshare-merge-design.md) 的阶段拆解需补两处前置：
-
-- **新增阶段 0.5**：实现 `_signing.py` + `_htmltable.py` + `_xlsx.py` + `_dataframe.py` 四个工具模块 + vendor JS 文件
-- **新增阶段 0.6**：清理 asgk `pyproject.toml`——显式声明已用依赖（lxml 之前声明没用，现在要真用；如需 bs4 则加）
-- **阶段 1 P0**：不变（纯 JSON，无需工具模块）
-- **阶段 2 P1**：依赖阶段 0.5 的工具模块。**深交所融资融券官方源**（`margin_detail_szse`）原属"容灾候选"，现确认可移植，建议在本阶段移植以补齐东财被封兜底
-
----
-
-## 7. 待评审决策点
-
-> 评审已定三条（见 §3.1/§3.2/§5.3）：① vendor JS + mini-racer；② 双契约 list[dict] + to_df；③ 显式声明已用依赖。
-> 以下尚未定：
-
-1. **vendor JS 的同步策略**：akshare 上游 ths.js 变了怎么感知？（倾向：CI 定期 diff ref/akshare，变了告警人工更新）
-2. **`@source` 是否扩展 `sign`/`parse` 字段**？（倾向是，元数据驱动文档生成）
-3. **sgw 乐咕/交易所限流组**：进网关 vs 直连？（倾向：乐咕直连，交易所进网关）
-4. **CYQ 筹码算法**：vendor akshare 的 JS 实现 vs 参考公开算法独立实现？（倾向后者，更易维护）
+> 本文只保留**开放技术问题**：
+> - mini-racer 线程安全验证（CYQ vendor 后须 thread-local/锁 + 并发测试）
+> - `_htmltable` 对 rowspan/colspan 的覆盖评估
+> - `_xlsx` 是否走 openpyxl 直接解析（不经 pandas）以减依赖

@@ -1,164 +1,161 @@
-# akshare 集成方案分析：source gateway vs 封装 package
+# akshare 集成方案分析：架构选择（source gateway vs 封装 package vs ref 移植）
 
-> **状态**：Draft，方法论分析（非执行计划）
+> **状态**：方法论分析（非执行计划）
 > **分支**：`feat/akshare-merge`
-> **日期**：2026-07-26
-> **关联**：[akshare-merge-design.md](akshare-merge-design.md)（合成方案的执行 plan）
+> **最后修订**：2026-07-31
+> **关联**：
+> - [akshare-merge-design.md](akshare-merge-design.md)：**唯一执行计划与权威 interface inventory**（本文只引用其 ID，不复制接口表）
+> - [akshare-port-feasibility.md](akshare-port-feasibility.md)：技术模式与可移植性证据
+> **职责**：本文只回答"为什么选 ref-port，而不是新业务网关或封装 akshare package"。接口范围、阶段、依赖声明见 merge-design。
 
 ---
 
 ## 0. 问题
 
-用户的核心质询：把 akshare 能力引入本项目，是
-
+把 akshare 能力引入本项目，是：
 - **(A) 做成完全从 source 的 gateway**（类似 sgw，把 akshare 当数据源代理）？
-- **(B) 封装一个 akshare package**（pip install akshare 后封装一层）？
-- 还是有第三条路？
+- **(B) 封装一个 akshare package**（pip install akshare 后包装一层）？
+- **(C) akshare 作 ref 蓝本，逐接口移植到 asgk**？
 
-本文基于 sgw 实现、akshare 源码、依赖体积的事实分析，给出结论。
+本文基于 sgw 当前实现、akshare 固定 snapshot、依赖事实，给出结论。
+
+**参考基线**：akshare 1.18.64 / commit `fcdbf25`（见 [merge-design §0](akshare-merge-design.md)）。所有 akshare 源码事实仅针对此 snapshot。
 
 ---
 
 ## 1. 关键事实（决策依据）
 
-### 1.1 sgw 已经是 source gateway，且已是"东财/同花顺 source 代理"
+### 1.1 sgw 是 source gateway，但"后缀准入"不等于"host 已可路由"
 
-核对 `packages/sgw/sgw/proxy.py`：
+核对 `packages/sgw/sgw/proxy.py`，sgw 有**两层**校验：
 
 ```python
+# proxy.py:35-36  第一层：后缀准入
 PROXIED_DOMAIN_SUFFIXES = (".eastmoney.com", ".10jqka.com.cn")
-# handle() 按 host 后缀路由到限流组，缓存，转发 GET
-def handle(self, target_url, params, tier_header):
-    host = urlparse(target_url).netloc
-    group = self.group_of(host)  # 按域名后缀判定
-    ...
-    r = requests.get(target_url, params=params, ...)  # 透明转发
+
+# proxy.py:243-248  第二层：exact-host 归组
+def group_of(self, host):
+    for suffix in PROXIED_DOMAIN_SUFFIXES:
+        if host.endswith(suffix):
+            return self.domain_group.get(host)   # ← host 必须精确命中 config
+    return None
 ```
 
-机制：客户端发 `GET http://gw?u=<原始URL>&<params>`，sgw 按域名后缀路由到限流组（东财组/同花顺组），缓存，透明转发。**这是按"上游 source 域名"做的 source gateway**。
+因此一个东财子域要能路由，**必须同时满足**：① 后缀属于 `.eastmoney.com`/`.10jqka.com.cn`；② 该精确 host 出现在 `config.toml` 的某个 domain group。
 
-### 1.2 akshare 的请求层与 sgw 完全同构
+**当前 inventory 涉及但未在 config 精确归组的 host**（见 [merge-design §4.9](akshare-merge-design.md)）：
+- `emweb.securities.eastmoney.com`（AKP-HOLD-001/002 十大股东，**非 datacenter 端点**）
+- `datacenter.eastmoney.com`（AKP-EARN-001/002 业绩，path 是 `/securities/api/data/v1/get`，与 datacenter-web 不同）
+- `29.push2.eastmoney.com` / `79.push2.eastmoney.com`（AKP-BOARD 板块，**编号子域**）
+- `www.szse.cn`（AKP-FAILOVER-001，交易所源，当前也不在 suffix 列表）
 
-akshare A 股核心模块（stock/stock_feature/stock_fundamental）的 HTTP 调用分布：
+> **结论**：不能写"`.eastmoney.com` 后缀天然覆盖 akshare 东财接口"。后缀只是**准入闸门**，精确归组是**路由闸门**，二者必须同时通过。这是 [merge-design 阶段2](akshare-merge-design.md) 的前置修正项。
 
-| 方法 | 调用数 | 占比 |
-|------|-------|------|
-| GET | 541 | 93% |
-| POST | 41 | 7% |
+### 1.2 sgw 当前不透传业务 headers
 
-POST 主要是巨潮热度榜/披露、东财热度榜（emappdata），与 P0/P1 候选接口（十大股东/业绩/筹码/板块/回购/质押）**无关**——后者几乎全是东财 datacenter GET。
+`em_get(..., headers=...)` 会把调用方 headers 发给 sgw（`skills/a-stock-data/scripts/asgk/asgk/em_proxy.py:89-100`），但 sgw 转发上游时**丢弃这些 headers**，只构造固定 User-Agent（`proxy.py:349-356`）。
 
-**典型 akshare 东财接口实现**（`stock_repurchase_em.py`）：
+影响以下接口（按 inventory）：
+- AKP-FAILOVER-001（深交所 `Referer`）——Referer 当前到不了上游，会被拒。
+- 同花顺 `hexin-v` cookie、乐咕 `X-CSRF-Token`/cookie——若经网关同样失效。
+
+> 这是阶段2 的第二个前置修正：设计显式且受限的 upstream header 白名单（`User-Agent`/`Referer`/`Cookie`/`X-CSRF-Token`/`Accept`），并评估哪些 header 影响响应、须纳入 cache key。禁止透传 `Host` 等 hop-by-hop header。
+
+### 1.3 sgw cache key 忽略 params（正确性隐患）
+
+当前 `cache_key = f"{tier}|{target_url}"`，不含请求 params。这意味着同一 URL 不同股票、不同日期、不同页码会命中同一缓存条目——这是比 akshare 移植更优先的正确性问题，阶段2 必须改为 canonical prepared URL。
+
+### 1.4 `_datacenter()` 只取第一页
+
+`skills/a-stock-data/scripts/asgk/asgk/_datacenter.py:12-35` 固定 `pageNumber=1`，不读 `result.pages`。而 inventory 中大量接口是**全市场多页扫描**（AKP-HOLD-003/004、AKP-EARN、AKP-EVT、AKP-RISK 等），akshare 蓝本均遍历 `range(1, total_page+1)`。
+
+> 不能称"akshare datacenter 接口与现有 `_datacenter()` 完全同构"。请求层结构相似，但**分页契约不同**——阶段2 须扩展 `_datacenter` 支持 `all_pages`/`max_pages`。
+
+### 1.5 akshare 请求层与 asgk 部分同构（datacenter JSON 子集）
+
+在固定 snapshot 中，akshare 的东财 datacenter 接口（如 `stock_repurchase_em.py`）调用：
 
 ```python
 url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
-params = {"reportName": "RPTA_WEB_GETHGLIST_NEW", "columns": "ALL", ...}
+params = {"reportName": "RPTA_WEB_GETHGLIST_NEW", "columns": "ALL", ...}  # +分页
 r = requests.get(url, params=params)
-data_json = r.json()
-temp_df = pd.DataFrame(data_json["result"]["data"])  # ← 解析
+data_json["result"]["data"]
 ```
 
-**对比 asgk 现有 `_datacenter()`**（`asgk/_datacenter.py`）：
+asgk 现有 `_datacenter()` 调用**同一端点**、参数结构相似。**但**：
+- akshare 端遍历全部分页（见 §1.4），asgk 只取第一页；
+- 业绩接口用的是 `datacenter.eastmoney.com/securities/api/data/v1/get`（不同 host+path，见 §1.1），不能直接复用；
+- 十大股东用的是 `emweb.securities.eastmoney.com`（非 datacenter），需 `em_get` 直调。
 
-```python
-def datacenter(report_name, filter_str="", page_size=50, ...):
-    # 同样的 datacenter-web.eastmoney.com/api/data/v1/get
-    # 同样的 reportName/columns 参数
-    # 返回 list[dict]（契约层统一类型；实现层可用 pandas 解析后转 dict）
-```
+> 所以"请求层同构"只在 datacenter-web JSON 子集成立，且即便同构也需补分页。逐项细节见 [merge-design §4 inventory](akshare-merge-design.md)。
 
-**结论**：akshare 的东财接口与 asgk 的 `_datacenter()` 调用的是**同一个端点**，参数结构相同，唯一区别是 akshare 用 pandas 解析、asgk 用纯 dict 解析。
+### 1.6 依赖事实（修正旧版错误）
 
-### 1.3 依赖体积对比
+| 依赖 | 当前事实 | 修订原则 |
+|---|---|---|
+| `lxml` | asgk **直接声明**（`pyproject.toml`，代码此前未真用） | 可直接用于 HTML helper |
+| `mootdx` / `requests` | asgk 直接声明，已用 | 不变 |
+| `py-mini-racer` | **mootdx 的传递依赖**（`uv.lock`） | asgk 直接 import 时应提升为**直接依赖** |
+| `pandas` | **mootdx→tdxpy 的传递依赖** | 同上 |
+| `numpy` | pandas 传递依赖 | 通常无需单独声明 |
+| `openpyxl` | **当前 lockfile 中不存在**（pandas 把它列为 `excel` optional extra，非默认依赖） | xlsx 方案若采用则**新增直接依赖** |
+| `curl_cffi` | 未声明 | **不引入**（见 §2 方案 B） |
+| `akshare` | 未声明 | **保持不安装** |
 
-| 维度 | akshare 全量 | asgk 现状 |
-|------|-------------|----------|
-| pandas + numpy | ✅ 必需 | ⚠️ 已装（mootdx 传递依赖，asgk 未直接用） |
-| lxml + beautifulsoup4 | ✅ 必需 | ⚠️ lxml 已声明（asgk pyproject 有但未真用）；bs4 未装 |
-| openpyxl + xlrd | ✅ 必需（读 Excel） | ❌ 不用 |
-| curl_cffi | ✅ 必需（JA3 绕过） | ❌ 不用 |
-| mini-racer / akracer | ✅ 必需（JS 执行） | ⚠️ py-mini-racer 已装（mootdx 传递依赖） |
-| jsonpath | ✅ 必需 | ❌ 不用 |
-| 估算安装体积 | **~80-120MB** | ~160MB+（已含 mootdx 拉入的 pandas/numpy/mini-racer） |
+> 旧版文档曾误称 asgk"零重依赖 ~5MB"，后又误称"openpyxl 已装（pandas 传递依赖）"。两者均错：pandas/mini-racer 是传递依赖（虽已装但不应被业务包直接 import 而不声明）；openpyxl 根本未装。**"零新增依赖"不成立**——任何被 asgk 直接 import 的第三方包都应显式声明。删除所有无可复现测量依据的固定安装体积数字。
 
-> **修正（2026-07-27）**：早先版本误称 asgk "零重依赖 ~5MB"。核查 `uv.lock` 后纠正：pandas(50M)/numpy(33M)/py-mini-racer(48M)/lxml(12M) 早已是 mootdx 传递依赖，asgk 实际闭包 ~160MB+。详见 [akshare-port-feasibility.md §5.1](akshare-port-feasibility.md)。
->
-> 因此 asgk 与 akshare 在 pandas/lxml/mini-racer 上**依赖重叠**，方案对比的真正差异不在"是否引入重依赖"，而在：① curl_cffi（akshare 需 JA3 绕过，asgk 走网关无需）② akshare 全量包绕过 sgw（违反 §2）③ akshare 无统一请求门面无法 hook。
+### 1.7 akshare 没有统一"请求门面"
 
-### 1.4 akshare 没有统一的"请求门面"
-
-akshare 有 `utils/func.py:fetch_paginated_data`（分页辅助）和 `request.py:make_request_with_retry_json`（带重试的 GET），但**绝大多数接口直接在函数体内 `requests.get`**，没有强制走统一层。这意味着无法用"替换请求层"一刀切地让 akshare 全量走 sgw。
+akshare 有 `utils/func.py:fetch_paginated_data` 和 `request.py` 辅助，但多数接口在函数体内直接 `requests.get`。无法用"替换请求层"一刀切让 akshare 全量走 sgw——这是方案 B 致命问题的根源。
 
 ---
 
-## 2. 三种方案评估
+## 2. 三方案评估
 
-### 方案 A：把 akshare 做成 source gateway（新增一个 akgw）
+### 方案 A：把 akshare 做成 source gateway（新建 akgw）
 
-**设想**：像 sgw 代理东财域名那样，新建一个 `akgw` 网关，把 akshare 当数据源代理。
+**设想**：像 sgw 代理东财域名那样，新建 `akgw` 代理 akshare 数据源。
 
-**问题**：这其实**不需要新建**——sgw 已经是 source gateway，且 akshare 的东财源已经命中 sgw 的 `.eastmoney.com` 后缀。
+**问题**：sgw 已经是 source gateway。akshare 的东财源后缀命中 sgw 准入闸门（虽需补精确归组，见 §1.1）。真正的工作不是建新网关，而是：
+- **A.1**（sgw 已做）：按域名代理 HTTP 端点；
+- **A.2**（不该做）：把 akshare 业务函数（分页/字段映射/解析）搬到网关侧——违反 sgw"薄代理"定位。
 
-**真问题在于"代理粒度"**：
+业务逻辑（分页、字段映射、pandas→dict）必须在客户端（asgk）。
 
-- sgw 代理的是**HTTP 端点**（`?u=<URL>`），akshare 的价值是**业务函数**（`stock_repurchase_em()` 含分页+字段重命名+解析）。
-- 网关层只能代理 HTTP，**业务逻辑（分页、字段映射、pandas→dict 转换）必须在客户端**。
-- 所以"akshare source gateway"要么是：
-  - **A.1**：sgw 已做的事（按域名代理）—— akshare 东财源已天然命中，无需新建
-  - **A.2**：把 akshare 的业务函数搬到网关侧（网关变胖，承担解析）—— 违反 sgw 的"薄代理"定位
-
-**结论**：方案 A 在语义上已被 sgw 覆盖（A.1），A.2 会让网关承担不该承担的业务逻辑。
+**结论**：方案 A 在语义上已被 sgw 覆盖（A.1），A.2 让网关承担不该承担的业务逻辑。**不新建网关**。
 
 ### 方案 B：封装 akshare package（pip install akshare + 包装层）
 
-**设想**：`pip install akshare`，在 asgk 内写一层包装，调用 `akshare.stock_repurchase_em()` 后转成 `list[dict]`。
-
-**优点**：
-- 实现快（复用 akshare 的解析逻辑）
-- 上游更新自动同步（重装 akshare）
+**优点**：实现快（复用 akshare 解析）、上游自动同步。
 
 **致命问题**：
 
 | 问题 | 影响 |
 |------|------|
-| akshare 绕过 sgw 直连东财 | **违反 AGENTS.md §2**（风控源必经网关），1000 agent 并发直接封 IP — 这是首要否决理由 |
-| akshare 的请求层无 hook | 无法强制让 akshare 走 sgw（akshare 函数体内直接 `requests.get`） |
-| 引入 curl_cffi (31M) | TLS 指纹绕过是反反爬对抗；asgk 已有 em_get 走网关，不需要每客户端带 JA3 |
-| 上游 break 风险 | akshare 接口签名/返回结构频繁变动，封装层脆弱 |
+| **akshare 绕过 sgw 直连东财** | 违反 AGENTS.md §2（风控源必经网关），1000 agent 并发直接封 IP —— **首要否决理由** |
+| akshare 无统一请求门面 | 无法强制让 akshare 走 sgw（函数体内直接 `requests.get`） |
+| 引入 curl_cffi | TLS 指纹伪装是反反爬对抗；asgk 走网关无需每客户端带 JA3 |
+| 上游 break 风险 | akshare 接口签名/返回频繁变动，封装层脆弱 |
 
-> 注：pandas/lxml/mini-racer 的体积**不是**否决理由（asgk 已通过 mootdx 间接装了）。真正致命的是绕过 sgw + 无请求 hook。
+> 注：pandas/lxml/mini-racer 体积**不是**否决理由（asgk 已通过 mootdx 间接有部分）。真正致命的是绕过 sgw + 无请求 hook。
 
-**结论**：方案 B 违反项目核心约束 §2（风控源必经网关），**不可行**。
+**结论**：方案 B 违反 §2 核心约束，**不可行**。
 
-### 方案 C：akshare 作 ref 蓝本，移植解析逻辑到 asgk（前一轮的合成方案）
+### 方案 C：akshare 作 ref 蓝本，逐接口移植到 asgk
 
-**设想**：akshare 仅作只读参考（像 `ref/a-stock-data`），asgk 新增模块时**复制其端点 + 参数 + 字段映射逻辑**，用 asgk 自己的 `em_get`/`_datacenter`（走 sgw）。实现层可自由用已装依赖（pandas/lxml/mini-racer），契约层返回 `list[dict]` + `to_df()` 包装。
-
-**这正是 asgk 现有模块的做法**。核对 `asgk/capital.py`：
-
-```python
-@source(tier="S", via="gateway")
-def margin_trading(code, page_size=30):
-    data = _datacenter("RPTA_WEB_RZRQ_GGMX", filter_str=f'(SCAME="{code}")', ...)
-    # ↑ 与 akshare 调同一东财端点，但经 sgw 网关，返回 list[dict]
-```
+**设想**：akshare 作只读参考（像 `ref/a-stock-data`），asgk 新增模块时复制其端点+参数+字段映射逻辑，用 asgk 自己的 `em_get`/`_datacenter`（走 sgw）。这正是 asgk 现有模块（如 `capital.py`）的做法。
 
 **优点**：
+- ✅ §2 流量管控：东财/同花顺请求经 sgw（复用 `em_get`/`_datacenter`）
+- ✅ 上游隔离：akshare break 不影响 asgk（只参考端点/字段）
+- ✅ 并发安全：共享 sgw 限流配额
 
-| 维度 | 表现 |
-|------|------|
-| 流量管控 | ✅ 所有东财请求经 sgw（复用 `em_get`/`_datacenter`） |
-| 依赖体积 | ✅ 零新增（实现层用已装的 pandas/lxml/mini-racer） |
-| 并发安全 | ✅ 共享 sgw 限流配额 |
-| 上游隔离 | ✅ akshare break 不影响 asgk（只参考其端点/字段） |
-| 实现成本 | 中（每接口 ~30-60 行，参考 capital.py 范式） |
-| 维护成本 | 低（asgk 接口稳定，不追 akshare 上游） |
+**不是零代价**（旧文档误称"零基础设施"）：
+- ⚠️ 须先修正 sgw host 归组、header 透传、cache key、datacenter 分页（§1.1–1.4，阶段2）
+- ⚠️ 须按 approved inventory 显式声明直接依赖（pandas/mini-racer/openpyxl 等，§1.6）
+- ⚠️ 非东财源（乐咕/交易所）需决策直连还是进网关（[merge-design §7 决策10](akshare-merge-design.md) 风控验证）
 
-**缺点**：
-- 移植需逐接口手写（不能自动同步上游）
-- akshare 的非东财源（乐咕/雪球/百度股市通）需新增直连客户端
-
-**结论**：方案 C 是**唯一同时满足 §2 流量管控 + 并发安全 + 不绕过网关**的方案，且与 asgk 现有架构完全一致。
+**结论**：方案 C 是**唯一同时满足 §2 流量管控 + 并发安全 + 不绕过网关**的方案，**但需按需补齐现有基础设施的正确性缺口**，不是零基础设施成本。具体执行见 [merge-design](akshare-merge-design.md)。
 
 ---
 
@@ -166,99 +163,57 @@ def margin_trading(code, page_size=30):
 
 | 维度 | A. source gateway | B. 封装 package | **C. ref 蓝本移植** |
 |------|------------------|----------------|-------------------|
-| 是否新建基础设施 | A.1 无需（sgw 已覆盖）/ A.2 需建胖网关 | 否 | **否** |
+| 是否新建基础设施 | A.1 无需（sgw 已是）/ A.2 需胖网关 | 否 | **否**（但需修正现有 sgw/asgk 缺口） |
 | §2 流量管控合规 | A.1 ✅ / A.2 ✅ | ❌ 绕过 sgw | **✅** |
-| 依赖体积 | ✅ | ❌ 引入 curl_cffi | **✅ 零新增（复用已装依赖）** |
+| 依赖体积 | ✅ | ❌ 引入 curl_cffi | **按需显式声明**（非零新增） |
 | 并发安全（100~1000 agent） | ✅ | ❌ 直连封 IP | **✅** |
 | 业务逻辑归属 | 网关（A.2）或客户端 | akshare 内 | **asgk 客户端** |
 | 上游同步 | 不适用 | 自动（但脆弱） | **手动按需** |
-| 与 asgk 现有架构一致 | 部分 | 否 | **完全一致** |
-| 实现成本 | A.1 低 / A.2 高 | 低 | 中 |
+| 与 asgk 现有架构一致 | 部分 | 否 | **方向一致**（须补缺口） |
 | 长期维护成本 | A.1 低 / A.2 高 | 高（上游 break） | **低** |
 
 **结论**：**方案 C 胜出**。方案 A 在语义上已被 sgw 覆盖（无需新建），方案 B 违反核心约束。
 
 ---
 
-## 4. 关键洞察：sgw 已经是"akshare 的 source gateway"
+## 4. "sgw 是否已是 akshare 的 source gateway"
 
-回答用户原问题"是否有必要做成完全从 source 的 gateway"——
+回答用户原问题——
 
-**已经有，就是 sgw。** sgw 按域名后缀代理（`.eastmoney.com`/`.10jqka.com.cn`），而 akshare 的 A 股接口 93% 是东财/同花顺 GET，**天然命中 sgw 的现有限流组**。核对 akshare 10 个 P0 接口的数据源：
+**sgw 已提供 source-gateway 机制**，akshare 东财源后缀命中其准入闸门。**但"已覆盖"是误判**：当前 sgw 是"后缀准入 + exact-host 精确归组"双层模型，inventory 涉及的多个东财子域（`emweb`/`datacenter`/编号 push2）**尚未在 config 精确归组**，直接请求会返回 `400 domain not proxied`。
 
-| akshare 接口 | 数据源域名 | sgw 覆盖？ |
-|-------------|----------|-----------|
-| 十大股东 `stock_gdfx_top_10_em` | datacenter-web.eastmoney.com | ✅ 已覆盖 |
-| 业绩预告 `stock_yjyg_em` | datacenter.eastmoney.com | ✅ 已覆盖 |
-| 筹码分布 `stock_cyq_em` | push2his.eastmoney.com | ✅ 已覆盖 |
-| 板块成份股 `stock_board_concept_cons_em` | push2.eastmoney.com | ✅ 已覆盖 |
-| 回购 `stock_repurchase_em` | datacenter-web.eastmoney.com | ✅ 已覆盖 |
-| 高管增减持 `stock_hold_management_detail_em` | datacenter-web.eastmoney.com | ✅ 已覆盖 |
-| 机构调研 `stock_jgdy_detail_em` | datacenter-web.eastmoney.com | ✅ 已覆盖 |
-| 财报三表 `stock_three_report_em` | datacenter-web.eastmoney.com | ✅ 已覆盖 |
-| 融资融券（官方）`stock_margin_sse` | query.sse.com.cn | ❌ 需新增（交易所源） |
-| 个股 PE/PB 分位 `stock_a_indicator_lg` | legulegu.com / eniu.com | ❌ 需新增（乐咕源） |
+具体哪些 host 缺失、哪些接口受影响，见 [merge-design §4 inventory](akshare-merge-design.md) 的 `gateway_readiness` 列（host-missing / header-missing / direct）。本文不再维护第二张 host 覆盖表。
 
-**10/10 中 8 个命中 sgw 现有组**。剩下 2 个是非风控源（交易所/乐咕），按 §2 可直连或按需加组。
-
-**所以"做成 source gateway"这件事，sgw 已经做完了**。剩下的工作不是建新网关，而是把 akshare 的业务函数（端点+参数+字段映射）移植到 asgk，让它们调用现成的 `em_get`/`_datacenter`（自动走 sgw）。
+> 所以"做成 source gateway"这件事 sgw 机制上已具备，但**配置/能力上有缺口**。阶段2 补齐后，剩下的工作才是把 akshare 业务函数（端点+参数+字段映射+分页）移植到 asgk。
 
 ---
 
-## 5. 网关侧需要的小调整（可选，非阻塞）
+## 5. 已知前置缺口（阶段2，非可选）
 
-方案 C 不需要重构 sgw，但有两个可选增强：
+> 逐项细化见 [merge-design §3 阶段2](akshare-merge-design.md)；此处只列清单。
 
-### 5.1 乐咕源（legulegu/eniu）处置
+1. **host 精确归组**：补 config 或决策 wildcard/后缀到 group 映射（含编号 push2 子域）。
+2. **请求头白名单透传**：`User-Agent`/`Referer`/`Cookie`/`X-CSRF-Token`/`Accept`，禁 hop-by-hop；影响响应的 header 须进 cache key。
+3. **query-aware canonical cache key**：消除不同股票/日期/页串缓存。
+4. **`_datacenter` 全量分页**：`all_pages`/`max_pages`，处理 `result.pages`/空/部分页失败。
+5. **通用/分源请求客户端边界**：`em_get` 当前只服务东财/同花顺（`em_proxy.py:18`）。交易所/乐咕经网关则泛化，否则直连——待 [merge-design §7 决策10](akshare-merge-design.md) 风控验证。
+6. **GET-only 边界**：当前候选全 GET；POST 留 P2。
 
-乐咕是非风控源（无封 IP 历史），按 §2 可直连。两个选项：
-
-| 选项 | 做法 | 适用 |
-|------|------|------|
-| 直连 + asgk 内自律限流 | 复用 `em_proxy._direct_throttle` 模式，进程内 1 req/s | 推荐（乐咕无封 IP 风险） |
-| 进 sgw 新建 `legu` 组 | sgw config 加 `{"name":"legu","rps":1,"domains":["legulegu.com","eniu.com"]}` | 若担心未来乐咕加风控 |
-
-**倾向**：直连 + 自律限流（避免网关成为单点依赖）。
-
-### 5.2 交易所源（sse/szse）处置
-
-融资融券官方源（`query.sse.com.cn` / `www.szse.cn`）是非风控源。上交所返回 JSON，深交所 `ShowReport` API 返回 xlsx 流（见 [port-feasibility §2.4 类型 A](akshare-port-feasibility.md)，已确认可移植）。建议走 sgw 新建 `exchange` 组，与东财组隔离（避免交易所源被东财封禁牵连）。
-
-### 5.3 POST 接口（akshare 7%）
-
-sgw 当前是 GET-only。若未来要移植 akshare 的 POST 接口（巨潮热度榜/东财 emappdata），需扩展 sgw 支持 POST。**但 P0/P1 候选接口都是 GET，非阻塞**，留到 P2 按需。
+> 乐咕、交易所是否进网关，用**最保守风控策略真机测试**（低频单发如 1req/10s，**禁压力测试**避免真封 IP）：没问题则该保守策略即作为该源风控；被封则说明需更严格策略或放弃。AGENTS.md §2 原则：无 IP 风控源直连，避免网关单点——但"是否风控源"须以此保守测试举证，不能无依据称"非风控源"。
 
 ---
 
 ## 6. 最终结论
 
 ### 是否做成 source gateway？
-
-**不需要新建。sgw 已经是 akshare 的 source gateway**（按域名代理，akshare 东财源 8/10 命中现有限流组）。
+sgw 机制上已具备，但需补 host 归组/header/cache-key 缺口。**不新建网关**。
 
 ### 是否封装 akshare package？
-
-**不可行**。首要否决理由是违反 §2 流量管控（绕过 sgw 直连东财，1000 agent 并发封 IP）；其次是 akshare 无统一请求门面无法 hook 走网关；再次是引入 curl_cffi（反反爬对抗，asgk 走网关无需）。
+**不可行**。首要否决理由是违反 §2（绕过 sgw 直连东财，并发封 IP）；其次无请求 hook；再次引入 curl_cffi。
 
 ### 推荐方案
-
-**方案 C：akshare 作 ref 蓝本，移植解析逻辑到 asgk**。这是唯一同时满足：
-- §2 流量管控（经 sgw）
-- 复用已装依赖（pandas/lxml/mini-racer 已是 mootdx 传递依赖）
-- 并发安全（共享限流配额）
-- 与 asgk 现有架构完全一致
-
-的方案。具体执行计划见 [akshare-merge-design.md](akshare-merge-design.md)。
+**方案 C：akshare 作 ref 蓝本，按固定 snapshot 和权威 inventory 逐接口移植到 asgk**，并在移植前修正 sgw host/header/cache-key 与 `_datacenter` 分页。具体执行计划与接口清单见 [akshare-merge-design.md](akshare-merge-design.md)。
 
 ### 一句话总结
 
-> **sgw 已经是 source gateway，akshare 的东财源天然命中。剩下的不是"建网关"或"封装包"，而是把 akshare 的业务函数（端点+参数+字段映射）按 asgk 现有范式（`em_get`/`_datacenter` + `list[dict]`）移植一遍。**
-
----
-
-## 7. 待评审决策点
-
-1. **乐咕源处置**：直连+自律限流 vs 进 sgw 新建组？（倾向直连）
-2. **交易所源处置**：进 sgw 新建 `exchange` 组 vs 直连？（倾向进 sgw，与东财隔离）
-3. **POST 支持**：sgw 是否现在就扩展 POST？（倾向否，P2 按需）
-4. **本分析文档归宿**：留 notes/ 作为方法论 vs 合并进 akshare-merge-design.md？
+> **不建新网关、不封装 akshare package；按固定 snapshot 的权威 inventory 把选定业务逻辑移植到 asgk，移植前先补齐 sgw host/header/cache-key 与 datacenter 分页的正确性缺口。**
