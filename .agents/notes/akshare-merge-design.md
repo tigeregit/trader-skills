@@ -306,7 +306,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-EVT-001 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit db15730) / 3 |
 | capability | 高管增减持明细（全市场，无参数） |
 | asgk | `mgmt_trade() -> list[dict]` / risk_event.py |
 | upstream | `stock_hold_management_detail_em()` / `stock_hold_control_em.py:14` |
@@ -324,7 +324,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-EVT-002 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit db15730) / 3 |
 | capability | 股票回购（全市场，无参数） |
 | asgk | `repurchase() -> list[dict]` / risk_event.py |
 | upstream | `stock_repurchase_em()` / `stock_repurchase_em.py:14` |
@@ -342,7 +342,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-EVT-003 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit db15730) / 3 |
 | capability | 机构调研（全市场，按开始日期） |
 | asgk | `institute_research(date) -> list[dict]` / risk_event.py |
 | upstream | `stock_jgdy_detail_em(date)` / `stock_jgdy_em.py:108` |
