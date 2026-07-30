@@ -1,6 +1,6 @@
 ---
 name: a-stock-data
-description: 当任务需要获取A股真实数据时使用——行情(K线/五档/PE/PB/市值)、研报(评级/一致预期EPS)、信号(热点/北向/龙虎榜/解禁/行业)、资金面(融资融券/大宗/股东户数/分红/资金流)、业绩(预告/快报)、新闻(财联社电报/全球资讯)、财务三表/F10、公告、打板(涨停池/炸板率)、ETF期权(希腊字母/IV)、舆情(互动易/热榜)等。提供 Python 库(asgk) + CLI + 共享流量网关，支持单 IP 下多 agent 并发。仅在需要取数时使用，概念讨论/投资观点无需加载。
+description: 当任务需要获取A股真实数据时使用——行情(K线/五档/PE/PB/市值)、研报(评级/一致预期EPS)、信号(热点/北向/龙虎榜/解禁/行业)、资金面(融资融券/大宗/股东户数/分红/资金流)、业绩(预告/快报)、事件(高管增减持/回购/机构调研)、新闻(财联社电报/全球资讯)、财务三表/F10、公告、打板(涨停池/炸板率)、ETF期权(希腊字母/IV)、舆情(互动易/热榜)等。提供 Python 库(asgk) + CLI + 共享流量网关，支持单 IP 下多 agent 并发。仅在需要取数时使用，概念讨论/投资观点无需加载。
 ---
 
 # A股数据 skill
@@ -24,6 +24,7 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 | 股东户数/分红 | `holder_num_change`/`dividend_history` | capital |
 | 资金流 | `stock_fund_flow_120d` | capital |
 | 业绩预告/快报 | `earning_forecast`/`earning_express` | [earning](references/earning.md) |
+| 高管增减持/回购/机构调研 | `mgmt_trade`/`repurchase`/`institute_research` | [risk_event](references/risk_event.md) |
 | 财联社电报/新闻 | `cls_telegraph`/`eastmoney_stock_news` | [news](references/news.md) |
 | 财务三表 | `sina_financial_report` | [base](references/base.md) |
 | F10/股本/上市日 | `mootdx_f10`/`eastmoney_stock_info` | base |

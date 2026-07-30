@@ -19,6 +19,7 @@ from asgk.capital import (
     dividend_history, stock_fund_flow_120d,
 )
 from asgk.earning import earning_forecast, earning_express
+from asgk.risk_event import mgmt_trade, repurchase, institute_research
 from asgk.news import eastmoney_stock_news, cls_telegraph, eastmoney_global_news
 from asgk.client import tdx_client
 from asgk.base import mootdx_finance, mootdx_f10, eastmoney_stock_info, sina_financial_report
@@ -48,6 +49,8 @@ __all__ = [
     "dividend_history", "stock_fund_flow_120d",
     # 业绩层
     "earning_forecast", "earning_express",
+    # 事件层
+    "mgmt_trade", "repurchase", "institute_research",
     # 新闻层
     "eastmoney_stock_news", "cls_telegraph", "eastmoney_global_news",
     # 基础数据
