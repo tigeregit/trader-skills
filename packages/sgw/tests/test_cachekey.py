@@ -116,8 +116,22 @@ class TestGroupOfRegression:
 
     def test_non_proxied_domain_rejected(self):
         g = _make_gateway()
-        assert g.group_of("www.szse.cn") is None
         assert g.group_of("legulegu.com") is None
+
+    # ── exchange 组（非后缀源，第二层 exact-host 归组）──
+    def test_szse_routable_via_exchange_group(self):
+        """www.szse.cn 非东财/同花顺后缀，但经第二层 config 归组到 exchange。"""
+        g = _make_gateway()
+        assert g.group_of("www.szse.cn") == "exchange"
+
+    def test_sse_routable_via_exchange_group(self):
+        g = _make_gateway()
+        assert g.group_of("query.sse.com.cn") == "exchange"
+
+    def test_unknown_domain_still_rejected(self):
+        """非后缀且未在 config 的域名仍被拒绝。"""
+        g = _make_gateway()
+        assert g.group_of("random.example.com") is None
 
     # ── inventory 涉及的新归组 host ──
     def test_emweb_securities_routable(self):

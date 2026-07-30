@@ -16,7 +16,7 @@ from asgk.signal import (
 )
 from asgk.capital import (
     margin_trading, block_trade, holder_num_change,
-    dividend_history, stock_fund_flow_120d,
+    dividend_history, stock_fund_flow_120d, margin_detail_szse,
 )
 from asgk.earning import earning_forecast, earning_express
 from asgk.risk_event import mgmt_trade, repurchase, institute_research
@@ -53,7 +53,7 @@ __all__ = [
     "industry_comparison", "daily_dragon_tiger",
     # 资金面
     "margin_trading", "block_trade", "holder_num_change",
-    "dividend_history", "stock_fund_flow_120d",
+    "dividend_history", "stock_fund_flow_120d", "margin_detail_szse",
     # 业绩层
     "earning_forecast", "earning_express",
     # 事件层

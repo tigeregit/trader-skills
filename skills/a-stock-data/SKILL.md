@@ -21,6 +21,7 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 | 龙虎榜 | `dragon_tiger_board`/`daily_dragon_tiger` | signal |
 | 行业排名 | `industry_comparison` | signal |
 | 融资融券/大宗 | `margin_trading`/`block_trade` | [capital](references/capital.md) |
+| 深交所融资融券(官方容灾) | `margin_detail_szse` | capital |
 | 股东户数/分红 | `holder_num_change`/`dividend_history` | capital |
 | 资金流 | `stock_fund_flow_120d` | capital |
 | 业绩预告/快报 | `earning_forecast`/`earning_express` | [earning](references/earning.md) |

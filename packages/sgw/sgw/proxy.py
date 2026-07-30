@@ -301,10 +301,12 @@ class Gateway:
 
     # ── 域名归组 ──
     def group_of(self, host: str) -> Optional[str]:
+        # 第一层：风控源后缀准入（东财/同花顺）+ exact-host 归组
         for suffix in PROXIED_DOMAIN_SUFFIXES:
             if host.endswith(suffix):
                 return self.domain_group.get(host)
-        return None
+        # 第二层：非后缀源（如交易所 www.szse.cn）按 config exact-host 归组
+        return self.domain_group.get(host)
 
     # ── 档位 → TTL（先验方案 §3.4.6）──
     def ttl_for_tier(self, tier: str) -> int:

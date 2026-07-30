@@ -9,9 +9,20 @@ from __future__ import annotations
 
 from asgk._contract import source
 from asgk._datacenter import datacenter as _datacenter
+from asgk._xlsx import parse_xlsx
 from asgk.em_proxy import em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
+
+
+def _to_num(val):
+    """深交所金额带千分位逗号（'162,164,240'）→ float。"""
+    if val is None or val == "":
+        return None
+    try:
+        return float(str(val).replace(",", ""))
+    except (TypeError, ValueError):
+        return None
 
 
 @source(tier="S", via="gateway")
@@ -124,3 +135,37 @@ def stock_fund_flow_120d(code: str) -> list[dict]:
                 "super_net": float(parts[5]) if parts[5] != "-" else 0,
             })
     return rows
+
+
+@source(tier="S", via="gateway")
+def margin_detail_szse(date: str) -> list[dict]:
+    """深交所融资融券明细（官方容灾源，东财被封时兜底）。
+
+    移植自 akshare stock_margin_detail_szse。
+    深交所 ShowReport API（SHOWTYPE=xlsx），经网关 exchange 组（[§7 决策10]）。
+
+    Args:
+        date: 交易日，YYYYMMDD（如 "20250728"）
+    Returns:
+        [{code, name, rz_buy(融资买入额,元), rz_balance(融资余额,元),
+          rq_sell(融券卖出量,股), rq_volume(融券余量,股),
+          rq_balance(融券余额,元), rzrq_balance(融资融券余额,元)}, ...]
+    """
+    iso = f"{date[:4]}-{date[4:6]}-{date[6:]}"
+    r = em_get("https://www.szse.cn/api/report/ShowReport",
+               params={"SHOWTYPE": "xlsx", "CATALOGID": "1837_xxpl",
+                       "TABKEY": "tab2", "tab2PAGENO": "1", "txtDate": iso},
+               headers={"User-Agent": UA,
+                        "Referer": "https://www.szse.cn/disclosure/margin/margin/index.html"},
+               timeout=20, tier="S")
+    rows = parse_xlsx(r.content, dtype={"证券代码": str})
+    return [{
+        "code": str(row.get("证券代码", "")),
+        "name": str(row.get("证券简称", "")).strip(),
+        "rz_buy": _to_num(row.get("融资买入额(元)")),
+        "rz_balance": _to_num(row.get("融资余额(元)")),
+        "rq_sell": _to_num(row.get("融券卖出量(股/份)")),
+        "rq_volume": _to_num(row.get("融券余量(股/份)")),
+        "rq_balance": _to_num(row.get("融券余额(元)")),
+        "rzrq_balance": _to_num(row.get("融资融券余额(元)")),
+    } for row in rows]
