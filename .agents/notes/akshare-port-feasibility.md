@@ -328,9 +328,9 @@ def to_df(records):
 > - **akshare 仓库 = submodule**：`ref/akshare` submodule 固定 commit `fcdbf25`，保留上游 MIT LICENSE（merge-design §7 决策6、§9）
 > - `@source sign/parse` **不扩展**（§3.5）
 
-> 实施前待真机验证（merge-design §7 决策10/11）：
-> - 乐咕/交易所风控：用最保守策略（1req/10s）真机测试，禁压力测试；被封则升级风控或放弃
-> - datacenter reportName 互通性：一次 curl 验证业绩 reportName 能否在 datacenter-web 跑
+> 实施前待真机验证（merge-design §7 决策10/11）→ **均已完成（2026-07-31）**：
+> - **乐咕/交易所风控 → 通过**：深交所 3 次（间隔10s）均 200；乐咕 2 次（间隔10s）均 200，无封禁。裁决：乐咕直连+自律限流，深交所经网关 exchange 组。
+> - **datacenter reportName 互通 → 互通**：datacenter-web + 业绩 reportName + 等值 filter + source=WEB 返回 200 页。AKP-EARN 复用 `_datacenter()`，不需新 helper。filter 是等值 `(REPORT_DATE='2024-09-30')` 非前缀 `^"..."`。
 
 > 本文只保留**开放技术问题**：
 > - mini-racer 线程安全验证（CYQ vendor 后须 thread-local/锁 + 并发测试）

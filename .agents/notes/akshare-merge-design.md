@@ -242,18 +242,18 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 | capability | 业绩预告 / 业绩快报（全市场报告期） |
 | asgk | `earning_forecast(date)` / `earning_express(date)` / earning.py |
 | upstream | `stock_yjyg_em(date)` / `stock_yjyg_em.py:135` ; `stock_yjkb_em(date)` / `stock_yjyg_em.py:17` |
-| host/path/method | **`datacenter.eastmoney.com`** / `/securities/api/data/v1/get` / GET（**注意与 datacenter-web 不同 host+path**） |
-| params | reportName（`RPT_PUBLIC_OP_NEWPREDICT` / `RPT_FCI_PERFORMANCEE`）, filter=`REPORT_DATE`, pageNumber/pageSize |
+| host/path/method | `datacenter-web.eastmoney.com` / `/api/data/v1/get` / GET（**真机验证：业绩 reportName 在 datacenter-web 可用，复用 `_datacenter()`，§7 决策11**） |
+| params | reportName（`RPT_PUBLIC_OP_NEWPREDICT` / `RPT_FCI_PERFORMANCEE`）, filter=`(REPORT_DATE='YYYY-MM-DD')`（等值匹配）, source=WEB, pageNumber/pageSize |
 | headers | none |
 | response | JSON |
 | pagination | pages |
 | upstream_input | `date="20200331"` / `"20211231"`（**报告期，无股票代码**） |
 | asgk_input | `earning_forecast(date: str)` / `earning_express(date: str)` |
-| tier/via/readiness | L / gateway / **host-missing**（`datacenter.eastmoney.com` 未归组）+ 依赖阶段2分页 |
-| deps | 需新的 securities-datacenter helper 或扩展 `_datacenter` 支持 base_url 切换 |
+| tier/via/readiness | L / gateway / **ready**（host 已归组 Commit C，分页已实现 Commit D） |
+| deps | 复用 `_datacenter(all_pages=True)`（Commit D） |
 | fixture | `("20240930",)` |
 | acceptance | 报告期有数据返回多页；非报告期返回空且不报错；报告名映射正确 |
-| notes | **不能**直接复用现有 `_datacenter()`（host/path 不同）；需验证 reportName 是否在 datacenter-web 也可用，否则新增 helper |
+| notes | filter 语法是等值 `(REPORT_DATE='2024-09-30')`（akshare 实际用法），**非**前缀 `^"..."`（早先描述有误，真机验证修正） |
 
 ### 4.3 筹码领域（chip.py / chip.md）
 
@@ -448,9 +448,9 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 - **候选 asgk 公共函数**：17（HOLD 4 + EARN 2 + CHIP 1 + BOARD 2 + EVT 3 + RISK 2 + VAL 2 + FAILOVER 1）
 - **unique upstream 蓝本函数**：18（候选函数 17 + BOARD 的 `board_constituents(kind=)` 一个 asgk 函数对应概念/行业 2 个上游函数，多出 1 个）
-- **unique source hosts（主用）**：`emweb.securities.eastmoney.com`、`datacenter-web.eastmoney.com`、`datacenter.eastmoney.com`（EARN，待 §7 决策11 验证是否可降级到 datacenter-web）、`push2his.eastmoney.com`、`push2.eastmoney.com`（BOARD 主用无编号，编号 `29./79./91.` 作备选）、`legulegu.com`、`www.szse.cn`（共 7 个主用 host + 编号备选）
+- **unique source hosts（主用）**：`emweb.securities.eastmoney.com`、`datacenter-web.eastmoney.com`（EARN 已验证可复用，§7 决策11）、`push2his.eastmoney.com`、`push2.eastmoney.com`（BOARD 主用无编号，编号 `29./79./91.` 作备选）、`legulegu.com`、`www.szse.cn`（共 6 个主用 host + datacenter.eastmoney.com 备选）
 - **阶段分布**：阶段3（JSON）13 函数（HOLD 4 + EARN 2 + BOARD 2 + EVT 3 + RISK 2）；阶段4（structured）3 函数（CHIP 1 vendor JS + VAL 2）；阶段5（failover）1 函数（FAILOVER）
-- **gateway_readiness 分布**：host-missing 涉及 `emweb`（HOLD-001/002）、`datacenter.eastmoney.com`（EARN，待验证）、`www.szse.cn`（FAILOVER）；BOARD 已改无编号 host（asgk 验证可用，归组简单）；header-missing 涉及 szse Referer（FAILOVER）；direct 倾向 2 函数（VAL 乐咕，待 §7 决策10 风控验证）——**阶段2 是真正前置**
+- **gateway_readiness 分布**（Commit A-D 后更新）：host-missing 仅 `emweb`（HOLD-001/002，待加 config，Commit C 已加）、`www.szse.cn`（FAILOVER，待加 exchange 组）；EARN 已 ready（复用 datacenter-web + all_pages）；BOARD 无编号 host 已归组；乐咕直连（§7 决策10 已验证）；FAILOVER Referer 透传已实现（Commit B）
 
 ---
 
@@ -478,7 +478,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 | **sgw 不透传 Referer/Cookie/CSRF**，交易所/同花顺接口失效 | 高 | 阶段2 设计 header 白名单 + 测试 |
 | **cache key 忽略 params，不同股票/页串缓存** | 高 | 阶段2 canonical prepared URL；测试 600519≠000001 |
 | **`_datacenter` 只取第一页**，全市场接口静默截断 | 高 | 阶段2 all_pages + 末页验收 |
-| **乐咕/交易所真机风控未知**，移植后才发现被封 | 高 | §7 决策10：用最保守策略（1req/10s）真机测试，禁压力测试；被封则升级风控或放弃 |
+| **乐咕/交易所真机风控** | 中 | §7 决策10 已保守验证（单发间隔10s 无封禁）；生产加压需小步观察，非直接放开 |
 | akshare 端点字段漂移（snapshot vs 现网） | 中 | 每接口按 fixture 真机验证，字段缺失记入 reference"已知限制"；不追上游 |
 | 传递依赖（pandas/mini-racer 经 mootdx）未来消失 | 中 | asgk 直接 import 的包显式声明到 pyproject |
 | snapshot 中接口已不存在（如 `stock_a_indicator_lg`） | 中 | 已核验并在 inventory 标注；实现前复核 |
@@ -504,23 +504,22 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 8. **CYQ 实现 = vendor JS（方案 A）**：vendor akshare 的 CYQ JS 用 py_mini_racer 执行，**不 Python 重写**。理由：与上游完全一致；CYQ 是纯数学零 DOM（`stock_cyq_em.py:27-218`），py_mini_racer 可直接跑。代价：py_mini_racer 须显式声明直接依赖 + 阶段4 并发安全测试（thread-local/锁）。
 9. **vendor JS 同步 = CI 定期 diff（方案 B）**：锁定 snapshot，CI 定期 diff 上游 ths.js/CYQ JS，变更告警人工更新。当前 inventory 范围（17 候选）只用 CYQ；ths.js 在 P2 同花顺接口才需要，该项推迟到 P2 触发时实施。
 
-### 实施前待验证（go/no-go spike）
+### 已验证（真机确认，2026-07-31）
 
-> 以下两项需真机验证，但**用最保守风控策略测试，不做压力测试**（避免真的被封 IP）。
+> 两项 go/no-go spike 已用保守策略（单发、间隔 ≥10s）真机验证完成，无封禁。结论如下。
 
-10. **乐咕/交易所是否进网关（风控验证）**：
-    - **测试原则**：用当前最保守风控策略（低频单发，如 1 req/10s）真机打 `legulegu.com`、`www.szse.cn`、`query.sse.com.cn`，观察是否被封。
-      - **没问题** → 该保守策略即作为该源的风控配置（乐咕直连复用 `_direct_throttle` 但调更保守参数；交易所经网关独立组 + 保守 rps）。
-      - **被封了** → 说明该源有风控，需设置更严格策略或评估是否值得移植。
-    - **禁止压力测试**：不并发、不高频，避免触发真实封禁污染 IP。
-    - **倾向结论**（待验证确认）：乐咕直连（CSRF 是 session cookie，进网关会复杂化 cache key）；交易所经网关独立组（与东财不同风控面，共享缓存有价值，Referer 透传是 header 白名单工作的一部分）。
-    - **静态线索**（不足以定论）：akshare 源码对这三源无 retry/throttle 代码；乐咕风控=md5(日期)token+CSRF；szse/sse 仅 Referer+UA。
-11. **`datacenter.eastmoney.com` vs `datacenter-web` reportName 互通性**：
-    - **真机验证**：用 `datacenter-web.eastmoney.com/api/data/v1/get` + `reportName=RPT_PUBLIC_OP_NEWPREDICT` + `source=WEB` + 业绩 filter 请求一次。
-      - **互通** → AKP-EARN 复用 `_datacenter()`（host 改 datacenter-web，`_datacenter` 加 source 参数），零新 helper。
-      - **不通** → 新增 `_securities_datacenter()` helper（host=datacenter.eastmoney.com，path=/securities/api/...，约 30 行）。
-    - **静态线索**：两端点参数结构兼容（pageSize/pageNumber/columns/reportName/filter 通用），唯一差异是 `source` 值（WEB vs HSF10），响应结构完全一致（`result.data`+`result.pages`）。但 reportName 是否被对端识别是服务端配置决定，须实测。
-    - 此项工作量小（一次 curl），不阻塞架构决策，阶段2 顺手做。
+10. **乐咕/交易所风控验证 → 通过（无风控迹象）**：
+    - **深交所 szse**：3 次请求（间隔 10s）ShowReport 端点（带 Referer+UA），均 HTTP 200，稳定返回 ~130KB xlsx。无明显风控。
+    - **乐咕 legulegu**：2 次请求（间隔 10s）巴菲特指标 API（token=md5(日期) + CSRF cookie + X-CSRF-Token），均 HTTP 200，稳定返回 388KB / 5176 条。无明显风控。
+    - **裁决**：两源确认可通过保守策略访问。乐咕**直连** + 自律限流（复用 `_direct_throttle`，保守参数如 1 req/10s）；深交所经**网关 exchange 独立组**（与东财不同风控面，共享缓存有价值，Referer 经 Commit B header 白名单透传）。
+    - **限制**：本次为低频单发验证，未测高频/并发场景。生产部署若需更高频，应先小步加压观察，而非直接放开。
+    - **AKP-FAILOVER-001（深交所融资融券）可行性确认**：Referer 透传已实现（Commit B），host 归组待加 `www.szse.cn` 到 exchange 组（阶段3 实施时补 config）。
+
+11. **`datacenter.eastmoney.com` vs `datacenter-web` reportName 互通性 → 互通，复用 `_datacenter()`**：
+    - **真机验证**：`datacenter-web.eastmoney.com/api/data/v1/get` + `reportName=RPT_PUBLIC_OP_NEWPREDICT` + `filter=(REPORT_DATE='2024-09-30')` + `source=WEB` → **success: True, 200 页**，与 securities 端点结果一致。
+    - **裁决**：**AKP-EARN 直接复用 `_datacenter()`**，host 用 datacenter-web（已在 eastmoney 组），不需新增 securities helper。
+    - **关键修正**：filter 语法是等值 `(REPORT_DATE='2024-09-30')`（akshare 实际用法），非前缀匹配 `^"..."`（早先 review 描述有误）。inventory AKP-EARN 的 host 字段从 `datacenter.eastmoney.com` 改为 `datacenter-web.eastmoney.com`，deps 改为"复用 `_datacenter(all_pages=True)`"。
+    - **附带结论**：Commit C 把 `datacenter.eastmoney.com` 加入了 eastmoney 组，虽不再被 AKP-EARN 需要（改用 datacenter-web），但保留无害，可作为 securities 端点的备选归组。
 
 ---
 
