@@ -362,7 +362,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-RISK-001 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit e2ae92c) / 3 |
 | capability | 股权质押比例（全市场，按交易日） |
 | asgk | `pledge_ratio(date) -> list[dict]` / pool_filter.py |
 | upstream | `stock_gpzy_pledge_ratio_em(date)` / `stock_gpzy_em.py:88` |
@@ -380,7 +380,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 
 | id | AKP-RISK-002 |
 |---|---|
-| status / phase | candidate / 3 |
+| status / phase | **implemented** (commit e2ae92c) / 3 |
 | capability | 商誉明细（全市场，按报告期） |
 | asgk | `goodwill(date) -> list[dict]` / pool_filter.py |
 | upstream | `stock_sy_em(date)` / `stock_sy_em.py:294` |
