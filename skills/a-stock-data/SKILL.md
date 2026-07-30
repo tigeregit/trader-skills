@@ -29,6 +29,7 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 | 十大股东/流通股东/股东变化/协同 | `top10_holders`/`top10_free_holders`/`holder_change`/`holder_teamwork` | [holders](references/holders.md) |
 | 板块成份股 | `board_constituents` | [board](references/board.md) |
 | 筹码分布/主力成本 | `chip_distribution` | [chip](references/chip.md) |
+| 全市场PE/PB历史 | `market_pe_lg`/`market_pb_lg` | [valuation_hist](references/valuation_hist.md) |
 | 财联社电报/新闻 | `cls_telegraph`/`eastmoney_stock_news` | [news](references/news.md) |
 | 财务三表 | `sina_financial_report` | [base](references/base.md) |
 | F10/股本/上市日 | `mootdx_f10`/`eastmoney_stock_info` | base |
