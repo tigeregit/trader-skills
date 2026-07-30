@@ -36,12 +36,30 @@ DEFAULT_CONFIG = HERE / "config.toml"
 # 东财/同花顺等风控源走网关；其余(腾讯/百度/新浪/mootdx-TCP)直连不经网关
 PROXIED_DOMAIN_SUFFIXES = (".eastmoney.com", ".10jqka.com.cn")
 
+# 允许从客户端透传到上游的请求头白名单（hop-by-hop/敏感头一律不透传）。
+# 覆盖深交所 Referer、同花顺 hexin-v(Cookie)、乐咕 CSRF、东财 Accept 等需求。
+# Host/Connection/Authorization/Content-Length 等不在白名单，禁止透传。
+UPSTREAM_HEADER_ALLOWLIST = {
+    "User-Agent", "Referer", "Cookie", "X-CSRF-Token", "Accept", "Origin",
+}
 
-def _canonical_url(url: str, params: dict | None = None) -> str:
+# 影响响应体、必须纳入 cache key 的请求头（不同值会得到不同响应）。
+# User-Agent/Origin 不影响响应内容，不纳入（避免缓存碎片化）。
+RESPONSE_AFFECTING_HEADERS = {"Referer", "Cookie", "X-CSRF-Token", "Accept"}
+
+# 固定 UA（客户端未传 User-Agent 时的默认）
+_DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+
+
+def _canonical_url(url: str, params: dict | None = None,
+                   header_key_parts: dict | None = None) -> str:
     """规范化 URL：合并 target_url 自带 query 与 params，按 key 排序，统一编码。
 
     用于 cache key：确保 (url, {a:1,b:2}) 与 (url, {b:2,a:1}) 与
     (url?a=1, {b:2}) 产生同一 key，且不同 params 产生不同 key。
+
+    header_key_parts：影响响应的请求头（Referer/Cookie/X-CSRF-Token/Accept）
+    以 key=value 形式追加到 query 末尾，使不同 session/Referer 不串缓存。
     """
     parsed = urlparse(url)
     # 合并 url 自带 query 与 params（params 优先，覆盖同名）
@@ -49,9 +67,32 @@ def _canonical_url(url: str, params: dict | None = None) -> str:
     if params:
         for k, v in params.items():
             merged[k] = [str(v)]
+    # 影响响应的请求头作为附属 key 片段（前缀 __h_ 避免与真实 query 冲突）
+    if header_key_parts:
+        for k, v in header_key_parts.items():
+            merged[f"__h_{k.lower()}"] = [str(v)]
     # 规范 query：按 key 排序，标准 urlencoding
     sorted_query = urlencode(sorted(merged.items()), doseq=True)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", sorted_query, ""))
+
+
+def _filtered_client_headers(client_headers: dict | None) -> dict:
+    """从客户端请求头提取白名单内的透传头（值规范化去空）。
+
+    返回 {header: value}（header 名规范化为白名单中的形式）；
+    User-Agent 缺失时填默认。大小写不敏感匹配（HTTP 头名大小写无关）。
+    """
+    if not client_headers:
+        return {"User-Agent": _DEFAULT_UA}
+    # 构建小写名 → 原始名 的白名单查找表，实现大小写不敏感匹配
+    allow_lower = {h.lower(): h for h in UPSTREAM_HEADER_ALLOWLIST}
+    out: dict[str, str] = {}
+    for name, value in client_headers.items():
+        canonical = allow_lower.get(name.lower())
+        if canonical and value:
+            out[canonical] = value
+    out.setdefault("User-Agent", _DEFAULT_UA)
+    return out
 
 
 # ── 令牌桶：按域名组，全局串行限流 ─────────────────────────────
@@ -330,7 +371,8 @@ class Gateway:
             f.write(json.dumps(rec, ensure_ascii=False) + "\n")
 
     # ── 核心请求处理 ──
-    def handle(self, target_url: str, params: dict, tier_header: Optional[str]) -> tuple[int, bytes, dict]:
+    def handle(self, target_url: str, params: dict, tier_header: Optional[str],
+               client_headers: dict | None = None) -> tuple[int, bytes, dict]:
         parsed = urlparse(target_url)
         host = parsed.netloc
         group = self.group_of(host)
@@ -342,9 +384,15 @@ class Gateway:
         tier = tier_header if tier_header in ("P", "L", "S", "R", "N") else self.fallback_tier(parsed.path)
         ttl = self.ttl_for_tier(tier)
 
-        # 缓存 key = tier + canonical URL（含合并后的 query）
+        # 透传给上游的白名单请求头
+        fwd_headers = _filtered_client_headers(client_headers)
+        # 影响响应的请求头纳入 cache key，避免不同 Referer/Cookie 串缓存
+        header_key_parts = {k: v for k, v in fwd_headers.items()
+                            if k in RESPONSE_AFFECTING_HEADERS}
+
+        # 缓存 key = tier + canonical URL（含合并后的 query + 影响响应的头）
         # 必须含 params，否则不同股票/日期/页码会串缓存
-        cache_key = f"{tier}|{_canonical_url(target_url, params)}"
+        cache_key = f"{tier}|{_canonical_url(target_url, params, header_key_parts)}"
         cached = self.cache.get(cache_key) if ttl > 0 else None
         if cached:
             body, headers = cached
@@ -365,12 +413,11 @@ class Gateway:
         bucket.acquire()
         self.group_reqs[group] += 1
 
-        # 请求外网（params 由 requests.get 的 params 参数转发）
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
+        # 请求外网（params 由 requests.get 的 params 参数转发，headers 用白名单透传）
         last_err = None
         for attempt in range(3):
             try:
-                r = requests.get(target_url, params=params, headers=headers, timeout=15)
+                r = requests.get(target_url, params=params, headers=fwd_headers, timeout=15)
                 if r.status_code == 403:
                     # 风控信号，不重试（§3.5）
                     self.group_errs[group] += 1
@@ -441,8 +488,10 @@ def make_handler(gateway: Gateway):
             # u 之后的参数都是要转发给上游的
             params = {k: v[0] for k, v in qs.items() if k != "u"}
             tier = self.headers.get("X-Cache-Tier")
+            # 客户端请求头（白名单内的会透传到上游）
+            client_headers = {k: v for k, v in self.headers.items()}
 
-            status, body, headers = gateway.handle(target_url, params, tier)
+            status, body, headers = gateway.handle(target_url, params, tier, client_headers)
             self.send_response(status)
             for k, v in headers.items():
                 self.send_header(k, v)
