@@ -10,6 +10,7 @@ dependencies = [
     "mini-racer>=0.14.1",
     "pandas>=2.0",
     "openpyxl>=3.1",
+    "curl-cffi>=0.15.0",
 ]
 
 [project.scripts]

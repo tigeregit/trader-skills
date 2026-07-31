@@ -23,8 +23,12 @@ print(q["600519"])  # {name, price, pe_ttm, pb, mcap_yi(亿), turnover_pct, limi
 
 # 带均线的日K（日K首选，mootdx_bars 有兼容问题）
 bk = baidu_kline_with_ma("600519")
-print(bk["keys"])   # [time, open, close, high, low, volume, ma5avgprice, ...]
+print(bk["keys"])   # [timestamp, time, open, close, volume, high, low, ..., ma5avgprice, ...]
 print(bk["rows"][-5:])  # 最近5根
+
+# rows 是与 keys 对应的 CSV 字符串；先 zip 再按字段取值
+latest = dict(zip(bk["keys"], bk["rows"][-1].split(",")))
+print(latest["time"], latest["close"], latest["ma5avgprice"])
 ```
 
 ## 注意
