@@ -48,7 +48,7 @@
 | P1 | scripts 共享库 | asgk 15模块43函数 | ✅ |
 | P2 | references 拆分 | references/ 12文件 | ✅ |
 | P3 | SKILL.md 路由层 | SKILL.md 92行 | ✅ |
-| P4 | 集成测试 | test-method.md + testing.md | ✅ L1完成/L2待做 |
+| P4 | 集成测试 | test-method.md + testing.md | ✅ L1/L2 完成（真实源仅串行 canary） |
 
 ## 六、与上游的关系
 
