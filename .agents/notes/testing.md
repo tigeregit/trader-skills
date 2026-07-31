@@ -40,11 +40,12 @@ cache-only、敏感字段白名单及单次尝试配置。所有上游均为 moc
 “融资融券交易明细”，维度 1×1，唯一单元格为“证券代码”；因此传输和空集解析
 通过，但该次 canary **没有证明非空明细解析**，且受总预算约束未更换日期重试。
 
-pi 使用 `openai-codex/gpt-5.6-luna`：macOS agent 返回同一 100 条研报，缓存
-hits +1 且 eastmoney 出网仍为 1。`iamsbb2` 的 pi 无 Codex 凭据，未复制本机
-OAuth；改由本机 Luna agent 通过 SSH 在 Linux 执行已预热的同花顺调用，远端
-cache hits 从 1 增至 2，10jqka 出网仍为 1。该 agent 的最终文本为空，因此只
-确认了 Linux 调用与缓存路径，未确认远端 pi 自身的模型认证和文本呈现。
+pi 按主机分别选用可用模型：macOS 使用 `openai-codex/gpt-5.6-luna`，返回同一
+100 条研报，cache hits +1 且 eastmoney 出网仍为 1。`iamsbb2` 不要求 GPT，
+原生使用 `ark-coding/glm-5.2`；模型连通返回 `glm-ok`，随后加载 skill 并只运行
+`test_chip.py` 与 `test_em_proxy.py`，JSON 事件记录确认唯一 bash tool call，结果
+`10 passed in 0.41s`，无失败、错误或跳过。该 Linux 验证全程离线，没有增加
+家庭 IP 的真实上游请求。
 
 ### Linux x64 依赖与百度 K 线
 
