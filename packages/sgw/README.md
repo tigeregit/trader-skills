@@ -18,6 +18,8 @@ agent (×1000)                         外网
 - **五档缓存**：静态数据(P档30天) / 日级(S档) / 实时(R档不缓存)，1000 agent 查同一票只打 1 次外网
 - **并发 miss 合并**：同一缓存身份的并发调用只允许一个 leader 出网，R/N 档也会复用同一时刻的结果
 - **家庭 IP 熔断**：首次 403/429 立即关闭整个来源，冷却期只读缓存，结束后仅放行一个 canary
+- **熔断跨重启**：SQLite 主库保存各来源状态；canary 出网前持久化 120 秒探针租约，重启不能绕过熔断
+- **状态库安全闩**：状态介质异常时只读缓存，按 10m/30m/1h/6h/12h/24h 探测存储恢复，不探测真实上游
 - **凭据隔离**：公共响应不按 Cookie/CSRF/Referer 分裂缓存；敏感头和策略标注的敏感 query 不写缓存键、SQLite、指纹日志
 - **P/L 档磁盘持久化**：研报/财报/分红等静态/季度数据落 SQLite，网关重启后恢复，冷启动不重打外网
 - **透明代理**：经网关 = 直连，响应字节完全一致
@@ -35,7 +37,7 @@ uv sync
 ## 启动
 
 ```bash
-# 默认（端口 7700，指纹日志写到 sgw/logs/，磁盘缓存 sgw/cache/）
+# 默认（端口 7700，运行时文件写入包内 logs/cache/state）
 uv run sgw-proxy
 
 # 指定端口
@@ -46,6 +48,9 @@ uv run sgw-proxy --fp-dir /var/log/sgw
 
 # 生产环境：指定磁盘缓存目录（P/L 档持久化，sgw_cache.db）
 uv run sgw-proxy --cache-dir /var/lib/sgw
+
+# 生产环境：熔断状态必须写到独立、持久、权限受控的目录
+uv run sgw-proxy --state-dir /var/lib/sgw/state
 
 # 指定配置文件
 uv run sgw-proxy -c /path/to/config.toml
@@ -108,6 +113,16 @@ R_ttl = 0              # 实时: no-cache
 enabled = true
 dir = "cache"          # 相对包目录；生产用 --cache-dir 覆盖
 tiers = ["P", "L"]     # 仅持久化这两档（S 盘中易脏、R/N 不缓存）
+
+[circuit]
+cooldown_seconds = 300
+failure_threshold = 3
+probe_lease_seconds = 120
+
+[state]
+enabled = true
+dir = "state"          # 生产用 --state-dir 覆盖
+backoff_seconds = [600, 1800, 3600, 21600, 43200, 86400]
 ```
 
 ## 观测
@@ -117,7 +132,10 @@ tiers = ["P", "L"]     # 仅持久化这两档（S 盘中易脏、R/N 不缓存�
 curl -s http://127.0.0.1:7700/__stats | python3 -m json.tool
 ```
 
-`/__stats` 还返回 `singleflight_followers` 和各来源的 `circuits` 状态，以及内存/磁盘缓存、限流等待和错误计数。
+`/__stats` 还返回 `singleflight_followers`、各来源的 `circuits` 和
+`state_safety`（异常起止时间、退避档、下次存储探测时间），以及内存/磁盘缓存、
+限流等待和错误计数。状态文件只保存组名、截止时间、计数和状态码，不保存 URL、
+Cookie 或 CSRF。
 
 响应头 `X-Cache` 区分命中来源：`HIT-MEM`（内存命中）/ `HIT-DISK`（磁盘命中，已回填内存）/ `MISS`（打外网）。
 
@@ -137,7 +155,8 @@ curl -s -D - -H "X-Cache-Tier: P" \
 # 重启网关后同请求 -> X-Cache: HIT-DISK；/__stats 可见 disk_load_count>0
 
 # 1000 并发、熔断和凭据验证只使用 mock 上游，禁止用家庭 IP 做真实压测
-uv run pytest tests/test_policy.py tests/test_endpoint_inventory.py -q
+uv run pytest tests/test_policy.py tests/test_endpoint_inventory.py \
+  tests/test_circuit_state.py -q
 ```
 
 `test_endpoint_inventory.py` 静态扫描 asgk 内所有 `em_get` URL，必须与

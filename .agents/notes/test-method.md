@@ -167,12 +167,16 @@ pi run --extension parallel-agents -p "对 600519 做快速调研：估值 + 北
 ```bash
 uv run --project packages/sgw pytest \
   packages/sgw/tests/test_policy.py \
-  packages/sgw/tests/test_endpoint_inventory.py -q
+  packages/sgw/tests/test_endpoint_inventory.py \
+  packages/sgw/tests/test_circuit_state.py -q
 ```
 
 固定验收：1000 个相同冷请求最多一次模拟出网；首次模拟 403/429 后，冷却期
 不再调用上游；凭据不进入缓存键、SQLite 或指纹日志；未配置网关时不直连；
 所有内部 `em_get` URL 必须唯一匹配 approved 端点政策，且不得有孤儿政策。
+熔断状态和累计 5xx 必须跨重启保留；状态介质异常严格按
+10m/30m/1h/6h/12h/24h 退避，1000 并发只运行一个存储探测，等待期缓存可读且
+冷 miss 的模拟外网调用数为 0。
 真实来源只允许单请求、低频、人工触发的 canary，禁止用来寻找封禁阈值。
 
 ### 历史 locust 方案（禁止对真实来源执行）

@@ -316,20 +316,46 @@ tiers = ["P", "L"]
 ```
 CLI `--cache-dir` 覆盖 `dir`（仿 `--fp-dir`）。db 默认 `packages/sgw/sgw/cache/sgw_cache.db`。
 
-**观测**：`/__stats` 增加 `disk_cache`（size/hits/misses）、`disk_load_count`/`disk_load_ms`（启动回填条目数与耗时）。详见 §3.6。
+**观测**：`/__stats` 增加 `disk_cache`（size/hits/misses）、`disk_load_count`/`disk_load_ms`（启动回填条目数与耗时）。详见 §3.7。
 
 **关停**：`main()` 在 `server.shutdown()` 前关闭 db 连接；新增 `SIGTERM` handler 走同一关停路径（原仅 `KeyboardInterrupt`，`kill` 会丢连接）。
 
 **tier bug 关联**：实施时发现 `capital.dividend_history`（`@source` 标 P）与 `holder_num_change`（标 L）经 `_datacenter` 调用时未传 tier，被默认值 `S` 覆盖，运行时实际走 S 档--既与声明不符，也使二者无法落 P/L 磁盘档。已一并修复（显式传 `tier='P'/'L'`）。
 
-### 3.5 retry / 降级
+### 3.5 熔断状态持久化与状态库安全闩
+
+熔断状态独立于 P/L 响应缓存，写入 `sgw_state.db`；每个来源只保存
+`open_until`、`probe_until`、失败/开启次数和最后状态码。安全标记
+`sgw_safety_latch.json` 采用临时文件、`fsync`、原子替换和 `0600` 权限。
+两者均不接受 URL、请求头、Cookie 或 CSRF 字段。
+
+每次状态变更按“安全标记 waiting → SQLite 事务 → 安全标记 recovered”写入。
+熔断冷却到期时，必须先持久化 120 秒 `probe_until` 租约，才允许一个真实
+canary 出网；若进程在响应前退出，新进程仍会在租约内保持只读缓存。
+
+状态库或安全标记单一异常后，所有受控来源进入 cache-only，并记录
+`first_failure_at`、`last_failure_at`、`backoff_stage`、`next_probe_at`。
+恢复探测只对状态存储做事务写入/读回/删除，不访问任何上游。连续失败依次等待：
+
+```
+10 分钟 → 30 分钟 → 1 小时 → 6 小时 → 12 小时 → 24 小时
+```
+
+达到 24 小时后保持该上限。任一次存储探测成功即恢复；1000 个同时到达的请求
+只允许一个执行到期探测。SQLite 与安全标记同时损坏时直接进入 24 小时档。
+缓存查找发生在安全闩之前，因此已有缓存仍可读，冷 miss 明确返回 503。
+
+生产部署必须用 `--state-dir` 指向持久、权限受控的目录；包内相对目录只适合开发。
+
+### 3.6 retry / 降级
 - 403/429：不重试，立即打开整个来源的熔断器；冷却期只读缓存。
 - 5xx/请求异常：受全局失败预算约束，达到阈值后熔断；每次重试仍经过全局限流。
 - 网关不可用或来源熔断：明确失败，禁止自动切回家庭 IP 直连。
+- 真实部署 canary 使用临时配置 `[retry] max_attempts = 1`，总预算另行控制。
 
-### 3.6 观测
+### 3.7 观测
 两类观测：
-- **计数器**（实时）：每组请求数/缓存命中数/限流等待数/错误数/磁盘缓存。`GET /__stats` 暴露 JSON，供 `test-method.md` 的 L2 压测采集。字段：`cache`（内存 size/hits/misses）、`disk_cache`（磁盘 size/hits/misses，未启用为 null）、`disk_load_count`/`disk_load_ms`（启动回填条目数与耗时，§3.4.8）。响应头 `X-Cache` 区分 `HIT-MEM`/`HIT-DISK`/`MISS`。
+- **计数器**（实时）：每组请求数/缓存命中数/限流等待数/错误数/磁盘缓存。`GET /__stats` 暴露 JSON，供 `test-method.md` 的 L2 压测采集。字段：`cache`（内存 size/hits/misses）、`disk_cache`（磁盘 size/hits/misses，未启用为 null）、`disk_load_count`/`disk_load_ms`（启动回填条目数与耗时，§3.4.8）、`state_safety`（状态介质健康、异常时间与退避档）。响应头 `X-Cache` 区分 `HIT-MEM`/`HIT-DISK`/`MISS`。
 - **响应指纹日志**（积累用）：每个请求记一条 §3.4.7 的结构化日志（key/tier/resp_hash/session/changed），落盘为 jsonl。P0 阶段开启记录、不做分析；P4 压测后离线分析产出分档修正表。日志需定期轮转避免膨胀。
 
 ## 四、Skill CLI 接入设计（asgk）
