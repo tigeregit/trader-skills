@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import stat
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -318,6 +319,10 @@ class TestStateFailureSafety:
         )
         assert all(secret.encode() not in persisted for secret in secrets)
         marker = json.loads((tmp_path / "sgw_safety_latch.json").read_text())
+        assert stat.S_IMODE((tmp_path / "sgw_state.db").stat().st_mode) == 0o600
+        assert stat.S_IMODE(
+            (tmp_path / "sgw_safety_latch.json").stat().st_mode
+        ) == 0o600
         assert set(marker["circuits"]) == {"eastmoney"}
         assert set(marker["circuits"]["eastmoney"]) == {
             "open_until", "probe_until", "failures", "opens", "last_status",

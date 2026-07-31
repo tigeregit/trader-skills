@@ -304,8 +304,9 @@ class CircuitStateStore:
 
     def __init__(self, db_path: Path):
         self.db_path = db_path
-        db_path.parent.mkdir(parents=True, exist_ok=True)
+        db_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        os.chmod(db_path, 0o600)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA synchronous=FULL")
         self._conn.executescript(self.SCHEMA)
