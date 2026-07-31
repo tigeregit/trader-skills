@@ -16,8 +16,17 @@ from asgk.signal import (
 )
 from asgk.capital import (
     margin_trading, block_trade, holder_num_change,
-    dividend_history, stock_fund_flow_120d,
+    dividend_history, stock_fund_flow_120d, margin_detail_szse,
 )
+from asgk.earning import earning_forecast, earning_express
+from asgk.risk_event import mgmt_trade, repurchase, institute_research
+from asgk.pool_filter import pledge_ratio, goodwill
+from asgk.holders import (
+    top10_holders, top10_free_holders, holder_change, holder_teamwork,
+)
+from asgk.board import board_constituents
+from asgk.chip import chip_distribution
+from asgk.valuation_hist import market_pe_lg, market_pb_lg
 from asgk.news import eastmoney_stock_news, cls_telegraph, eastmoney_global_news
 from asgk.client import tdx_client
 from asgk.base import mootdx_finance, mootdx_f10, eastmoney_stock_info, sina_financial_report
@@ -44,7 +53,21 @@ __all__ = [
     "industry_comparison", "daily_dragon_tiger",
     # 资金面
     "margin_trading", "block_trade", "holder_num_change",
-    "dividend_history", "stock_fund_flow_120d",
+    "dividend_history", "stock_fund_flow_120d", "margin_detail_szse",
+    # 业绩层
+    "earning_forecast", "earning_express",
+    # 事件层
+    "mgmt_trade", "repurchase", "institute_research",
+    # 风险/筛选层
+    "pledge_ratio", "goodwill",
+    # 股东层
+    "top10_holders", "top10_free_holders", "holder_change", "holder_teamwork",
+    # 板块层
+    "board_constituents",
+    # 筹码层
+    "chip_distribution",
+    # 估值历史层
+    "market_pe_lg", "market_pb_lg",
     # 新闻层
     "eastmoney_stock_news", "cls_telegraph", "eastmoney_global_news",
     # 基础数据

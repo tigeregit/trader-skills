@@ -10,6 +10,7 @@
 |------|-------------|-------------|
 | 龙虎榜 | 东财 datacenter | 沪深交易所官方(sse/szse) |
 | 资金流 | 东财 push2his | 新浪(日度) |
+| 融资融券 | 东财 `margin_trading`(datacenter) | **深交所官方 `margin_detail_szse`(已实现)** |
 | 公告 | 东财 | 巨潮 cninfo(本项目主源即巨潮) |
 | 实时价 | 东财 push2 | 腾讯 qt.gtimg.cn / mootdx TCP |
 | K线 | 东财/百度 | mootdx TCP / 腾讯 |

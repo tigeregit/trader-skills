@@ -1,3 +1,6 @@
 [submodule "ref/a-stock-data"]
 	path = ref/a-stock-data
 	url = https://github.com/simonlin1212/a-stock-data.git
+[submodule "ref/akshare"]
+	path = ref/akshare
+	url = https://gitclone.com/github.com/akfamily/akshare.git

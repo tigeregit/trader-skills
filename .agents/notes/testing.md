@@ -1,8 +1,108 @@
 # 测试操作手册
 
-本项目测试的操作指南。方法论见 `test-method.md`（pi + locust 双层策略），本文件是可直接执行的命令手册。
+本项目测试的操作指南。方法论见 `test-method.md`（pi + mock/replay
+双层策略），本文件是可直接执行的命令手册。
 
 > 所有命令基于 uv。前置：`cd skills/a-stock-data/scripts && uv sync`。
+
+---
+
+## 已验证基线（2026-08-01）
+
+### P1 熔断状态与双平台有限验证
+
+验证提交 `f287499`。两平台均先执行 frozen sync，再运行完整离线套件；
+“跨平台”只表示以下两个 OS/架构组合，不外推到其他系统。
+
+| 项目 | macOS 本机 | `iamsbb2` |
+|---|---|---|
+| 系统 / 架构 | macOS 26.5.1 / ARM64 | Ubuntu 24.04.4 / Linux x86_64 |
+| Python / uv | 3.12.12 / 0.9.27 | 3.13.12 / 0.10.6 |
+| sgw 离线测试 | 74 passed | 74 passed |
+| asgk 离线测试 | 122 passed | 122 passed |
+| 实际进程重启 | 两次 `ready=true`，出网 0 | 两次 `ready=true`，出网 0 |
+| 状态文件权限 | DB/标记均 `0600` | DB/标记均 `0600` |
+
+状态测试包含：403/429 与累计 5xx 跨重启、120 秒 canary 租约、精确
+10m/30m/1h/6h/12h/24h 退避、单介质与双介质损坏、1000 并发单存储探针、
+cache-only、敏感字段白名单及单次尝试配置。所有上游均为 mock。
+
+真实 canary 严格串行，总预算和实际出网均为 3，网关统一使用
+`--max-attempts 1`：
+
+| 次序 / 主机 | 来源 / 调用 | 结果 | 网关证据 |
+|---|---|---|---|
+| 1 / macOS | Eastmoney `eastmoney_reports("600519", 1)` | 100 条；首条 2026-07-23 | eastmoney=1，errors=0 |
+| 2 / Linux | 10jqka `ths_eps_forecast("600519")` | 3 条；2026 EPS 均值 68.7 | 10jqka=1，errors=0 |
+| 3 / Linux | SZSE `margin_detail_szse("20260731")` | 合法 XLSX，但仅表头、0 条 | exchange=1，errors=0 |
+
+三次均无 403/429、验证码、重试或熔断。SZSE 响应为 3638 字节，工作表名
+“融资融券交易明细”，维度 1×1，唯一单元格为“证券代码”；因此传输和空集解析
+通过。该次真实 canary 本身没有非空记录，且受总预算约束未更换日期重试；非空
+解析由离线两行 XLSX fixture 补齐：公开函数只调用一次 mock `em_get`，保留
+`000001`/`000002` 前导零，并验证融资/融券全部六个数值字段。该 fixture 在
+macOS ARM64 与 Linux x86_64 上均为 `12 passed`，真实上游请求为 0。
+
+pi 按主机分别选用可用模型：macOS 使用 `openai-codex/gpt-5.6-luna`，返回同一
+100 条研报，cache hits +1 且 eastmoney 出网仍为 1。`iamsbb2` 不要求 GPT，
+原生使用 `ark-coding/glm-5.2`；模型连通返回 `glm-ok`，随后加载 skill 并只运行
+`test_chip.py` 与 `test_em_proxy.py`，JSON 事件记录确认唯一 bash tool call，结果
+`10 passed in 0.41s`，无失败、错误或跳过。该 Linux 验证全程离线，没有增加
+家庭 IP 的真实上游请求。
+
+在上述两个基线 agent 之上继续补齐 8 个并行离线 agent，总数达到 10。每个
+agent 只开放 bash 工具、只执行指定 pytest 文件；新增运行没有启动网关或真实
+行情请求：
+
+| Agent | 主机 / 模型 | 覆盖 | 结果 |
+|---|---|---|---|
+| 1 | macOS / Luna | 预热 Eastmoney 研报缓存 | 100 条，cache hit |
+| 2 | Linux / GLM-5.2 | chip + em_proxy | 10 passed |
+| 3 | macOS / Luna | quote | 4 passed |
+| 4 | macOS / Luna | limitup + pool_filter | 14 passed |
+| 5 | macOS / Luna | datacenter + margin_szse | 27 passed |
+| 6 | macOS / Luna | board + risk_event | 24 passed |
+| 7 | Linux / GLM-5.2 | earning | 12 passed |
+| 8 | Linux / GLM-5.2 | holders | 19 passed |
+| 9 | Linux / GLM-5.2 | valuation_hist | 12 passed |
+| 10 | Linux / GLM-5.2 | quote | 4 passed |
+
+新增 8 个 agent 合计 116 个用例全部通过。这里验证的是两种 OS/架构上的 skill
+触发、工具调用和 mock 功能路径；100～1000 agent 的规模保护仍由 L2 mock 的
+single-flight、熔断与状态探针测试覆盖，禁止用真实来源做并发验证。
+
+### Linux x64 依赖与百度 K 线
+
+在 `iamsbb2` 上对提交 `e3b961e` 执行依赖安装和单次真实 canary，
+快进到 `65ddf8a` 后重跑最终离线测试：
+
+```bash
+cd ~/Documents/trader-skills/skills/a-stock-data/scripts
+~/.local/bin/uv sync --frozen
+~/.local/bin/uv run pytest asgk/tests -q
+```
+
+| 项目 | 结果 |
+|---|---|
+| 系统 | Ubuntu 24.04 / Linux 7.0.0-28-generic / x86_64 |
+| Python / uv | Python 3.13.12 / uv 0.10.6 |
+| 原生依赖 | `curl-cffi 0.15.0` + `mini-racer 0.14.1` 安装成功 |
+| sgw 完整测试（当时基线） | 62 passed |
+| asgk 完整测试 | 122 passed |
+| 百度真实 canary | 600519：18 字段 / 2001 行 / 2018-05-07～2026-07-31 / MA5、10、20 齐全 |
+
+百度 canary 仅串行请求一次，未重试、未并发。
+
+### 端点库存 CI
+
+```bash
+uv run --frozen --project packages/sgw pytest \
+  packages/sgw/tests/test_endpoint_inventory.py -q
+```
+
+结果：25 个 `em_get` 调用 URL 模式全部可静态解析，完整覆盖
+22 个 approved 端点政策；无未分类调用、无孤儿政策。GitHub Actions
+`.github/workflows/endpoint-inventory.yml` 在 push / pull request 时自动执行。
 
 ---
 
@@ -66,7 +166,8 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
 ### A6. 禁止直连保护
 
 ```bash
-unset ASGK_GW ASGK_ALLOW_DIRECT
+unset ASGK_GW
+export ASGK_ALLOW_DIRECT=1  # 模拟部署环境残留的旧变量，当前必须无效
 ASGK_ENV=/dev/null uv run python -c "
 from asgk import em_get
 try:
@@ -80,22 +181,8 @@ except RuntimeError as e:
 
 ### A7. 透明性（字节级一致）
 
-```bash
-uv run python -c "
-import requests, concurrent.futures
-GW='http://127.0.0.1:7700'
-RPT='https://reportapi.eastmoney.com/report/list'
-P={'industryCode':'*','pageSize':'3','industry':'*','rating':'*','ratingChange':'*','beginTime':'2000-01-01','endTime':'2030-01-01','pageNo':'1','qType':'0','code':'600519','p':'1','pageNum':'1','pageNumber':'1','fields':''}
-H={'User-Agent':'Mozilla/5.0','Referer':'https://data.eastmoney.com/'}
-def direct(): return requests.get(RPT, params=P, headers=H, timeout=15).content
-def via_gw(): return requests.get(GW, params={'u':RPT,**P}, headers={'X-Cache-Tier':'R',**H}, timeout=15).content
-with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-    fd, fg = ex.submit(direct), ex.submit(via_gw)
-    d, g = fd.result(), fg.result()
-print(f'静态研报: 直连{len(d)}B 网关{len(g)}B 一致={d==g}')
-"
-```
-✅ `一致=True`
+禁止为了透明性验证从家庭 IP 直连风控源。改用 mock 响应验证 URL、请求头和响应
+字节转发，覆盖见 `packages/sgw/tests/test_cachekey.py`、`test_headers.py`。
 
 ### A8. 磁盘持久化（P/L 档，§3.4.8）
 
@@ -236,9 +323,19 @@ pi --provider ark-coding --model ark-coding/glm-5.2 \
 
 ---
 
-## Part C：L2 locust 压测（网关限流/缓存量化）
+## Part C：L2 mock/replay 压测
 
-纯 HTTP 压测网关，不依赖 LLM。**安全兜底**：打的是网关(localhost)，网关全局限流(≤1req/s)+缓存保证外网请求受控。
+```bash
+uv run --project packages/sgw pytest packages/sgw/tests/test_policy.py -q
+```
+
+该测试包含 1000 并发同键请求、凭据落盘扫描以及 403/429 熔断验证，mock
+`requests.get`，不会访问真实来源。
+
+### 历史 locust 步骤（禁止对真实来源执行）
+
+以下步骤只作为历史记录。即使入口是 localhost，网关仍会访问真实上游，因此不能
+把“有限流”当作压测安全保证。若复用脚本，必须将上游替换为离线 replay server。
 
 ### C1. 创建压测脚本
 
@@ -305,9 +402,9 @@ pkill -f sgw-proxy 2>/dev/null
 |------|---------|---------|
 | A 网关 | A5 限流 | 完成时刻递增（间隔≈1s） |
 | A 网关 | A6 禁止直连 | 未设网关时抛异常 |
-| A 网关 | A7 透明性 | 经网关=直连，字节一致 |
+| A 网关 | A7 透明性 | mock 上游下 URL/headers/body 转发一致 |
 | A 网关 | A8 磁盘持久化 | 重启后 HIT-MEM 且 em_reqs=0，disk_load_count>0 |
 | **B agent** | **B3 端到端** | **真实数据 + 正确分流** |
 | **B agent** | **B4 网关** | **东财外网 > 0** |
 | B agent | B7 glm-5.2 | 先修 developer role 坑，连通+取数正常 |
-| **C 压测** | **C3 安全** | **300并发外网<100，缓存命中>>外网** |
+| **C 压测** | **mock/replay** | **1000同键并发最多1次模拟出网；真实外网=0** |

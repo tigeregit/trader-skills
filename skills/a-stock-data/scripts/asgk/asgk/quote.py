@@ -9,11 +9,10 @@
 from __future__ import annotations
 
 import json
-import urllib.error
-import urllib.parse
 import urllib.request
 
 import requests
+from curl_cffi import requests as curl_requests
 
 from asgk._contract import source
 from asgk.client import tdx_client
@@ -147,14 +146,14 @@ def baidu_kline_with_ma(code: str, start_time: str = "") -> dict:
         code: 6位代码（百度自动识别市场）
         start_time: 起始日 "YYYY-MM-DD"，空=全部
     Returns:
-        {keys: [字段名...], rows: ["时间,开,收,高,低,量,额,ma5,ma10,ma20", ...]}
+        {keys: [字段名...], rows: ["时间戳,日期,开盘,收盘,成交量,最高,最低,...", ...]}
+        ``rows`` 中每项是 CSV 字符串，与 ``keys`` 按下标一一对应。
 
     Note:
-        百度通过 TLS 客户端指纹（JA3）识别并拒绝 ``requests``/urllib3 客户端
-        （返回 ``{"ResultCode":"403","Result":[]}``，与 IP 无关）。本函数因此
-        改用标准库 ``urllib``（TLS 指纹不同，百度放行）。若 ``ResultCode != "0"``
-        仍会抛清晰 ``RuntimeError``，而非让 ``Result=[]`` 走到 ``.get`` 触发
-        误导性的 ``AttributeError``。
+        百度会按客户端协议栈画像区分请求。实测 Python ``urllib``
+        即使使用完整 Chrome headers，仍会在 HTTP 200 中返回
+        ``{"ResultCode":"403","Result":[]}``；同 IP、同参数的 curl 协议栈可用。
+        本函数因此使用 ``curl_cffi`` 的 Chrome 协议栈画像。
     """
     params = {"all": "1", "isIndex": "false", "isBk": "false", "isBlock": "false",
               "isFutures": "false", "isStock": "true", "newFormat": "1",
@@ -165,26 +164,37 @@ def baidu_kline_with_ma(code: str, start_time: str = "") -> dict:
 
 
 def _baidu_get(params: dict) -> dict:
-    """用标准库 urllib 请求百度股市通接口（规避 requests 的 TLS 指纹被识别）。
-
-    百度对该端点做 JA3 指纹风控：``requests``/urllib3 的 TLS 握手会被识别并
-    返回 ``ResultCode=403``（与 IP/header/频率无关，同一时刻 curl/urllib 可通）。
-    故此处刻意不用 ``requests``，改用标准库 ``urllib``。
-    """
-    url = "https://finance.pae.baidu.com/selfselect/getstockquotation?" + urllib.parse.urlencode(params)
-    req = urllib.request.Request(url, headers={
-        "User-Agent": "Mozilla/5.0",
+    """使用可复现的 Chrome 协议栈画像请求百度股市通接口。"""
+    url = "https://finance.pae.baidu.com/selfselect/getstockquotation"
+    headers = {
         "Accept": "application/vnd.finance-web.v1+json",
         "Origin": "https://gushitong.baidu.com",
         "Referer": "https://gushitong.baidu.com/",
-    })
+    }
     try:
-        with urllib.request.urlopen(req, timeout=10) as resp:
-            return json.loads(resp.read().decode("utf-8"))
-    except urllib.error.HTTPError as e:
-        # HTTP 错误也按风控/异常返回结构包装，统一进 _parse_baidu_kline 的错误分支
-        return {"ResultCode": str(e.code), "Result": [],
-                "_http_error": f"{type(e).__name__}: {e}"}
+        response = curl_requests.get(
+            url,
+            params=params,
+            headers=headers,
+            impersonate="chrome",
+            timeout=10,
+        )
+    except curl_requests.RequestsError as exc:
+        # 不把异常原文带回调用方，避免未来查询参数含敏感信息时泄漏 URL。
+        raise RuntimeError(f"百度 K 线请求失败：{type(exc).__name__}") from exc
+
+    try:
+        data = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"百度 K 线返回非 JSON 响应（HTTP {response.status_code}）"
+        ) from exc
+    if not isinstance(data, dict):
+        raise RuntimeError(
+            f"百度 K 线返回异常结构（HTTP {response.status_code}）"
+        )
+    data["_asgk_http_status"] = response.status_code
+    return data
 
 
 def _parse_baidu_kline(d: dict, code: str) -> dict:
@@ -193,18 +203,22 @@ def _parse_baidu_kline(d: dict, code: str) -> dict:
     百度 observed 返回形态：
       - 正常: {"ResultCode":"0", "Result":{"newMarketData":{"keys":[英文...], "headers":[中文...], "marketData":"..."}}}
         （keys 与 headers 同长度，前者英文字段名后者中文；本函数取 keys）
-      - 风控: {"ResultCode":"403", "Result":[]}  ← 客户端 TLS 指纹被识别（非 IP 问题）
+      - 风控: {"ResultCode":"403", "Result":[]}  ← 客户端协议栈画像被拒绝
       - 其它非 0 ResultCode 也按错误处理。
     """
     code_str = str(d.get("ResultCode", ""))
     result = d.get("Result")
+    http_status = d.get("_asgk_http_status")
 
-    # 风控/异常：ResultCode != "0"，或 Result 非 dict（被拒时常为 []）
-    if code_str != "0" or not isinstance(result, dict):
+    # 风控/异常：HTTP 非 200、ResultCode != "0"，或 Result 非 dict。
+    if http_status not in (None, 200) or code_str != "0" or not isinstance(result, dict):
+        transport = f"HTTP {http_status}" if http_status is not None else "HTTP 状态未知"
         if code_str == "403":
-            hint = "百度拒绝访问（TLS 指纹/JA3 风控，与 IP 无关）"
-            advice = ("若已用 urllib 仍 403，可能百度升级了指纹检测，"
-                      "考虑改用 curl_cffi(impersonate='chrome')")
+            hint = f"百度拒绝访问（{transport}，业务码 ResultCode=403）"
+            advice = "检查 curl_cffi Chrome profile 是否可用，并做单次低频验证"
+        elif http_status not in (None, 200):
+            hint = f"百度返回 HTTP {http_status}（业务码 ResultCode={code_str or '缺失'}）"
+            advice = "检查网络和上游状态，不要并发重试"
         elif not code_str:
             hint = "百度返回缺少 ResultCode"
             advice = "检查网络/接口是否变更"
@@ -213,7 +227,8 @@ def _parse_baidu_kline(d: dict, code: str) -> dict:
             advice = "可稍后重试，或改用其它日K源（注意 mootdx_bars 0.11.7 亦不可用）"
         raise RuntimeError(
             f"baidu_kline_with_ma({code!r}) 取数失败: {hint}。"
-            f"原始返回 ResultCode={code_str!r}, Result 类型={type(result).__name__}。"
+            f"原始返回 HTTP={http_status!r}, ResultCode={code_str!r}, "
+            f"Result 类型={type(result).__name__}。"
             f"建议：{advice}。"
         )
 

@@ -10,11 +10,17 @@ agent (×1000)                         外网
    └─► localhost:7700 (sgw) ──────────►  eastmoney.com / 10jqka.com.cn
             │  全局令牌桶限流(≤1 req/s)
             │  五档缓存(P/L/S/R/N)
-            │  403不重试 / 429退避
+            │  同请求合并 / 403、429立即熔断
 ```
 
 - **全局限流**：按域名组令牌桶（东财组 ≤1 req/s、同花顺组独立），跨进程生效——无论多少 agent 进程并发，外网出口收敛到一个
+- **端点级失败关闭**：每个允许访问的 host/path 都必须声明准入状态、IP 风险和响应作用域；未登记端点不出网
 - **五档缓存**：静态数据(P档30天) / 日级(S档) / 实时(R档不缓存)，1000 agent 查同一票只打 1 次外网
+- **并发 miss 合并**：同一缓存身份的并发调用只允许一个 leader 出网，R/N 档也会复用同一时刻的结果
+- **家庭 IP 熔断**：首次 403/429 立即关闭整个来源，冷却期只读缓存，结束后仅放行一个 canary
+- **熔断跨重启**：SQLite 主库保存各来源状态；canary 出网前持久化 120 秒探针租约，重启不能绕过熔断
+- **状态库安全闩**：状态介质异常时只读缓存，按 10m/30m/1h/6h/12h/24h 探测存储恢复，不探测真实上游
+- **凭据隔离**：公共响应不按 Cookie/CSRF/Referer 分裂缓存；敏感头和策略标注的敏感 query 不写缓存键、SQLite、指纹日志
 - **P/L 档磁盘持久化**：研报/财报/分红等静态/季度数据落 SQLite，网关重启后恢复，冷启动不重打外网
 - **透明代理**：经网关 = 直连，响应字节完全一致
 - **响应指纹日志**：按天拆分，供离线分析修正分档规则
@@ -31,7 +37,7 @@ uv sync
 ## 启动
 
 ```bash
-# 默认（端口 7700，指纹日志写到 sgw/logs/，磁盘缓存 sgw/cache/）
+# 默认（端口 7700，运行时文件写入包内 logs/cache/state）
 uv run sgw-proxy
 
 # 指定端口
@@ -42,6 +48,12 @@ uv run sgw-proxy --fp-dir /var/log/sgw
 
 # 生产环境：指定磁盘缓存目录（P/L 档持久化，sgw_cache.db）
 uv run sgw-proxy --cache-dir /var/lib/sgw
+
+# 生产环境：熔断状态必须写到独立、持久、权限受控的目录
+uv run sgw-proxy --state-dir /var/lib/sgw/state
+
+# 人工真实 canary：单次尝试，禁止网关自动重试
+uv run sgw-proxy --max-attempts 1
 
 # 指定配置文件
 uv run sgw-proxy -c /path/to/config.toml
@@ -59,7 +71,7 @@ export ASGK_GW=http://127.0.0.1:7700
 echo 'ASGK_GW=http://127.0.0.1:7700' > .env
 ```
 
-> 未设 `ASGK_GW` 时，asgk 的 em_get 会抛异常（禁止风控源直连）。仅调试时设 `ASGK_ALLOW_DIRECT=1` 临时允许直连。
+> 未设 `ASGK_GW` 时，asgk 的 `em_get` 会抛异常。不存在风控源直连 fallback；网关不可用时必须失败关闭。
 
 ## 配置
 
@@ -75,6 +87,17 @@ name = "eastmoney"
 domains = ["push2.eastmoney.com", "datacenter-web.eastmoney.com", ...]  # 12 个子域
 rps = 1.0              # 全局 ≤1 req/s
 jitter = [0.1, 0.5]    # 随机抖动
+
+# 端点策略；未匹配的 host/path 默认 unknown 并拒绝
+[[endpoint]]
+name = "eastmoney-report-list"
+host = "reportapi.eastmoney.com"
+path = "/report/list"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
 
 [[group]]
 name = "10jqka"
@@ -93,6 +116,16 @@ R_ttl = 0              # 实时: no-cache
 enabled = true
 dir = "cache"          # 相对包目录；生产用 --cache-dir 覆盖
 tiers = ["P", "L"]     # 仅持久化这两档（S 盘中易脏、R/N 不缓存）
+
+[circuit]
+cooldown_seconds = 300
+failure_threshold = 3
+probe_lease_seconds = 120
+
+[state]
+enabled = true
+dir = "state"          # 生产用 --state-dir 覆盖
+backoff_seconds = [600, 1800, 3600, 21600, 43200, 86400]
 ```
 
 ## 观测
@@ -102,7 +135,10 @@ tiers = ["P", "L"]     # 仅持久化这两档（S 盘中易脏、R/N 不缓存�
 curl -s http://127.0.0.1:7700/__stats | python3 -m json.tool
 ```
 
-`/__stats` 返回字段：`cache`（内存缓存 size/hits/misses）、`disk_cache`（磁盘缓存 size/hits/misses，未启用为 null）、`disk_load_count`/`disk_load_ms`（启动时从磁盘回填的条目数与耗时）。
+`/__stats` 还返回 `singleflight_followers`、各来源的 `circuits` 和
+`state_safety`（异常起止时间、退避档、下次存储探测时间），以及内存/磁盘缓存、
+限流等待和错误计数。状态文件只保存组名、截止时间、计数和状态码，不保存 URL、
+Cookie 或 CSRF。
 
 响应头 `X-Cache` 区分命中来源：`HIT-MEM`（内存命中）/ `HIT-DISK`（磁盘命中，已回填内存）/ `MISS`（打外网）。
 
@@ -121,17 +157,13 @@ curl -s -D - -H "X-Cache-Tier: P" \
   "http://127.0.0.1:7700/?u=$URL&pageSize=1&industryCode=*&fields=f11" -o /dev/null | grep X-Cache  # MISS
 # 重启网关后同请求 -> X-Cache: HIT-DISK；/__stats 可见 disk_load_count>0
 
-# 并发限流（5并发不同标的，完成时刻应递增间隔≈1s）
-uv run python -c "
-import requests, concurrent.futures, time
-t0=time.time()
-def hit(i):
-    requests.get('http://127.0.0.1:7700', params={'u':'https://push2.eastmoney.com/api/qt/slist/get','spt':3,'security_code':['600519','000858','601318','688017','002594'][i],'fields':'f12,f14'}, headers={'X-Cache-Tier':'R'}, timeout=30)
-    return round(time.time()-t0,2)
-with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
-    print('完成时刻:', sorted(ex.map(hit, range(5))))
-"
+# 1000 并发、熔断和凭据验证只使用 mock 上游，禁止用家庭 IP 做真实压测
+uv run pytest tests/test_policy.py tests/test_endpoint_inventory.py \
+  tests/test_circuit_state.py -q
 ```
+
+`test_endpoint_inventory.py` 静态扫描 asgk 内所有 `em_get` URL，必须与
+approved 端点政策双向完整对应。同一检查会在 GitHub Actions 中自动运行。
 
 ## 技术选型
 

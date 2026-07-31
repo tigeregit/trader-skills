@@ -112,6 +112,7 @@ def _make_gateway(cache_dir: str | Path) -> Gateway:
     cfg.setdefault("cache", {})["persist"] = {
         "enabled": True, "dir": str(cache_dir), "tiers": ["P", "L"],
     }
+    cfg["state"] = {"enabled": False}
     return Gateway(cfg, cache_dir_override=str(cache_dir))
 
 
@@ -174,6 +175,7 @@ class TestGatewayPersistence:
         """未启用 persist 时 disk_cache 为 None，stats 中 disk_cache 为 null。"""
         cfg = load_config(Path(__file__).resolve().parent.parent / "sgw" / "config.toml")
         cfg.setdefault("cache", {})["persist"] = {"enabled": False}
+        cfg["state"] = {"enabled": False}
         g = Gateway(cfg)
         assert g.disk_cache is None
         assert g.stats()["disk_cache"] is None
