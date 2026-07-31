@@ -11,7 +11,8 @@
 
 ### Linux x64 依赖与百度 K 线
 
-在 `iamsbb2` 上对提交 `e3b961e` 执行：
+在 `iamsbb2` 上对提交 `e3b961e` 执行依赖安装和单次真实 canary，
+快进到 `65ddf8a` 后重跑最终离线测试：
 
 ```bash
 cd ~/Documents/trader-skills/skills/a-stock-data/scripts
@@ -24,7 +25,8 @@ cd ~/Documents/trader-skills/skills/a-stock-data/scripts
 | 系统 | Ubuntu 24.04 / Linux 7.0.0-28-generic / x86_64 |
 | Python / uv | Python 3.13.12 / uv 0.10.6 |
 | 原生依赖 | `curl-cffi 0.15.0` + `mini-racer 0.14.1` 安装成功 |
-| asgk 完整测试 | 120 passed |
+| sgw 完整测试 | 62 passed |
+| asgk 完整测试 | 122 passed |
 | 百度真实 canary | 600519：18 字段 / 2001 行 / 2018-05-07～2026-07-31 / MA5、10、20 齐全 |
 
 百度 canary 仅串行请求一次，未重试、未并发。
