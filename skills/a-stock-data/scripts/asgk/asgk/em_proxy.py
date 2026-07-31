@@ -9,7 +9,6 @@
 行为：
     - 设了 ASGK_GW → 请求转发到网关（全局限流+缓存），tier 放 X-Cache-Tier 头
     - 没设 ASGK_GW → **默认抛异常**（禁止风控源直连，杜绝忘配网关被封 IP）
-    - 显式设 ASGK_ALLOW_DIRECT=1 → 允许直连（仅调试用，进程内限流作 fallback）
 
 ASGK_GW 的来源（优先级从高到低）：
     1. 环境变量 ASGK_GW（最高，部署时 systemd/container envfile 用这个）
@@ -22,8 +21,6 @@ em_get 只被风控源（东财/同花顺）调用。直连源（腾讯/百度/�
 from __future__ import annotations
 
 import os
-import random
-import time
 from pathlib import Path
 
 import requests
@@ -60,21 +57,8 @@ def _load_dotenv() -> None:
 
 
 _load_dotenv()
-_GW = os.environ.get("ASGK_GW")  # 如 http://127.0.0.1:7700；未设则直连
+_GW = os.environ.get("ASGK_GW")  # 如 http://127.0.0.1:7700；未设则失败关闭
 _TIER_HEADER = "X-Cache-Tier"
-
-# 直连时的进程内限流（仅 fallback 用；走网关时限流在网关侧全局生效）
-_MIN_INTERVAL = 1.0
-_last_call = [0.0]
-
-
-def _direct_throttle():
-    """直连模式下的进程内限流（对齐上游 EM_MIN_INTERVAL）。"""
-    wait = _MIN_INTERVAL - (time.time() - _last_call[0])
-    if wait > 0:
-        time.sleep(wait + random.uniform(0.1, 0.5))
-    _last_call[0] = time.time()
-
 
 def em_get(url: str, params: dict | None = None, headers: dict | None = None,
            timeout: int = 15, tier: str | None = None, **kwargs) -> requests.Response:
@@ -100,14 +84,9 @@ def em_get(url: str, params: dict | None = None, headers: dict | None = None,
             timeout=timeout,
             **kwargs,
         )
-    # 未设网关：默认禁止直连（风控源直连会被封 IP）
-    if os.environ.get("ASGK_ALLOW_DIRECT") != "1":
-        raise RuntimeError(
-            "ASGK_GW 未设置：风控源（东财/同花顺）禁止直连。"
-            "请配置网关地址：设环境变量 ASGK_GW=http://localhost:7700，"
-            "或在项目根创建 .env 文件写入 ASGK_GW=...。"
-            "仅调试时可设 ASGK_ALLOW_DIRECT=1 临时允许直连。"
-        )
-    # 显式允许直连（调试用）
-    _direct_throttle()
-    return requests.get(url, params=params, headers=h, timeout=timeout, **kwargs)
+    # 家庭 IP 不可快速更换：没有任何风控源直连逃生开关，网关故障时失败关闭。
+    raise RuntimeError(
+        "ASGK_GW 未设置：风控源（东财/同花顺）禁止直连。"
+        "请配置网关地址：设环境变量 ASGK_GW=http://localhost:7700，"
+        "或在项目根创建 .env 文件写入 ASGK_GW=...。"
+    )

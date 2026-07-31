@@ -74,7 +74,7 @@ echo 'ASGK_GW=http://127.0.0.1:7700' > skills/a-stock-data/scripts/.env
 ```
 
 `ASGK_GW` 来源优先级：环境变量 > .env。两者都未设时，em_get 抛异常。
-仅调试时设 `ASGK_ALLOW_DIRECT=1` 可临时允许直连（不推荐）。
+风控源不存在直连 fallback；未配置或无法连接网关时应失败关闭。
 
 
 ## 数据源优先级 & 网关
