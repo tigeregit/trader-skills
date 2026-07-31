@@ -1,9 +1,10 @@
 """sgw 请求头白名单透传测试。
 
 验证：
-- 白名单内 header（Referer/Cookie/X-CSRF-Token）透传到上游
+- 白名单内非凭据 header（Referer）透传到上游
+- 公共无凭据端点剥离 Cookie/X-CSRF-Token
 - 非白名单 header（Host/Authorization）被丢弃
-- 不同 Referer 产生不同 cache key（不串缓存）
+- Referer/Cookie/CSRF 不参与公共响应 cache key
 - _filtered_client_headers 大小写不敏感匹配
 """
 from __future__ import annotations
@@ -92,15 +93,28 @@ class TestGatewayHeaderForwarding:
         _, kwargs = m.call_args
         assert "Host" not in kwargs["headers"]
 
-    def test_different_referer_different_cache_key(self):
-        """不同 Referer 产生不同 cache key，不串缓存。"""
+    def test_different_referer_shares_public_cache(self):
+        """Referer 是访问门票而非公共响应身份，不应制造缓存碎片。"""
         g = _make_gateway()
         url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
         with patch("sgw.proxy.requests.get", return_value=_fake_resp()) as m:
             g.handle(url, {}, "L", client_headers={"Referer": "https://a"})
             g.handle(url, {}, "L", client_headers={"Referer": "https://b"})
-        # 不同 Referer → 不同 cache key → 都打外网
-        assert m.call_count == 2
+        assert m.call_count == 1
+
+    def test_public_endpoint_strips_client_credentials(self):
+        g = _make_gateway()
+        url = "https://datacenter-web.eastmoney.com/api/data/v1/get"
+        with patch("sgw.proxy.requests.get", return_value=_fake_resp()) as m:
+            g.handle(url, {}, "R", client_headers={
+                "Cookie": "session=plaintext-secret",
+                "X-CSRF-Token": "plaintext-csrf",
+                "Referer": "https://data.eastmoney.com/",
+            })
+        headers = m.call_args.kwargs["headers"]
+        assert "Cookie" not in headers
+        assert "X-CSRF-Token" not in headers
+        assert headers["Referer"] == "https://data.eastmoney.com/"
 
     def test_same_referer_hits_cache(self):
         """相同 Referer 第二次命中缓存。"""

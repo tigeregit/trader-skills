@@ -15,9 +15,9 @@
 | 层 | 工具 | 测什么 | 场景 |
 |----|------|--------|------|
 | L1 端到端 | pi + pi-parallel-agents | agent 真实行为：skill 是否触发、token 是否省、流程是否跑通 | 少量并发（如 10～50）验证正确性 |
-| L2 纯网关压测 | locust / 自写脚本 | 网关吞吐与限流：全局 RPS、缓存命中率、封 IP 边界 | 高并发（100～1000）压阈值 |
+| L2 纯网关压测 | pytest + mock/replay | single-flight、限流、熔断、缓存与队列边界 | 高并发（100～1000），禁止真实出网 |
 
-L2 不经过 LLM（省成本、纯确定性），直接对网关发请求；L1 经过完整 agent loop，验证真实体验。两者互补。
+L2 不经过 LLM 且上游必须替换为本地 mock/replay；L1 经过完整 agent loop，验证真实体验。两者互补。
 
 ## 二、环境准备
 
@@ -109,7 +109,7 @@ pi --provider ark-coding --model ark-coding/ark-code-latest \
 
 > **实测基线（2026-07-23，ark-code-latest，本项目产物）**：skill 软链指向 `skills/a-stock-data`（非 ref 蓝本）。
 > - **单 agent**：pi 正确触发 SKILL.md，按路由表选对函数（行情 `tencent_quote` 直连、研报 `eastmoney_reports` 经网关），写出并执行 asgk 代码，取回茅台真实数据（PE19.72/PB7.01/100篇研报）。网关侧确认东财请求 1 次、P 档缓存生效。**全链路打通 ✓**
-> - **3 agent 并发**（pi-parallel-agents）：3 任务并行查不同股票研报，均成功返回。但发现**网关未命中并发请求**（东财请求数未增）——排查为子 agent 未继承父进程 `ASGK_GW` 环境变量，走了直连。
+> - **历史风险记录**：早期 3 agent 测试曾因子进程未继承 `ASGK_GW` 而直连。当前实现已删除 `ASGK_ALLOW_DIRECT`，未配置网关会失败关闭，不再允许该路径。
 >
 > **⚠️ 部署发现**：`ASGK_GW` 环境变量必须确保对所有 agent 进程可见（写入 shell profile / systemd env / 容器 envfile），而非依赖父进程临时 export——pi-parallel-agents 的子 agent 不继承临时 export。这是多 agent 部署的必要配置。
 
@@ -160,7 +160,22 @@ pi run --extension parallel-agents -p "对 600519 做快速调研：估值 + 北
 
 聚合脚本（示意）：遍历 `.pi/sessions/` 提取上述字段，与网关日志按时间窗 join。
 
-## 四、L2 网关压测流程（locust）
+## 四、L2 网关压测流程（mock/replay）
+
+当前唯一允许的高并发验证方式是把 `requests.get` 替换为本地 mock/replay：
+
+```bash
+uv run --project packages/sgw pytest packages/sgw/tests/test_policy.py -q
+```
+
+固定验收：1000 个相同冷请求最多一次模拟出网；首次模拟 403/429 后，冷却期
+不再调用上游；凭据不进入缓存键、SQLite 或指纹日志；未配置网关时不直连。
+真实来源只允许单请求、低频、人工触发的 canary，禁止用来寻找封禁阈值。
+
+### 历史 locust 方案（禁止对真实来源执行）
+
+以下内容仅保留历史测试记录，不再作为可执行方法。若复用 locust，目标必须是
+完全离线的 replay server，且 DNS/网络层应保证无法访问真实上游。
 
 L1 受 LLM 成本/速率限制，跑不到 1000 并发。纯网关压测用 locust 直接打 HTTP。
 
@@ -225,7 +240,7 @@ locust -f tests/locust_sgw.py --headless -u 1000 -r 50 --run-time 5m \
 | 错误率 | 429/403 = 0 | 全程不触发东财封 IP |
 | 降级触发 | 主源失败时切备用源 | 验证 failover |
 
-## 五、阈值校准产出
+## 五、历史阈值记录（不得主动复测）
 
 测试后回填 `packages/sgw/sgw/config.toml`（网关配置）：
 

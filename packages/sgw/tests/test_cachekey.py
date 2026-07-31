@@ -101,6 +101,16 @@ class TestGatewayCacheKeyParams:
             g.handle(url, {"pageNumber": "2"}, "L")
         assert m.call_count == 2
 
+    def test_forwarded_url_matches_canonical_cache_identity(self):
+        """target query 与 params 同名时，上游只收到 params 的最终值。"""
+        g = _make_gateway()
+        url = "https://datacenter-web.eastmoney.com/api/data/v1/get?code=old"
+        with patch("sgw.proxy.requests.get", return_value=_fake_resp()) as m:
+            g.handle(url, {"code": "600519"}, "R")
+        requested_url = m.call_args.args[0]
+        assert requested_url.endswith("?code=600519")
+        assert "old" not in requested_url
+
 
 # ── group_of 回归（确保未破坏 host 路由）─────────────────
 class TestGroupOfRegression:
@@ -156,10 +166,10 @@ class TestGroupOfRegression:
         assert g.group_of("79.push2.eastmoney.com") is None
 
     def test_handle_routes_new_hosts(self):
-        """emweb/datacenter 经 handle 不再返回 400 domain not proxied。"""
+        """已知 host 上未登记的 path 仍按 unknown 拒绝。"""
         g = _make_gateway()
         with patch("sgw.proxy.requests.get", return_value=_fake_resp()):
             s1, _, _ = g.handle("https://emweb.securities.eastmoney.com/PC_HSF10/x", {}, "L")
             s2, _, _ = g.handle("https://datacenter.eastmoney.com/securities/api/x", {}, "L")
-        assert s1 != 400  # 不再被 host-missing 拒绝
-        assert s2 != 400
+        assert s1 == 403
+        assert s2 == 403

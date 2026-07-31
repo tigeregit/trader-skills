@@ -40,6 +40,242 @@ domains = [
 rps = 0.5          # 交易所更保守（2秒1次）
 jitter = [0.5, 1.0]
 
+# ── 端点策略（准入 / IP 风险 / 响应作用域三轴正交）──────────
+# 未匹配端点一律 unknown 并拒绝，不能仅因 host 已归组就出网。
+# 当前 sgw 是公共数据网关，因此已批准端点均为 controlled + public + shared。
+
+[[endpoint]]
+name = "eastmoney-stock-snapshot"
+host = "push2.eastmoney.com"
+path = "/api/qt/stock/get"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-stock-list"
+host = "push2.eastmoney.com"
+path = "/api/qt/clist/get"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+credential_params = ["ut"]
+
+[[endpoint]]
+name = "eastmoney-board-membership"
+host = "push2.eastmoney.com"
+path = "/api/qt/slist/get"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-stock-batch"
+host = "push2.eastmoney.com"
+path = "/api/qt/ulist.np/get"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+credential_params = ["ut"]
+
+[[endpoint]]
+name = "eastmoney-minute-flow"
+host = "push2.eastmoney.com"
+path = "/api/qt/stock/fflow/kline/get"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-kline"
+host = "push2his.eastmoney.com"
+path = "/api/qt/stock/kline/get"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-daily-flow"
+host = "push2his.eastmoney.com"
+path = "/api/qt/stock/fflow/daykline/get"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-datacenter"
+host = "datacenter-web.eastmoney.com"
+path = "/api/data/v1/get"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-report-list"
+host = "reportapi.eastmoney.com"
+path = "/report/list"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-news-search"
+host = "search-api-web.eastmoney.com"
+path = "/search/jsonp"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-fast-news"
+host = "np-weblist.eastmoney.com"
+path = "/comm/web/getFastNewsList"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+identity_ignored_params = ["req_trace"]
+
+[[endpoint]]
+name = "eastmoney-top10-holders"
+host = "emweb.securities.eastmoney.com"
+path = "/PC_HSF10/ShareholderResearch/PageSDGD"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-top10-free-holders"
+host = "emweb.securities.eastmoney.com"
+path = "/PC_HSF10/ShareholderResearch/PageSDLTGD"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-limit-up"
+host = "push2ex.eastmoney.com"
+path = "/getTopicZTPool"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+credential_params = ["ut"]
+
+[[endpoint]]
+name = "eastmoney-limit-break"
+host = "push2ex.eastmoney.com"
+path = "/getTopicZBPool"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+credential_params = ["ut"]
+
+[[endpoint]]
+name = "eastmoney-limit-down"
+host = "push2ex.eastmoney.com"
+path = "/getTopicDTPool"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+credential_params = ["ut"]
+
+[[endpoint]]
+name = "eastmoney-yesterday-limit-up"
+host = "push2ex.eastmoney.com"
+path = "/getYesterdayZTPool"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+credential_params = ["ut"]
+
+[[endpoint]]
+name = "10jqka-stock-value"
+host = "basic.10jqka.com.cn"
+path = "/new/*/worth.html"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "10jqka-hot-list"
+host = "dq.10jqka.com.cn"
+path = "/fuyao/hot_list_data/out/hot_list/v1/stock"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "10jqka-market-event"
+host = "zx.10jqka.com.cn"
+path = "/event/api/getharden/date/*"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "10jqka-limit-up"
+host = "data.10jqka.com.cn"
+path = "/dataapi/limit_up/limit_up_pool"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "szse-margin"
+host = "www.szse.cn"
+path = "/api/report/ShowReport"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[circuit]
+# 家庭 IP 无法快速更换：403/429 在代码中立即熔断；以下控制普通故障。
+cooldown_seconds = 300
+failure_threshold = 3
+
 # ── 五档缓存 TTL（§3.4.2）───────────────────────────────────
 # 档位由 asgk 库用 X-Cache-Tier 头声明（§3.4.6 先验方案）
 [cache]

@@ -4,7 +4,7 @@
 单进程 HTTP 代理，供单 IP 下 100~1000 个 agent 并发共享：
   - 按域名组令牌桶限流（东财组/同花顺组，全局串行，跨进程生效）
   - 五档缓存（P/L/S/R/N，TTL 由调用方用 X-Cache-Tier 头声明）
-  - 429/5xx 退避、403 不重试
+  - 403/429 立即熔断，5xx/异常按总预算重试
   - 响应指纹日志（供离线修正分档规则）
   - GET /__stats 暴露计数器
 
@@ -22,6 +22,7 @@ import sqlite3
 import threading
 import time
 import tomllib
+from dataclasses import dataclass
 from datetime import datetime
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -43,23 +44,31 @@ UPSTREAM_HEADER_ALLOWLIST = {
     "User-Agent", "Referer", "Cookie", "X-CSRF-Token", "Accept", "Origin",
 }
 
-# 影响响应体、必须纳入 cache key 的请求头（不同值会得到不同响应）。
-# User-Agent/Origin 不影响响应内容，不纳入（避免缓存碎片化）。
-RESPONSE_AFFECTING_HEADERS = {"Referer", "Cookie", "X-CSRF-Token", "Accept"}
+# 经端点策略确认会改变公共响应表示的头。Cookie/CSRF/Referer 只是访问门票，
+# 不得进入共享缓存身份，否则会泄漏凭据并让 100~1000 agent 的缓存碎片化。
+PUBLIC_RESPONSE_AFFECTING_HEADERS = {"Accept"}
+
+_REVIEW_STATUSES = {"approved", "blocked", "unknown"}
+_IP_RISKS = {"controlled", "safe"}
+_RESPONSE_SCOPES = {"public", "credential_bound", "user_private"}
+_CREDENTIAL_MODES = {"none", "gateway_session", "caller"}
+_CACHE_MODES = {"shared", "isolated", "disabled"}
 
 # 固定 UA（客户端未传 User-Agent 时的默认）
 _DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
 
 
 def _canonical_url(url: str, params: dict | None = None,
-                   header_key_parts: dict | None = None) -> str:
+                   header_key_parts: dict | None = None,
+                   ignored_params: set[str] | None = None) -> str:
     """规范化 URL：合并 target_url 自带 query 与 params，按 key 排序，统一编码。
 
     用于 cache key：确保 (url, {a:1,b:2}) 与 (url, {b:2,a:1}) 与
     (url?a=1, {b:2}) 产生同一 key，且不同 params 产生不同 key。
 
-    header_key_parts：影响响应的请求头（Referer/Cookie/X-CSRF-Token/Accept）
-    以 key=value 形式追加到 query 末尾，使不同 session/Referer 不串缓存。
+    header_key_parts：经策略确认影响响应表示的非敏感请求头。
+    ignored_params：只用于访问控制、不影响公共响应的敏感 query 参数；这些参数
+    仍会发给上游，但不会进入缓存键、SQLite 或指纹日志。
     """
     parsed = urlparse(url)
     # 合并 url 自带 query 与 params（params 优先，覆盖同名）
@@ -67,6 +76,8 @@ def _canonical_url(url: str, params: dict | None = None,
     if params:
         for k, v in params.items():
             merged[k] = [str(v)]
+    for key in ignored_params or ():
+        merged.pop(key, None)
     # 影响响应的请求头作为附属 key 片段（前缀 __h_ 避免与真实 query 冲突）
     if header_key_parts:
         for k, v in header_key_parts.items():
@@ -74,6 +85,147 @@ def _canonical_url(url: str, params: dict | None = None,
     # 规范 query：按 key 排序，标准 urlencoding
     sorted_query = urlencode(sorted(merged.items()), doseq=True)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, "", sorted_query, ""))
+
+
+@dataclass(frozen=True)
+class EndpointPolicy:
+    """一个上游端点的正交策略；未匹配端点默认拒绝。"""
+
+    name: str
+    host: str
+    path: str
+    review_status: str
+    ip_risk: str
+    response_scope: str
+    credential_mode: str
+    cache_mode: str
+    credential_params: frozenset[str]
+    identity_ignored_params: frozenset[str]
+
+    @classmethod
+    def from_config(cls, raw: dict) -> "EndpointPolicy":
+        required = {
+            "name", "host", "path", "review_status", "ip_risk",
+            "response_scope", "credential_mode", "cache_mode",
+        }
+        missing = required - raw.keys()
+        if missing:
+            raise ValueError(f"endpoint policy missing fields: {sorted(missing)}")
+        policy = cls(
+            name=raw["name"], host=raw["host"].lower(), path=raw["path"],
+            review_status=raw["review_status"], ip_risk=raw["ip_risk"],
+            response_scope=raw["response_scope"],
+            credential_mode=raw["credential_mode"], cache_mode=raw["cache_mode"],
+            credential_params=frozenset(raw.get("credential_params", [])),
+            identity_ignored_params=frozenset(raw.get("identity_ignored_params", [])),
+        )
+        policy.validate()
+        return policy
+
+    def validate(self) -> None:
+        checks = (
+            (self.review_status, _REVIEW_STATUSES, "review_status"),
+            (self.ip_risk, _IP_RISKS, "ip_risk"),
+            (self.response_scope, _RESPONSE_SCOPES, "response_scope"),
+            (self.credential_mode, _CREDENTIAL_MODES, "credential_mode"),
+            (self.cache_mode, _CACHE_MODES, "cache_mode"),
+        )
+        for value, allowed, field in checks:
+            if value not in allowed:
+                raise ValueError(f"endpoint {self.name}: invalid {field}={value!r}")
+        if self.response_scope == "public" and self.cache_mode != "shared":
+            raise ValueError(f"endpoint {self.name}: public response must use shared cache")
+        if self.response_scope == "credential_bound" and self.cache_mode != "isolated":
+            raise ValueError(f"endpoint {self.name}: credential_bound response must be isolated")
+        if self.response_scope == "user_private" and self.cache_mode != "disabled":
+            raise ValueError(f"endpoint {self.name}: user_private response must disable cache")
+
+    def matches(self, host: str, path: str) -> bool:
+        return host.lower() == self.host and fnmatch.fnmatchcase(path, self.path)
+
+
+@dataclass
+class _Flight:
+    event: threading.Event
+    result: tuple[int, bytes, dict] | None = None
+
+
+class SingleFlight:
+    """把同一安全缓存身份的并发 miss 合并为一次上游请求。"""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._calls: dict[str, _Flight] = {}
+        self.followers = 0
+
+    def join(self, key: str) -> tuple[bool, _Flight]:
+        with self._lock:
+            flight = self._calls.get(key)
+            if flight is not None:
+                self.followers += 1
+                return False, flight
+            flight = _Flight(threading.Event())
+            self._calls[key] = flight
+            return True, flight
+
+    def finish(self, key: str, flight: _Flight, result: tuple[int, bytes, dict]) -> None:
+        flight.result = result
+        flight.event.set()
+        with self._lock:
+            if self._calls.get(key) is flight:
+                del self._calls[key]
+
+
+class CircuitBreaker:
+    """来源级熔断：403/429 立即开启，其余失败累计到阈值。"""
+
+    def __init__(self, cooldown: float, failure_threshold: int):
+        self.cooldown = cooldown
+        self.failure_threshold = failure_threshold
+        self._lock = threading.Lock()
+        self._open_until = 0.0
+        self._probe_in_flight = False
+        self._failures = 0
+        self.opens = 0
+
+    def is_open(self) -> bool:
+        with self._lock:
+            return self._open_until > time.time()
+
+    def before_request(self) -> bool:
+        """返回是否可出网；冷却后只允许一个 canary。"""
+        with self._lock:
+            now = time.time()
+            if self._open_until > now:
+                return False
+            if self._open_until:
+                if self._probe_in_flight:
+                    return False
+                self._probe_in_flight = True
+            return True
+
+    def success(self) -> None:
+        with self._lock:
+            self._open_until = 0.0
+            self._probe_in_flight = False
+            self._failures = 0
+
+    def failure(self, immediate: bool = False) -> None:
+        with self._lock:
+            self._probe_in_flight = False
+            self._failures += 1
+            if immediate or self._failures >= self.failure_threshold:
+                self._open_until = time.time() + self.cooldown
+                self.opens += 1
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {
+                "open": self._open_until > time.time(),
+                "open_until": self._open_until,
+                "failures": self._failures,
+                "opens": self.opens,
+            }
 
 
 def _filtered_client_headers(client_headers: dict | None) -> dict:
@@ -268,6 +420,23 @@ class Gateway:
             self.buckets[name] = TokenBucket(g["rps"], jitter)
             for d in g["domains"]:
                 self.domain_group[d] = name
+        self.endpoint_policies = [
+            EndpointPolicy.from_config(raw) for raw in config.get("endpoint", [])
+        ]
+        if not self.endpoint_policies:
+            raise ValueError("no endpoint policies configured; fail closed")
+        policy_keys = [(p.host, p.path) for p in self.endpoint_policies]
+        if len(policy_keys) != len(set(policy_keys)):
+            raise ValueError("duplicate endpoint policy host/path")
+        circuit_cfg = config.get("circuit", {})
+        self.circuits = {
+            name: CircuitBreaker(
+                cooldown=float(circuit_cfg.get("cooldown_seconds", 300)),
+                failure_threshold=int(circuit_cfg.get("failure_threshold", 3)),
+            )
+            for name in self.buckets
+        }
+        self.singleflight = SingleFlight()
         self.cache = Cache()
         # 每组计数
         self.group_reqs: dict[str, int] = {n: 0 for n in self.buckets}
@@ -307,6 +476,13 @@ class Gateway:
                 return self.domain_group.get(host)
         # 第二层：非后缀源（如交易所 www.szse.cn）按 config exact-host 归组
         return self.domain_group.get(host)
+
+    def policy_for(self, host: str, path: str) -> Optional[EndpointPolicy]:
+        """返回唯一匹配策略；配置歧义视为启动/请求错误，不猜测。"""
+        matches = [p for p in self.endpoint_policies if p.matches(host, path)]
+        if len(matches) > 1:
+            raise ValueError(f"ambiguous endpoint policy for {host}{path}")
+        return matches[0] if matches else None
 
     # ── 档位 → TTL（先验方案 §3.4.6）──
     def ttl_for_tier(self, tier: str) -> int:
@@ -376,25 +552,57 @@ class Gateway:
     def handle(self, target_url: str, params: dict, tier_header: Optional[str],
                client_headers: dict | None = None) -> tuple[int, bytes, dict]:
         parsed = urlparse(target_url)
-        host = parsed.netloc
+        host = parsed.hostname or ""
+        if parsed.scheme not in ("http", "https") or parsed.username or parsed.password:
+            return 400, b'{"error":"invalid upstream URL"}', {}
+        if parsed.port not in (None, 80, 443):
+            return 400, b'{"error":"upstream port is not allowed"}', {}
         group = self.group_of(host)
         if group is None:
-            # 非风控源不应走网关（直连即可），返回提示
-            return 400, b'{"error":"domain not proxied, direct connect instead"}', {}
+            return 400, b'{"error":"domain not allowed by gateway"}', {}
+
+        policy = self.policy_for(host, parsed.path)
+        if policy is None or policy.review_status != "approved":
+            return 403, b'{"error":"endpoint policy is unknown or blocked"}', {}
+        if policy.ip_risk != "controlled":
+            return 400, b'{"error":"endpoint policy does not permit gateway egress"}', {}
+        # 公共网关不承载私有响应；否则一次误配置就可能跨 agent 泄漏。
+        if policy.response_scope == "user_private":
+            return 403, b'{"error":"private endpoint requires isolated gateway"}', {}
 
         # 档位：头声明优先，否则兜底
         tier = tier_header if tier_header in ("P", "L", "S", "R", "N") else self.fallback_tier(parsed.path)
         ttl = self.ttl_for_tier(tier)
+        if policy.cache_mode == "disabled":
+            ttl = 0
 
         # 透传给上游的白名单请求头
         fwd_headers = _filtered_client_headers(client_headers)
-        # 影响响应的请求头纳入 cache key，避免不同 Referer/Cookie 串缓存
-        header_key_parts = {k: v for k, v in fwd_headers.items()
-                            if k in RESPONSE_AFFECTING_HEADERS}
+        if policy.credential_mode == "none":
+            fwd_headers.pop("Cookie", None)
+            fwd_headers.pop("X-CSRF-Token", None)
+        elif policy.credential_mode == "gateway_session":
+            # 网关会话尚未配置时失败关闭，绝不借用任意 caller 凭据。
+            fwd_headers.pop("Cookie", None)
+            fwd_headers.pop("X-CSRF-Token", None)
+            return 503, b'{"error":"gateway credential session unavailable"}', {}
+
+        header_key_parts = {
+            k: v for k, v in fwd_headers.items()
+            if k in PUBLIC_RESPONSE_AFFECTING_HEADERS
+        }
+
+        if policy.response_scope == "credential_bound":
+            identity = (client_headers or {}).get("X-SGW-Identity")
+            if not identity:
+                return 403, b'{"error":"credential-bound endpoint requires identity"}', {}
+            # 只使用调用方提供的非秘密身份 ID；Cookie/CSRF 本身永不进入 key。
+            header_key_parts["X-SGW-Identity"] = identity
 
         # 缓存 key = tier + canonical URL（含合并后的 query + 影响响应的头）
         # 必须含 params，否则不同股票/日期/页码会串缓存
-        cache_key = f"{tier}|{_canonical_url(target_url, params, header_key_parts)}"
+        ignored_params = set(policy.credential_params | policy.identity_ignored_params)
+        cache_key = f"{tier}|{_canonical_url(target_url, params, header_key_parts, ignored_params)}"
         cached = self.cache.get(cache_key) if ttl > 0 else None
         if cached:
             body, headers = cached
@@ -410,25 +618,57 @@ class Gateway:
                 self._log_fingerprint(cache_key, tier, body, "cache_hit_disk")
                 return 200, body, {**headers, "X-Cache": "HIT-DISK", "X-Cache-Tier": tier}
 
-        # 限流（全局串行）
-        bucket = self.buckets[group]
-        bucket.acquire()
-        self.group_reqs[group] += 1
+        # 即使 TTL=0，也合并同一时刻的相同请求，避免实时端点冷 miss 风暴。
+        leader, flight = self.singleflight.join(cache_key)
+        if not leader:
+            if not flight.event.wait(timeout=30):
+                return 504, b'{"error":"coalesced upstream request timed out"}', {"X-Cache-Tier": tier}
+            assert flight.result is not None
+            status, body, headers = flight.result
+            return status, body, {**headers, "X-Cache": "COALESCED"}
 
-        # 请求外网（params 由 requests.get 的 params 参数转发，headers 用白名单透传）
+        result: tuple[int, bytes, dict]
+        try:
+            result = self._fetch_upstream(
+                target_url, params, fwd_headers, policy, group, tier, ttl, cache_key
+            )
+        except Exception:
+            result = (502, b'{"error":"gateway internal upstream failure"}', {"X-Cache-Tier": tier})
+        self.singleflight.finish(cache_key, flight, result)
+        return result
+
+    def _fetch_upstream(self, target_url: str, params: dict, fwd_headers: dict,
+                        policy: EndpointPolicy, group: str, tier: str, ttl: int,
+                        cache_key: str) -> tuple[int, bytes, dict]:
+        circuit = self.circuits[group]
+        if circuit.is_open():
+            return 503, b'{"error":"source circuit open; cache only"}', {"X-Cache-Tier": tier}
+
+        # 构造一次规范 URL，确保真实请求与缓存身份对重复 query 参数的处理一致。
+        request_url = _canonical_url(target_url, params)
         last_err = None
         for attempt in range(3):
+            # 每次实际出网（包括重试）都必须重新经过全局限流。
+            self.buckets[group].acquire()
+            if not circuit.before_request():
+                return 503, b'{"error":"source circuit open; cache only"}', {"X-Cache-Tier": tier}
+            self.group_reqs[group] += 1
             try:
-                r = requests.get(target_url, params=params, headers=fwd_headers, timeout=15)
-                if r.status_code == 403:
-                    # 风控信号，不重试（§3.5）
+                r = requests.get(request_url, headers=fwd_headers, timeout=15)
+                if r.status_code in (403, 429):
+                    # 家庭 IP 不可更换：首次风控信号立即全来源熔断且不重试。
+                    circuit.failure(immediate=True)
                     self.group_errs[group] += 1
-                    return 403, b'{"error":"403 blocked (rate limit signal)"}', {"X-Cache-Tier": tier}
-                if r.status_code in (429, 500, 502, 503, 504) and attempt < 2:
+                    return r.status_code, b'{"error":"source blocked; circuit opened"}', {"X-Cache-Tier": tier}
+                if r.status_code in (500, 502, 503, 504):
+                    circuit.failure()
                     last_err = r.status_code
-                    time.sleep(0.6 * (2 ** attempt))  # 指数退避
+                    if circuit.is_open() or attempt == 2:
+                        break
+                    time.sleep(0.6 * (2 ** attempt))
                     continue
                 # 成功
+                circuit.success()
                 resp_headers = {"Content-Type": r.headers.get("Content-Type", "application/json")}
                 if ttl > 0:
                     self.cache.set(cache_key, r.content, resp_headers, ttl, tier)
@@ -439,18 +679,24 @@ class Gateway:
                 self._log_fingerprint(cache_key, tier, r.content, session)
                 return r.status_code, r.content, {**resp_headers, "X-Cache": "MISS", "X-Cache-Tier": tier}
             except requests.RequestException as e:
+                circuit.failure()
                 last_err = str(e)
-                if attempt < 2:
+                if attempt < 2 and not circuit.is_open():
                     time.sleep(0.6 * (2 ** attempt))
                     continue
+                break
         self.group_errs[group] += 1
-        return 502, json.dumps({"error": f"upstream failed: {last_err}"}).encode(), {"X-Cache-Tier": tier}
+        # 不把异常文本原样返回，避免 requests 把带敏感 query 的 URL 写入响应/日志。
+        reason = last_err if isinstance(last_err, int) else "request error"
+        return 502, json.dumps({"error": "upstream failed", "reason": reason}).encode(), {"X-Cache-Tier": tier}
 
     def stats(self) -> dict:
         return {
             "group_reqs": self.group_reqs,
             "group_errs": self.group_errs,
             "bucket_waits": {n: b.wait_count for n, b in self.buckets.items()},
+            "singleflight_followers": self.singleflight.followers,
+            "circuits": {n: c.stats() for n, c in self.circuits.items()},
             "cache": self.cache.stats(),
             "disk_cache": self.disk_cache.stats() if self.disk_cache else None,
             "disk_load_count": self._disk_load_count,

@@ -66,7 +66,8 @@ with concurrent.futures.ThreadPoolExecutor(max_workers=5) as ex:
 ### A6. 禁止直连保护
 
 ```bash
-unset ASGK_GW ASGK_ALLOW_DIRECT
+unset ASGK_GW
+export ASGK_ALLOW_DIRECT=1  # 模拟部署环境残留的旧变量，当前必须无效
 ASGK_ENV=/dev/null uv run python -c "
 from asgk import em_get
 try:
@@ -80,22 +81,8 @@ except RuntimeError as e:
 
 ### A7. 透明性（字节级一致）
 
-```bash
-uv run python -c "
-import requests, concurrent.futures
-GW='http://127.0.0.1:7700'
-RPT='https://reportapi.eastmoney.com/report/list'
-P={'industryCode':'*','pageSize':'3','industry':'*','rating':'*','ratingChange':'*','beginTime':'2000-01-01','endTime':'2030-01-01','pageNo':'1','qType':'0','code':'600519','p':'1','pageNum':'1','pageNumber':'1','fields':''}
-H={'User-Agent':'Mozilla/5.0','Referer':'https://data.eastmoney.com/'}
-def direct(): return requests.get(RPT, params=P, headers=H, timeout=15).content
-def via_gw(): return requests.get(GW, params={'u':RPT,**P}, headers={'X-Cache-Tier':'R',**H}, timeout=15).content
-with concurrent.futures.ThreadPoolExecutor(max_workers=2) as ex:
-    fd, fg = ex.submit(direct), ex.submit(via_gw)
-    d, g = fd.result(), fg.result()
-print(f'静态研报: 直连{len(d)}B 网关{len(g)}B 一致={d==g}')
-"
-```
-✅ `一致=True`
+禁止为了透明性验证从家庭 IP 直连风控源。改用 mock 响应验证 URL、请求头和响应
+字节转发，覆盖见 `packages/sgw/tests/test_cachekey.py`、`test_headers.py`。
 
 ### A8. 磁盘持久化（P/L 档，§3.4.8）
 
@@ -236,9 +223,19 @@ pi --provider ark-coding --model ark-coding/glm-5.2 \
 
 ---
 
-## Part C：L2 locust 压测（网关限流/缓存量化）
+## Part C：L2 mock/replay 压测
 
-纯 HTTP 压测网关，不依赖 LLM。**安全兜底**：打的是网关(localhost)，网关全局限流(≤1req/s)+缓存保证外网请求受控。
+```bash
+uv run --project packages/sgw pytest packages/sgw/tests/test_policy.py -q
+```
+
+该测试包含 1000 并发同键请求、凭据落盘扫描以及 403/429 熔断验证，mock
+`requests.get`，不会访问真实来源。
+
+### 历史 locust 步骤（禁止对真实来源执行）
+
+以下步骤只作为历史记录。即使入口是 localhost，网关仍会访问真实上游，因此不能
+把“有限流”当作压测安全保证。若复用脚本，必须将上游替换为离线 replay server。
 
 ### C1. 创建压测脚本
 
@@ -305,9 +302,9 @@ pkill -f sgw-proxy 2>/dev/null
 |------|---------|---------|
 | A 网关 | A5 限流 | 完成时刻递增（间隔≈1s） |
 | A 网关 | A6 禁止直连 | 未设网关时抛异常 |
-| A 网关 | A7 透明性 | 经网关=直连，字节一致 |
+| A 网关 | A7 透明性 | mock 上游下 URL/headers/body 转发一致 |
 | A 网关 | A8 磁盘持久化 | 重启后 HIT-MEM 且 em_reqs=0，disk_load_count>0 |
 | **B agent** | **B3 端到端** | **真实数据 + 正确分流** |
 | **B agent** | **B4 网关** | **东财外网 > 0** |
 | B agent | B7 glm-5.2 | 先修 developer role 坑，连通+取数正常 |
-| **C 压测** | **C3 安全** | **300并发外网<100，缓存命中>>外网** |
+| **C 压测** | **mock/replay** | **1000同键并发最多1次模拟出网；真实外网=0** |

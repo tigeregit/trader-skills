@@ -1,6 +1,10 @@
 # Gateway 设计方案（含 skill CLI 接入）
 
-本文件是流量网关 + skill 接入的正式设计文档。对应实现待办：`todo/gateway-mvp.md`（P0）、`todo/scripts-library-port.md`（P1）。
+本文件是流量网关 + skill 接入的正式设计文档。
+
+> **不可降级约束**：100～1000 个 agent 共用一个无法快速更换的家庭 IP。
+> IP 安全高于实时性和可用性；未知端点失败关闭，风控源没有直连 fallback，
+> 高并发验证只打 mock/replay 上游，不对真实来源做压力测试。
 
 ## 一、要解决的问题
 
@@ -23,7 +27,7 @@
         ┌─────────┴──────────┐
         │ ASGK_GW 环境变量?   │
         │ 设了 → 走网关       │──► http://localhost:7700  (全局令牌桶+缓存)
-        │ 没设 → 直连(向后兼容)│     │
+        │ 没设 → 失败关闭     │     │
         └────────────────────┘     ▼
                           sgw_proxy.py (单进程，1000 agent 共享)
                           ├─ 按域名组限流(东财组/同花顺组)
@@ -46,6 +50,26 @@
 GET http://localhost:7700/?u=https://push2.eastmoney.com/api/qt/stock/get&secid=1.600519
 ```
 网关解析 `u`，按其域名归组限流 → 查缓存 → 透明 GET 外网 → 原样返回 body/headers。
+
+### 3.2.1 端点策略模型
+
+域名归组不能代表端点获准访问。每个上游端点在 `config.toml` 中分别声明：
+
+| 维度 | 值 | 作用 |
+|---|---|---|
+| `review_status` | approved / blocked / unknown | 决定是否准入；未匹配等同 unknown |
+| `ip_risk` | controlled / safe | controlled 必须经共享网关；safe 不应借网关出网 |
+| `response_scope` | public / credential_bound / user_private | 决定是否可跨 agent 共享 |
+| `credential_mode` | none / gateway_session / caller | 决定凭据所有者 |
+| `cache_mode` | shared / isolated / disabled | 由响应作用域约束其合法组合 |
+
+当前 sgw 是公共数据网关：只批准 `controlled + public + shared` 的明确 host/path。
+未知路径、私有端点、配置矛盾全部失败关闭。Cookie、CSRF 和 Referer 不属于公共
+响应身份；它们不进入缓存键或指纹日志。只有已验证影响表示的 `Accept` 参与键。
+
+所有缓存档位使用 single-flight：1000 个相同冷请求最多产生一个上游请求，其他
+调用者等待并复用结果。首次 403/429 立即打开来源级熔断，冷却期不再出网；冷却
+结束仅允许一个 canary。缓存命中在熔断期间仍可服务。
 
 ### 3.3 按域名组限流（核心）
 配置 `sgw_config.toml`，每组独立令牌桶：
@@ -299,8 +323,9 @@ CLI `--cache-dir` 覆盖 `dir`（仿 `--fp-dir`）。db 默认 `packages/sgw/sgw
 **tier bug 关联**：实施时发现 `capital.dividend_history`（`@source` 标 P）与 `holder_num_change`（标 L）经 `_datacenter` 调用时未传 tier，被默认值 `S` 覆盖，运行时实际走 S 档--既与声明不符，也使二者无法落 P/L 磁盘档。已一并修复（显式传 `tier='P'/'L'`）。
 
 ### 3.5 retry / 降级
-- 429/5xx：指数退避重试（对齐上游 Retry 配置）。
-- 403：**不重试**（东财风控信号），返回错误让上层切备用源（ref 的 failover）。
+- 403/429：不重试，立即打开整个来源的熔断器；冷却期只读缓存。
+- 5xx/请求异常：受全局失败预算约束，达到阈值后熔断；每次重试仍经过全局限流。
+- 网关不可用或来源熔断：明确失败，禁止自动切回家庭 IP 直连。
 
 ### 3.6 观测
 两类观测：
@@ -335,17 +360,17 @@ asgk valuation <code>          # 完整估值（多源串联）
 # 本项目:
 from asgk import em_get     # 接口不变，底层自动走网关
 ```
-环境变量切流（关键，渐进迁移）：
+环境变量切流：
 ```python
 # asgk/em_proxy.py
 import os, requests
-_GW = os.environ.get("ASGK_GW")  # 设了走网关，没设直连（向后兼容）
+_GW = os.environ.get("ASGK_GW")
 def em_get(url, params=None, headers=None, timeout=15, **kw):
     if _GW:
         return requests.get(_GW, params={"u": url, **(params or {})}, timeout=timeout)
-    return requests.get(url, params=params, headers=headers, timeout=timeout, **kw)
+    raise RuntimeError("风控源禁止直连")
 ```
-未配 `ASGK_GW` 时行为与上游一致（直连；上游已有的进程内限流保留作 fallback）。
+未配 `ASGK_GW` 时失败关闭；旧的 `ASGK_ALLOW_DIRECT` 不再生效。
 
 ### 4.4 CLI 安装
 两个独立包各自的 pyproject 注册 entry point：`sgw-proxy = "sgw.proxy:main"`（网关，sgw 包）、`asgk = "asgk.cli:main"`（CLI，asgk 包，P1 填充）。项目用 uv workspace 管理，`uv run sgw-proxy` / `uv run asgk ...` 即可调用，无需手动 `pip install`。两个包可分别部署（装网关的机器不必装 asgk）。
@@ -387,7 +412,7 @@ skills/a-stock-data/scripts/
 
 - 网关启动：在 `skills/a-stock-data/scripts/` 下 `uv run sgw-proxy` 监听 7700（等价 `uv run python sgw_proxy.py`）。
 - 单进程基准：`curl 'localhost:7700/?u=<东财url>&secid=1.600519'` 正确代理。
-- **并发验证**：多进程并发打网关，外网出口被压到东财组 ≤1 req/s（用 `/__stats` 验证）。
+- **并发验证**：100～1000 并发只打 mock/replay 上游；相同冷请求最多一次模拟出网。
 - 缓存命中时零外网请求。
 - `asgk quote 600519`（直连）和 `asgk report 600519`（经网关）都能返回真实数据。
-- `em_get` 接口与上游签名一致；未设 `ASGK_GW` 时行为向后兼容。
+- `em_get` 接口与上游签名一致；未设 `ASGK_GW` 时明确失败且不产生外网请求。
