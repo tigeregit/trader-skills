@@ -72,8 +72,9 @@ class TestParseXlsx:
 class TestMarginDetailSzse:
     def test_field_mapping(self):
         xlsx = _make_xlsx_bytes()
-        with patch("asgk.capital.em_get", return_value=_em_get_xlsx_resp(xlsx)):
+        with patch("asgk.capital.em_get", return_value=_em_get_xlsx_resp(xlsx)) as upstream:
             result = margin_detail_szse("20250728")
+        upstream.assert_called_once()
         assert len(result) == 2
         r = result[0]
         assert r["code"] == "000001"
@@ -84,6 +85,8 @@ class TestMarginDetailSzse:
         assert r["rq_volume"] == 401200.0
         assert r["rq_balance"] == 4998952.0
         assert r["rzrq_balance"] == 5272150551.0
+        assert result[1]["code"] == "000002"
+        assert result[1]["name"] == "万  科Ａ"
 
     def test_referer_header(self):
         """Referer 必须传递（深交所必需）。"""
