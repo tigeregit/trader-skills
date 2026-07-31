@@ -1266,9 +1266,13 @@ def main():
                     help="磁盘缓存目录（P/L 档持久化，生产建议 /var/lib/sgw）")
     ap.add_argument("--state-dir", default=None,
                     help="熔断状态与安全标记目录（生产建议 /var/lib/sgw/state）")
+    ap.add_argument("--max-attempts", type=int, default=None,
+                    help="覆盖上游最大尝试次数；真实 canary 必须设为 1")
     args = ap.parse_args()
 
     cfg = load_config(Path(args.config))
+    if args.max_attempts is not None:
+        cfg.setdefault("retry", {})["max_attempts"] = max(1, args.max_attempts)
     host = args.host or cfg["server"]["host"]
     port = args.port or cfg["server"]["port"]
 

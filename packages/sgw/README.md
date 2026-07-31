@@ -52,6 +52,9 @@ uv run sgw-proxy --cache-dir /var/lib/sgw
 # 生产环境：熔断状态必须写到独立、持久、权限受控的目录
 uv run sgw-proxy --state-dir /var/lib/sgw/state
 
+# 人工真实 canary：单次尝试，禁止网关自动重试
+uv run sgw-proxy --max-attempts 1
+
 # 指定配置文件
 uv run sgw-proxy -c /path/to/config.toml
 ```
