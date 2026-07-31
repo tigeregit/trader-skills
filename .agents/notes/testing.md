@@ -9,6 +9,43 @@
 
 ## 已验证基线（2026-08-01）
 
+### P1 熔断状态与双平台有限验证
+
+验证提交 `f287499`。两平台均先执行 frozen sync，再运行完整离线套件；
+“跨平台”只表示以下两个 OS/架构组合，不外推到其他系统。
+
+| 项目 | macOS 本机 | `iamsbb2` |
+|---|---|---|
+| 系统 / 架构 | macOS 26.5.1 / ARM64 | Ubuntu 24.04.4 / Linux x86_64 |
+| Python / uv | 3.12.12 / 0.9.27 | 3.13.12 / 0.10.6 |
+| sgw 离线测试 | 74 passed | 74 passed |
+| asgk 离线测试 | 122 passed | 122 passed |
+| 实际进程重启 | 两次 `ready=true`，出网 0 | 两次 `ready=true`，出网 0 |
+| 状态文件权限 | DB/标记均 `0600` | DB/标记均 `0600` |
+
+状态测试包含：403/429 与累计 5xx 跨重启、120 秒 canary 租约、精确
+10m/30m/1h/6h/12h/24h 退避、单介质与双介质损坏、1000 并发单存储探针、
+cache-only、敏感字段白名单及单次尝试配置。所有上游均为 mock。
+
+真实 canary 严格串行，总预算和实际出网均为 3，网关统一使用
+`--max-attempts 1`：
+
+| 次序 / 主机 | 来源 / 调用 | 结果 | 网关证据 |
+|---|---|---|---|
+| 1 / macOS | Eastmoney `eastmoney_reports("600519", 1)` | 100 条；首条 2026-07-23 | eastmoney=1，errors=0 |
+| 2 / Linux | 10jqka `ths_eps_forecast("600519")` | 3 条；2026 EPS 均值 68.7 | 10jqka=1，errors=0 |
+| 3 / Linux | SZSE `margin_detail_szse("20260731")` | 合法 XLSX，但仅表头、0 条 | exchange=1，errors=0 |
+
+三次均无 403/429、验证码、重试或熔断。SZSE 响应为 3638 字节，工作表名
+“融资融券交易明细”，维度 1×1，唯一单元格为“证券代码”；因此传输和空集解析
+通过，但该次 canary **没有证明非空明细解析**，且受总预算约束未更换日期重试。
+
+pi 使用 `openai-codex/gpt-5.6-luna`：macOS agent 返回同一 100 条研报，缓存
+hits +1 且 eastmoney 出网仍为 1。`iamsbb2` 的 pi 无 Codex 凭据，未复制本机
+OAuth；改由本机 Luna agent 通过 SSH 在 Linux 执行已预热的同花顺调用，远端
+cache hits 从 1 增至 2，10jqka 出网仍为 1。该 agent 的最终文本为空，因此只
+确认了 Linux 调用与缓存路径，未确认远端 pi 自身的模型认证和文本呈现。
+
 ### Linux x64 依赖与百度 K 线
 
 在 `iamsbb2` 上对提交 `e3b961e` 执行依赖安装和单次真实 canary，
@@ -25,7 +62,7 @@ cd ~/Documents/trader-skills/skills/a-stock-data/scripts
 | 系统 | Ubuntu 24.04 / Linux 7.0.0-28-generic / x86_64 |
 | Python / uv | Python 3.13.12 / uv 0.10.6 |
 | 原生依赖 | `curl-cffi 0.15.0` + `mini-racer 0.14.1` 安装成功 |
-| sgw 完整测试 | 62 passed |
+| sgw 完整测试（当时基线） | 62 passed |
 | asgk 完整测试 | 122 passed |
 | 百度真实 canary | 600519：18 字段 / 2001 行 / 2018-05-07～2026-07-31 / MA5、10、20 齐全 |
 

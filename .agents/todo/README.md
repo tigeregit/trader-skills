@@ -6,8 +6,7 @@
 
 | 事项 | 状态 | 依赖 |
 |---|---|---|
-| [circuit-state-persistence](circuit-state-persistence.md) | 🟡 in-progress | 无 |
-| [gateway-deployment-canary](gateway-deployment-canary.md) | 🔴 pending | circuit-state-persistence |
+| — | — | — |
 
 > **已归档**：
 > - `gateway-mvp.md`（P0 流量网关）2026-07-22 完成，产物 `sgw/` 包
@@ -15,6 +14,8 @@
 > - `references-split.md`（P2 references 拆分）2026-07-23 完成，产物 `references/` 12文件
 > - `skill-router.md`（P3 SKILL.md 路由层）2026-07-23 完成，产物 `SKILL.md`（92行）
 > - `skill-integration-test.md`（P4 集成测试）2026-07-23 完成，L1 pi端到端 + L2 locust压测通过
+> - `circuit-state-persistence.md`（P1 熔断状态）2026-08-01 完成，74 项 sgw 测试通过
+> - `gateway-deployment-canary.md`（P1 双平台 canary）2026-08-01 完成，真实出网 3 次
 >
 > 按归档规则，已完成的 TODO 从 todo 删除，产物落在 skills/。
 
@@ -26,7 +27,7 @@
 [P0 gateway-mvp ✓ 已交付] ─► scripts-library-port ─► references-split ─► skill-router ─► skill-integration-test
                                                                                    （按 notes/test-method.md 执行）
 
-[P1 circuit-state-persistence] ─► [P1 gateway-deployment-canary]
+[P1 circuit-state-persistence ✓] ─► [P1 gateway-deployment-canary ✓]
 ```
 
 `gateway-mvp` 是其余改造的基础设施，最先执行。`notes/test-method.md` 是正式测试方法文档（非待办），`skill-integration-test.md` 按它执行。
