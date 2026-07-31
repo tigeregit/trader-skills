@@ -4,7 +4,10 @@
 
 ## 当前清单
 
-*（无未完成事项。P0-P4 全部完成。）*
+| 事项 | 状态 | 依赖 |
+|---|---|---|
+| [circuit-state-persistence](circuit-state-persistence.md) | 🟡 in-progress | 无 |
+| [gateway-deployment-canary](gateway-deployment-canary.md) | 🔴 pending | circuit-state-persistence |
 
 > **已归档**：
 > - `gateway-mvp.md`（P0 流量网关）2026-07-22 完成，产物 `sgw/` 包
@@ -22,6 +25,8 @@
 ```
 [P0 gateway-mvp ✓ 已交付] ─► scripts-library-port ─► references-split ─► skill-router ─► skill-integration-test
                                                                                    （按 notes/test-method.md 执行）
+
+[P1 circuit-state-persistence] ─► [P1 gateway-deployment-canary]
 ```
 
 `gateway-mvp` 是其余改造的基础设施，最先执行。`notes/test-method.md` 是正式测试方法文档（非待办），`skill-integration-test.md` 按它执行。
