@@ -1,5 +1,7 @@
 # 方案 C 可行性探索：akshare 移植到 asgk 的技术模式与证据
 
+> **状态**：历史可行性记录。方案 C 已实施完成；最终接口、依赖和验证状态以 [akshare-merge-design.md](akshare-merge-design.md) 为准。
+
 > **状态**：技术可行性分析（非执行计划）
 > **分支**：`feat/akshare-merge`
 > **最后修订**：2026-07-31

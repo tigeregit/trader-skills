@@ -13,7 +13,7 @@
 
 **AkShare 参考基线**（所有"akshare 源码事实"仅针对此 snapshot，不外推到上游最新版）：
 
-- 本地路径：`.agents/temp/akshare`
+- 本地路径：`ref/akshare` submodule
 - version：`1.18.64`
 - commit：`fcdbf25aa864a218c54864c3f6ab6a2ed19cce28`
 - commit date：`2026-05-27`
@@ -62,7 +62,7 @@ mootdx TCP 层、腾讯实时报价完整字段、百度K线带均线、打板�
 | 代码重复 | 等价接口需协调 | 0 |
 | progressive disclosure | 一般 | 更好（references 分层是原设计） |
 
-合成方案胜出。**但"9/10 走东财且命中 sgw 现有组"的旧结论不准确**——见 [§3 阶段 2](#阶段-2请求基础设施正确性前置)，akshare 用的若干东财子域（`datacenter.eastmoney.com`、`emweb.securities.eastmoney.com`）当前未在 sgw `config.toml` 精确归组，需逐项核验。板块接口的编号 push2 子域已决策主用无编号 host（[§7 决策7](#7-决策记录)），编号仅作备选。
+合成方案胜出。**但"9/10 走东财且天然命中 sgw"的旧结论不准确**：后缀准入之外仍需 exact-host 政策。实施时已补齐相关东财子域并由 endpoint inventory 检查；板块接口统一使用无编号 canonical host。
 
 ### 2.3 合成后的 skill 自我描述
 
@@ -296,7 +296,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 | input_mapping | 名称→板块代码（内部辅助请求）；kind ∈ {concept, industry} |
 | tier/via/readiness | S / gateway / **ready**（无编号 push2.eastmoney.com 已归组） |
 | deps | 通用 push2 helper |
-| failover | **编号子域作备选**：无编号 host 失败时降级到 akshare 蓝本的编号 host（`29.push2`/`79.push2` 等），需在 sgw 归组或直连降级路径中处理 |
+| failover | 编号子域未纳管、无自动降级；canonical host 失败时明确失败关闭 |
 | overlap | complement 现有 `em_hot_concept`（个股→概念），此处是反向（板块→成份股） |
 | fixture | `("融资融券","concept")` / `("小金属","industry")` |
 | acceptance | 稳定板块名返回多页成份股；分页完整；名称与代码两种输入均可；无编号 host 失败时备选编号 host 可降级 |
@@ -500,7 +500,7 @@ P2 按需项（不列时间表）：同花顺技术选股、千股千评、雪�
 4. **`@source sign/parse` 字段不扩展**：当前无明确消费者（无 registry 导出/文档生成器）。`@source` 只是声明元数据，**不驱动缓存 tier**——实际 tier 仍由函数体内 `em_get(..., tier=...)` 决定，验收须同时校验装饰器声明与运行时 `X-Cache-Tier` 一致。
 5. **POST 接口不预先扩展 sgw**：当前候选全是 GET，P2 按需。
 6. **akshare 仓库处置 = submodule**：借鉴的 repo 作 `ref/akshare` submodule（与 `ref/a-stock-data` 同等地位，符合 AGENTS.md §6 ref 语义）。`.agents/temp/akshare` 仅探索用，submodule 落定后删除。固定 commit `fcdbf25`，不追上游。
-7. **编号 push2 host 策略 = 主用无编号 + 编号备选**：inventory 板块接口主用无编号 canonical `push2.eastmoney.com`（asgk 现有 5 处验证可用）；akshare 蓝本的编号 host（`29./79./91.`）作**失败降级备选**。sgw 不需为编号 host 做 wildcard 归组，降级路径另处理。
+7. **编号 push2 host 策略 = 仅使用无编号 canonical host**：`push2.eastmoney.com` 已验证并纳入端点政策；akshare 蓝本的编号 host（`29./79./91.`）不纳管、不直连、不做自动降级。
 8. **CYQ 实现 = vendor JS（方案 A）**：vendor akshare 的 CYQ JS 用 py_mini_racer 执行，**不 Python 重写**。理由：与上游完全一致；CYQ 是纯数学零 DOM（`stock_cyq_em.py:27-218`），py_mini_racer 可直接跑。代价：py_mini_racer 须显式声明直接依赖 + 阶段4 并发安全测试（thread-local/锁）。
 9. **vendor JS 同步 = CI 定期 diff（方案 B）**：锁定 snapshot，CI 定期 diff 上游 ths.js/CYQ JS，变更告警人工更新。当前 inventory 范围（17 候选）只用 CYQ；ths.js 在 P2 同花顺接口才需要，该项推迟到 P2 触发时实施。
 

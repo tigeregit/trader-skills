@@ -1,5 +1,7 @@
 # akshare 集成方案分析：架构选择（source gateway vs 封装 package vs ref 移植）
 
+> **状态**：历史决策记录。方案 C 已实施完成；文中的“当前缺口”描述保留为决策时背景，完成状态以 [akshare-merge-design.md](akshare-merge-design.md) 为准。
+
 > **状态**：方法论分析（非执行计划）
 > **分支**：`feat/akshare-merge`
 > **最后修订**：2026-07-31
