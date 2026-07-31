@@ -6,7 +6,8 @@
 
 | 事项 | 状态 | 依赖 |
 |---|---|---|
-| — | — | — |
+| [pi-agent-functional-matrix](pi-agent-functional-matrix.md) | 🟡 in-progress | 无 |
+| [szse-nonempty-fixture](szse-nonempty-fixture.md) | 🟡 in-progress | 无 |
 
 > **已归档**：
 > - `gateway-mvp.md`（P0 流量网关）2026-07-22 完成，产物 `sgw/` 包
