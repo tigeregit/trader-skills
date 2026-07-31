@@ -16,6 +16,12 @@ from asgk.em_proxy import em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 ZTB_UT = "7eea3edcaed734bea9cbfc24409ed989"
+_EM_POOL_URLS = {
+    "getTopicZTPool": "https://push2ex.eastmoney.com/getTopicZTPool",
+    "getTopicZBPool": "https://push2ex.eastmoney.com/getTopicZBPool",
+    "getTopicDTPool": "https://push2ex.eastmoney.com/getTopicDTPool",
+    "getYesterdayZTPool": "https://push2ex.eastmoney.com/getYesterdayZTPool",
+}
 
 
 def _fmt_zt_time(t) -> str:
@@ -26,7 +32,11 @@ def _fmt_zt_time(t) -> str:
 
 def _em_zt_api(endpoint: str, sort: str, date: str) -> list[dict]:
     """东财涨停板通用请求（push2ex，经网关）。data 为 null = 非交易日。"""
-    r = em_get(f"https://push2ex.eastmoney.com/{endpoint}",
+    try:
+        url = _EM_POOL_URLS[endpoint]
+    except KeyError as exc:
+        raise ValueError(f"未分类的东财涨停池端点: {endpoint}") from exc
+    r = em_get(url,
                params={"ut": ZTB_UT, "dpt": "wz.ztzt", "Pageindex": 0,
                        "pagesize": 10000, "sort": sort, "date": date},
                headers={"Referer": "https://quote.eastmoney.com/"}, timeout=10, tier="R")

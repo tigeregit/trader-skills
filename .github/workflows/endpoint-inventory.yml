@@ -1,0 +1,26 @@
+name: endpoint inventory
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  endpoint-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.10.6"
+
+      - name: Verify classified gateway endpoints
+        run: >-
+          uv run --frozen --project packages/sgw pytest
+          packages/sgw/tests/test_endpoint_inventory.py -q

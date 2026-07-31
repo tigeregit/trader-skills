@@ -137,8 +137,11 @@ curl -s -D - -H "X-Cache-Tier: P" \
 # 重启网关后同请求 -> X-Cache: HIT-DISK；/__stats 可见 disk_load_count>0
 
 # 1000 并发、熔断和凭据验证只使用 mock 上游，禁止用家庭 IP 做真实压测
-uv run pytest tests/test_policy.py -q
+uv run pytest tests/test_policy.py tests/test_endpoint_inventory.py -q
 ```
+
+`test_endpoint_inventory.py` 静态扫描 asgk 内所有 `em_get` URL，必须与
+approved 端点政策双向完整对应。同一检查会在 GitHub Actions 中自动运行。
 
 ## 技术选型
 
