@@ -15,8 +15,11 @@ build/
 # 网关运行时产物（指纹日志 / 磁盘缓存）
 **/sgw/logs/
 **/sgw/cache/
+**/sgw/state/
 **/sgw_fingerprint.jsonl
 **/sgw_cache.db
+**/sgw_state.db
+**/sgw_state.db-*
 
 # 工具生成物
 .zcode/

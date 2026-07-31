@@ -275,6 +275,18 @@ cache_mode = "shared"
 # 家庭 IP 无法快速更换：403/429 在代码中立即熔断；以下控制普通故障。
 cooldown_seconds = 300
 failure_threshold = 3
+probe_lease_seconds = 120
+
+[state]
+# 熔断状态独立持久化；不依赖 P/L 缓存是否启用。
+enabled = true
+dir = "state"
+# 状态库异常后只探测存储，不访问上游；24h 为上限。
+backoff_seconds = [600, 1800, 3600, 21600, 43200, 86400]
+
+[retry]
+# 生产默认允许普通瞬态故障重试；真实 canary 用临时配置设为 1。
+max_attempts = 3
 
 # ── 五档缓存 TTL（§3.4.2）───────────────────────────────────
 # 档位由 asgk 库用 X-Cache-Tier 头声明（§3.4.6 先验方案）

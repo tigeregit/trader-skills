@@ -21,6 +21,7 @@ PUBLIC_URL = "https://reportapi.eastmoney.com/report/list"
 def _config(*, persist: bool = False, cooldown: float = 300) -> dict:
     cfg = load_config(CONFIG)
     cfg["cache"]["persist"] = {"enabled": persist, "tiers": ["P", "L"]}
+    cfg["state"] = {"enabled": False}
     cfg["fingerprint"]["enabled"] = False
     cfg["circuit"]["cooldown_seconds"] = cooldown
     # 并发测试不等待真实限流间隔。

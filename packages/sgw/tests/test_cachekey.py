@@ -60,6 +60,7 @@ class TestCanonicalUrl:
 def _make_gateway() -> Gateway:
     cfg = load_config(__import__("pathlib").Path(__file__).resolve().parent.parent / "sgw" / "config.toml")
     cfg.setdefault("cache", {})["persist"] = {"enabled": False}
+    cfg["state"] = {"enabled": False}
     return Gateway(cfg)
 
 

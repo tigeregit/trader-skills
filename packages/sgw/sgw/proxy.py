@@ -16,6 +16,7 @@ import argparse
 import fnmatch
 import hashlib
 import json
+import os
 import random
 import signal
 import sqlite3
@@ -53,6 +54,7 @@ _IP_RISKS = {"controlled", "safe"}
 _RESPONSE_SCOPES = {"public", "credential_bound", "user_private"}
 _CREDENTIAL_MODES = {"none", "gateway_session", "caller"}
 _CACHE_MODES = {"shared", "isolated", "disabled"}
+_DEFAULT_STATE_BACKOFF = (600, 1800, 3600, 21600, 43200, 86400)
 
 # 固定 UA（客户端未传 User-Agent 时的默认）
 _DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
@@ -179,53 +181,495 @@ class SingleFlight:
 class CircuitBreaker:
     """来源级熔断：403/429 立即开启，其余失败累计到阈值。"""
 
-    def __init__(self, cooldown: float, failure_threshold: int):
+    def __init__(self, cooldown: float, failure_threshold: int,
+                 now_fn=None, on_change=None, probe_lease: float = 120):
         self.cooldown = cooldown
         self.failure_threshold = failure_threshold
+        self._now = now_fn or time.time
+        self._on_change = on_change
+        self.probe_lease = probe_lease
         self._lock = threading.Lock()
         self._open_until = 0.0
         self._probe_in_flight = False
+        self._probe_until = 0.0
         self._failures = 0
+        self._last_status: int | None = None
         self.opens = 0
 
     def is_open(self) -> bool:
         with self._lock:
-            return self._open_until > time.time()
+            return max(self._open_until, self._probe_until) > self._now()
 
     def before_request(self) -> bool:
         """返回是否可出网；冷却后只允许一个 canary。"""
+        changed = False
         with self._lock:
-            now = time.time()
-            if self._open_until > now:
+            now = self._now()
+            if max(self._open_until, self._probe_until) > now:
                 return False
             if self._open_until:
                 if self._probe_in_flight:
                     return False
                 self._probe_in_flight = True
-            return True
+                self._probe_until = now + self.probe_lease
+                changed = True
+        if changed and self._on_change and not self._on_change():
+            with self._lock:
+                self._probe_in_flight = False
+                self._probe_until = 0.0
+            return False
+        return True
 
     def success(self) -> None:
         with self._lock:
             self._open_until = 0.0
             self._probe_in_flight = False
+            self._probe_until = 0.0
             self._failures = 0
+            self._last_status = None
+        if self._on_change:
+            self._on_change()
 
-    def failure(self, immediate: bool = False) -> None:
+    def failure(self, immediate: bool = False, status: int | None = None) -> None:
         with self._lock:
+            was_probe = self._probe_in_flight
             self._probe_in_flight = False
+            self._probe_until = 0.0
             self._failures += 1
-            if immediate or self._failures >= self.failure_threshold:
-                self._open_until = time.time() + self.cooldown
+            self._last_status = status
+            if immediate or was_probe or self._failures >= self.failure_threshold:
+                self._open_until = self._now() + self.cooldown
                 self.opens += 1
+        if self._on_change:
+            self._on_change()
+
+    def snapshot(self) -> dict:
+        with self._lock:
+            return {
+                "open_until": self._open_until,
+                "probe_until": self._probe_until,
+                "failures": self._failures,
+                "opens": self.opens,
+                "last_status": self._last_status,
+            }
+
+    def restore(self, state: dict, conservative: bool = False) -> None:
+        with self._lock:
+            open_until = float(state.get("open_until", 0) or 0)
+            probe_until = float(state.get("probe_until", 0) or 0)
+            failures = int(state.get("failures", 0) or 0)
+            opens = int(state.get("opens", 0) or 0)
+            if conservative:
+                self._open_until = max(self._open_until, open_until, probe_until)
+                self._failures = max(self._failures, failures)
+                self.opens = max(self.opens, opens)
+            else:
+                self._open_until = max(open_until, probe_until)
+                self._failures = failures
+                self.opens = opens
+            self._probe_in_flight = False
+            self._probe_until = 0.0
+            self._last_status = state.get("last_status")
 
     def stats(self) -> dict:
         with self._lock:
             return {
-                "open": self._open_until > time.time(),
+                "open": max(self._open_until, self._probe_until) > self._now(),
                 "open_until": self._open_until,
+                "probe_until": self._probe_until,
                 "failures": self._failures,
                 "opens": self.opens,
+                "last_status": self._last_status,
             }
+
+
+class CircuitStateStore:
+    """熔断状态 SQLite 主库，不存任何请求内容或凭据。"""
+
+    SCHEMA = """
+    CREATE TABLE IF NOT EXISTS circuit_state (
+        group_name  TEXT PRIMARY KEY,
+        open_until  REAL NOT NULL,
+        probe_until REAL NOT NULL,
+        failures    INTEGER NOT NULL,
+        opens       INTEGER NOT NULL,
+        last_status INTEGER,
+        updated     REAL NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS state_meta (
+        key   TEXT PRIMARY KEY,
+        value TEXT NOT NULL
+    );
+    """
+
+    def __init__(self, db_path: Path):
+        self.db_path = db_path
+        db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
+        self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute("PRAGMA synchronous=FULL")
+        self._conn.executescript(self.SCHEMA)
+        self._conn.commit()
+        self._lock = threading.Lock()
+
+    def load_all(self) -> dict[str, dict]:
+        with self._lock:
+            rows = self._conn.execute(
+                "SELECT group_name, open_until, probe_until, failures, opens, "
+                "last_status FROM circuit_state"
+            ).fetchall()
+        result = {}
+        for group, open_until, probe_until, failures, opens, last_status in rows:
+            if not isinstance(group, str):
+                raise sqlite3.DatabaseError("invalid circuit group")
+            if not isinstance(open_until, (int, float)) \
+                    or not isinstance(probe_until, (int, float)):
+                raise sqlite3.DatabaseError("invalid circuit deadline")
+            if not isinstance(failures, int) or not isinstance(opens, int):
+                raise sqlite3.DatabaseError("invalid circuit counters")
+            if last_status is not None and not isinstance(last_status, int):
+                raise sqlite3.DatabaseError("invalid circuit status")
+            result[group] = {
+                "open_until": open_until,
+                "probe_until": probe_until,
+                "failures": failures,
+                "opens": opens,
+                "last_status": last_status,
+            }
+        return result
+
+    def save_all(self, states: dict[str, dict], now: float) -> None:
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                for group, state in states.items():
+                    self._conn.execute(
+                        "INSERT OR REPLACE INTO circuit_state "
+                        "(group_name, open_until, probe_until, failures, opens, "
+                        "last_status, updated) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (group, float(state.get("open_until", 0) or 0),
+                         float(state.get("probe_until", 0) or 0),
+                         int(state.get("failures", 0) or 0),
+                         int(state.get("opens", 0) or 0),
+                         state.get("last_status"), now),
+                    )
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def health_probe(self, now: float) -> None:
+        marker = f"{now:.6f}"
+        with self._lock:
+            self._conn.execute("BEGIN IMMEDIATE")
+            try:
+                self._conn.execute(
+                    "INSERT OR REPLACE INTO state_meta (key, value) VALUES ('health', ?)",
+                    (marker,),
+                )
+                row = self._conn.execute(
+                    "SELECT value FROM state_meta WHERE key='health'"
+                ).fetchone()
+                if row != (marker,):
+                    raise sqlite3.DatabaseError("state health probe readback mismatch")
+                self._conn.execute("DELETE FROM state_meta WHERE key='health'")
+                self._conn.commit()
+            except Exception:
+                self._conn.rollback()
+                raise
+
+    def close(self) -> None:
+        with self._lock:
+            self._conn.close()
+
+
+class CircuitStateManager:
+    """状态库安全闩：异常期间全局禁止受控来源出网。"""
+
+    MARKER_VERSION = 1
+
+    def __init__(self, state_dir: Path, groups: set[str], backoff=None,
+                 now_fn=None, store_factory=None):
+        self.state_dir = state_dir
+        self.db_path = state_dir / "sgw_state.db"
+        self.marker_path = state_dir / "sgw_safety_latch.json"
+        self.groups = groups
+        self.backoff = tuple(float(v) for v in (backoff or _DEFAULT_STATE_BACKOFF))
+        if not self.backoff or any(value <= 0 for value in self.backoff):
+            raise ValueError("state backoff schedule must contain positive values")
+        self._now = now_fn or time.time
+        self._store_factory = store_factory or CircuitStateStore
+        self._lock = threading.Lock()
+        self._probe_in_flight = False
+        self.store: CircuitStateStore | None = None
+        self.initial_states: dict[str, dict] = {}
+        self._state = self._read_marker()
+        marker_invalid = self._state is False
+
+        candidate_store = None
+        try:
+            candidate_store = self._store_factory(self.db_path)
+            db_states = candidate_store.load_all()
+            self.store = candidate_store
+        except Exception:
+            if candidate_store is not None:
+                try:
+                    candidate_store.close()
+                except Exception:
+                    pass
+            db_states = {}
+            self.store = None
+
+        marker_states = self._state.get("circuits", {}) if isinstance(self._state, dict) else {}
+        self.initial_states = self._sanitize_states(
+            self._merge_states(db_states, marker_states)
+        )
+        if isinstance(self._state, dict):
+            self._state["circuits"] = self.initial_states
+
+        if marker_invalid:
+            # 单一介质异常从 10m 开始；主库与安全标记同时异常直接按 24h。
+            stage = len(self.backoff) - 1 if self.store is None else 0
+            self._state = self._waiting_state(stage, self.initial_states)
+            self._write_marker_best_effort(self._state)
+        elif self.store is None:
+            if not isinstance(self._state, dict) or self._state.get("probe_state") == "recovered":
+                self._state = self._waiting_state(0, self.initial_states)
+            self._write_marker_best_effort(self._state)
+        elif not isinstance(self._state, dict):
+            recovered = self._recovered_state(self.initial_states)
+            if self._write_marker_best_effort(recovered):
+                self._state = recovered
+            else:
+                self._state = self._waiting_state(len(self.backoff) - 1, self.initial_states)
+        elif self._state.get("probe_state") == "recovered":
+            # 主库和上次安全标记都正常。
+            pass
+
+    @staticmethod
+    def _merge_states(a: dict[str, dict], b: dict[str, dict]) -> dict[str, dict]:
+        merged: dict[str, dict] = {}
+        for group in set(a) | set(b):
+            left, right = a.get(group, {}), b.get(group, {})
+            merged[group] = {
+                "open_until": max(float(left.get("open_until", 0) or 0),
+                                  float(right.get("open_until", 0) or 0)),
+                "probe_until": max(float(left.get("probe_until", 0) or 0),
+                                   float(right.get("probe_until", 0) or 0)),
+                "failures": max(int(left.get("failures", 0) or 0),
+                                int(right.get("failures", 0) or 0)),
+                "opens": max(int(left.get("opens", 0) or 0),
+                             int(right.get("opens", 0) or 0)),
+                "last_status": right.get("last_status", left.get("last_status")),
+            }
+        return merged
+
+    def _sanitize_states(self, states: dict[str, dict]) -> dict[str, dict]:
+        """只保留已配置组和数值熔断字段，阻断 URL/凭据误入状态文件。"""
+        clean: dict[str, dict] = {}
+        for group, state in states.items():
+            if group not in self.groups or not isinstance(state, dict):
+                continue
+            try:
+                last_status = state.get("last_status")
+                if last_status is not None and not isinstance(last_status, int):
+                    last_status = None
+                clean[group] = {
+                    "open_until": float(state.get("open_until", 0) or 0),
+                    "probe_until": float(state.get("probe_until", 0) or 0),
+                    "failures": int(state.get("failures", 0) or 0),
+                    "opens": int(state.get("opens", 0) or 0),
+                    "last_status": last_status,
+                }
+            except (TypeError, ValueError):
+                continue
+        return clean
+
+    def _read_marker(self) -> dict | bool | None:
+        if not self.marker_path.exists():
+            return None
+        try:
+            data = json.loads(self.marker_path.read_text(encoding="utf-8"))
+            required = {"version", "probe_state", "backoff_stage", "next_probe_at", "circuits"}
+            if not isinstance(data, dict) or not required.issubset(data):
+                return False
+            if data["version"] != self.MARKER_VERSION:
+                return False
+            if data["probe_state"] not in {"waiting", "recovered"}:
+                return False
+            stage = data["backoff_stage"]
+            if not isinstance(stage, int) or not 0 <= stage < len(self.backoff):
+                return False
+            if not isinstance(data["next_probe_at"], (int, float)):
+                return False
+            if not isinstance(data["circuits"], dict):
+                return False
+            for state in data["circuits"].values():
+                if not isinstance(state, dict):
+                    return False
+                if not isinstance(state.get("open_until", 0), (int, float)):
+                    return False
+                if not isinstance(state.get("probe_until", 0), (int, float)):
+                    return False
+                if not isinstance(state.get("failures", 0), int):
+                    return False
+                if not isinstance(state.get("opens", 0), int):
+                    return False
+                if state.get("last_status") is not None \
+                        and not isinstance(state["last_status"], int):
+                    return False
+            return data
+        except Exception:
+            return False
+
+    def _write_marker(self, data: dict) -> None:
+        self.state_dir.mkdir(parents=True, exist_ok=True)
+        tmp = self.marker_path.with_name(
+            f".{self.marker_path.name}.{os.getpid()}.{threading.get_ident()}.tmp"
+        )
+        encoded = json.dumps(data, ensure_ascii=False, sort_keys=True).encode()
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        try:
+            os.chmod(tmp, 0o600)
+            with os.fdopen(fd, "wb", closefd=False) as handle:
+                handle.write(encoded)
+                handle.flush()
+                os.fsync(handle.fileno())
+        finally:
+            os.close(fd)
+        os.replace(tmp, self.marker_path)
+        os.chmod(self.marker_path, 0o600)
+        dir_fd = os.open(self.state_dir, os.O_RDONLY)
+        try:
+            os.fsync(dir_fd)
+        finally:
+            os.close(dir_fd)
+
+    def _write_marker_best_effort(self, data: dict) -> bool:
+        try:
+            self._write_marker(data)
+            return True
+        except Exception:
+            return False
+
+    def _waiting_state(self, stage: int, circuits: dict[str, dict],
+                       first_failure_at: float | None = None) -> dict:
+        now = self._now()
+        stage = max(0, min(stage, len(self.backoff) - 1))
+        return {
+            "version": self.MARKER_VERSION,
+            "probe_state": "waiting",
+            "first_failure_at": now if first_failure_at is None else first_failure_at,
+            "last_failure_at": now,
+            "last_success_at": None,
+            "backoff_stage": stage,
+            "next_probe_at": now + self.backoff[stage],
+            "circuits": circuits,
+        }
+
+    def _recovered_state(self, circuits: dict[str, dict]) -> dict:
+        now = self._now()
+        return {
+            "version": self.MARKER_VERSION,
+            "probe_state": "recovered",
+            "first_failure_at": None,
+            "last_failure_at": None,
+            "last_success_at": now,
+            "backoff_stage": 0,
+            "next_probe_at": 0,
+            "circuits": circuits,
+        }
+
+    def save_all(self, states: dict[str, dict]) -> bool:
+        """先写保护标记，再事务写主库，最后标记恢复。"""
+        states = self._sanitize_states(states)
+        now = self._now()
+        guard = self._waiting_state(0, states)
+        with self._lock:
+            if not self.ready:
+                return False
+            if not self._write_marker_best_effort(guard):
+                self._state = self._waiting_state(len(self.backoff) - 1, states)
+                return False
+            self._state = guard
+            try:
+                assert self.store is not None
+                self.store.save_all(states, now)
+                recovered = self._recovered_state(states)
+                if not self._write_marker_best_effort(recovered):
+                    return False
+                self._state = recovered
+                return True
+            except Exception:
+                return False
+
+    @property
+    def ready(self) -> bool:
+        return (
+            self.store is not None
+            and isinstance(self._state, dict)
+            and self._state.get("probe_state") == "recovered"
+        )
+
+    def before_egress(self) -> tuple[bool, dict[str, dict] | None]:
+        """必要时只执行一次存储健康探测，绝不访问上游。"""
+        with self._lock:
+            if self.ready:
+                return True, None
+            now = self._now()
+            if now < float(self._state.get("next_probe_at", float("inf"))):
+                return False, None
+            if self._probe_in_flight:
+                return False, None
+            self._probe_in_flight = True
+
+        store = self.store
+        created_store = False
+        try:
+            if store is None:
+                store = self._store_factory(self.db_path)
+                created_store = True
+            store.health_probe(self._now())
+            states = self._sanitize_states(
+                self._merge_states(store.load_all(), self._state.get("circuits", {}))
+            )
+            recovered = self._recovered_state(states)
+            if not self._write_marker_best_effort(recovered):
+                raise OSError("cannot persist recovered safety marker")
+            with self._lock:
+                self.store = store
+                self._state = recovered
+            return True, states
+        except Exception:
+            if created_store and store is not None:
+                try:
+                    store.close()
+                except Exception:
+                    pass
+            with self._lock:
+                stage = min(int(self._state.get("backoff_stage", 0)) + 1,
+                            len(self.backoff) - 1)
+                first = self._state.get("first_failure_at")
+                self._state = self._waiting_state(
+                    stage, self._state.get("circuits", {}), first
+                )
+                self._write_marker_best_effort(self._state)
+            return False, None
+        finally:
+            with self._lock:
+                self._probe_in_flight = False
+
+    def stats(self) -> dict:
+        with self._lock:
+            state = dict(self._state) if isinstance(self._state, dict) else {}
+            state.pop("circuits", None)
+            state["ready"] = self.ready
+            return state
+
+    def close(self) -> None:
+        if self.store is not None:
+            self.store.close()
+            self.store = None
 
 
 def _filtered_client_headers(client_headers: dict | None) -> dict:
@@ -407,10 +851,13 @@ class DiskCache:
 # ── 网关主体 ──────────────────────────────────────────────────
 class Gateway:
     def __init__(self, config: dict, fp_dir_override: str | None = None,
-                 cache_dir_override: str | None = None):
+                 cache_dir_override: str | None = None,
+                 state_dir_override: str | None = None):
         self.cfg = config
+        self._closed = False
         self._fp_dir_override = fp_dir_override
         self._cache_dir_override = cache_dir_override
+        self._state_dir_override = state_dir_override
         # 域名 -> 组名
         self.domain_group: dict[str, str] = {}
         self.buckets: dict[str, TokenBucket] = {}
@@ -429,13 +876,34 @@ class Gateway:
         if len(policy_keys) != len(set(policy_keys)):
             raise ValueError("duplicate endpoint policy host/path")
         circuit_cfg = config.get("circuit", {})
+        retry_cfg = config.get("retry", {})
+        self.max_attempts = max(1, int(retry_cfg.get("max_attempts", 3)))
+        state_cfg = config.get("state", {})
+        self.state_manager: CircuitStateManager | None = None
+        initial_circuit_states: dict[str, dict] = {}
+        if state_cfg.get("enabled", False):
+            state_dir = Path(self._state_dir_override or state_cfg.get("dir", "state"))
+            if not state_dir.is_absolute():
+                state_dir = HERE / state_dir
+            self.state_manager = CircuitStateManager(
+                state_dir,
+                set(self.buckets),
+                backoff=state_cfg.get("backoff_seconds", _DEFAULT_STATE_BACKOFF),
+            )
+            initial_circuit_states = self.state_manager.initial_states
         self.circuits = {
             name: CircuitBreaker(
                 cooldown=float(circuit_cfg.get("cooldown_seconds", 300)),
                 failure_threshold=int(circuit_cfg.get("failure_threshold", 3)),
+                probe_lease=float(circuit_cfg.get("probe_lease_seconds", 120)),
             )
             for name in self.buckets
         }
+        for name, state in initial_circuit_states.items():
+            if name in self.circuits:
+                self.circuits[name].restore(state)
+        for circuit in self.circuits.values():
+            circuit._on_change = self._persist_circuit_states
         self.singleflight = SingleFlight()
         self.cache = Cache()
         # 每组计数
@@ -467,6 +935,19 @@ class Gateway:
             self.fp_dir = HERE / self.fp_dir
         self.fp_last_hash: dict[str, str] = {}  # key -> 上次 resp_hash
         self.fp_lock = threading.Lock()
+
+    def _circuit_snapshots(self) -> dict[str, dict]:
+        return {name: circuit.snapshot() for name, circuit in self.circuits.items()}
+
+    def _persist_circuit_states(self) -> bool:
+        if self.state_manager is None:
+            return True
+        return self.state_manager.save_all(self._circuit_snapshots())
+
+    def _restore_circuit_states(self, states: dict[str, dict]) -> None:
+        for name, state in states.items():
+            if name in self.circuits:
+                self.circuits[name].restore(state, conservative=True)
 
     # ── 域名归组 ──
     def group_of(self, host: str) -> Optional[str]:
@@ -640,6 +1121,14 @@ class Gateway:
     def _fetch_upstream(self, target_url: str, params: dict, fwd_headers: dict,
                         policy: EndpointPolicy, group: str, tier: str, ttl: int,
                         cache_key: str) -> tuple[int, bytes, dict]:
+        if self.state_manager is not None:
+            allowed, recovered_states = self.state_manager.before_egress()
+            if recovered_states:
+                self._restore_circuit_states(recovered_states)
+            if not allowed:
+                return 503, b'{"error":"state store safety latch open; cache only"}', {
+                    "X-Cache-Tier": tier
+                }
         circuit = self.circuits[group]
         if circuit.is_open():
             return 503, b'{"error":"source circuit open; cache only"}', {"X-Cache-Tier": tier}
@@ -647,7 +1136,7 @@ class Gateway:
         # 构造一次规范 URL，确保真实请求与缓存身份对重复 query 参数的处理一致。
         request_url = _canonical_url(target_url, params)
         last_err = None
-        for attempt in range(3):
+        for attempt in range(self.max_attempts):
             # 每次实际出网（包括重试）都必须重新经过全局限流。
             self.buckets[group].acquire()
             if not circuit.before_request():
@@ -657,13 +1146,13 @@ class Gateway:
                 r = requests.get(request_url, headers=fwd_headers, timeout=15)
                 if r.status_code in (403, 429):
                     # 家庭 IP 不可更换：首次风控信号立即全来源熔断且不重试。
-                    circuit.failure(immediate=True)
+                    circuit.failure(immediate=True, status=r.status_code)
                     self.group_errs[group] += 1
                     return r.status_code, b'{"error":"source blocked; circuit opened"}', {"X-Cache-Tier": tier}
                 if r.status_code in (500, 502, 503, 504):
-                    circuit.failure()
+                    circuit.failure(status=r.status_code)
                     last_err = r.status_code
-                    if circuit.is_open() or attempt == 2:
+                    if circuit.is_open() or attempt == self.max_attempts - 1:
                         break
                     time.sleep(0.6 * (2 ** attempt))
                     continue
@@ -681,7 +1170,7 @@ class Gateway:
             except requests.RequestException as e:
                 circuit.failure()
                 last_err = str(e)
-                if attempt < 2 and not circuit.is_open():
+                if attempt < self.max_attempts - 1 and not circuit.is_open():
                     time.sleep(0.6 * (2 ** attempt))
                     continue
                 break
@@ -697,12 +1186,22 @@ class Gateway:
             "bucket_waits": {n: b.wait_count for n, b in self.buckets.items()},
             "singleflight_followers": self.singleflight.followers,
             "circuits": {n: c.stats() for n, c in self.circuits.items()},
+            "state_safety": self.state_manager.stats() if self.state_manager else None,
             "cache": self.cache.stats(),
             "disk_cache": self.disk_cache.stats() if self.disk_cache else None,
             "disk_load_count": self._disk_load_count,
             "disk_load_ms": self._disk_load_ms,
             "intraday": self._is_intraday(),
         }
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if self.disk_cache:
+            self.disk_cache.close()
+        if self.state_manager:
+            self.state_manager.close()
 
 
 # ── HTTP handler ──────────────────────────────────────────────
@@ -764,13 +1263,20 @@ def main():
                     help="指纹日志目录（生产环境必须指定，如 /var/log/sgw）")
     ap.add_argument("--cache-dir", default=None,
                     help="磁盘缓存目录（P/L 档持久化，生产建议 /var/lib/sgw）")
+    ap.add_argument("--state-dir", default=None,
+                    help="熔断状态与安全标记目录（生产建议 /var/lib/sgw/state）")
     args = ap.parse_args()
 
     cfg = load_config(Path(args.config))
     host = args.host or cfg["server"]["host"]
     port = args.port or cfg["server"]["port"]
 
-    gateway = Gateway(cfg, fp_dir_override=args.fp_dir, cache_dir_override=args.cache_dir)
+    gateway = Gateway(
+        cfg,
+        fp_dir_override=args.fp_dir,
+        cache_dir_override=args.cache_dir,
+        state_dir_override=args.state_dir,
+    )
     server = ThreadingHTTPServer((host, port), make_handler(gateway))
     print(f"[sgw_proxy] listening on {host}:{port}", flush=True)
     print(f"[sgw_proxy] groups: {list(gateway.buckets)}", flush=True)
@@ -778,18 +1284,27 @@ def main():
     if gateway.disk_cache:
         print(f"[sgw_proxy] disk cache: {gateway.disk_cache.db_path} "
               f"(loaded {gateway._disk_load_count} entries in {gateway._disk_load_ms}ms)", flush=True)
+    if gateway.state_manager:
+        print(f"[sgw_proxy] circuit state: {gateway.state_manager.db_path}", flush=True)
+
+    stopping = threading.Event()
 
     def shutdown(*_):
+        if stopping.is_set():
+            return
+        stopping.set()
         print("\n[sgw_proxy] stopping...", flush=True)
-        if gateway.disk_cache:
-            gateway.disk_cache.close()
-        server.shutdown()
+        # BaseServer.shutdown 必须从 serve_forever 所在线程之外调用。
+        threading.Thread(target=server.shutdown, daemon=True).start()
 
     signal.signal(signal.SIGTERM, shutdown)
     try:
         server.serve_forever()
     except KeyboardInterrupt:
-        shutdown()
+        pass
+    finally:
+        gateway.close()
+        server.server_close()
 
 
 if __name__ == "__main__":
