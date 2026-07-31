@@ -1,8 +1,44 @@
 # 测试操作手册
 
-本项目测试的操作指南。方法论见 `test-method.md`（pi + locust 双层策略），本文件是可直接执行的命令手册。
+本项目测试的操作指南。方法论见 `test-method.md`（pi + mock/replay
+双层策略），本文件是可直接执行的命令手册。
 
 > 所有命令基于 uv。前置：`cd skills/a-stock-data/scripts && uv sync`。
+
+---
+
+## 已验证基线（2026-08-01）
+
+### Linux x64 依赖与百度 K 线
+
+在 `iamsbb2` 上对提交 `e3b961e` 执行：
+
+```bash
+cd ~/Documents/trader-skills/skills/a-stock-data/scripts
+~/.local/bin/uv sync --frozen
+~/.local/bin/uv run pytest asgk/tests -q
+```
+
+| 项目 | 结果 |
+|---|---|
+| 系统 | Ubuntu 24.04 / Linux 7.0.0-28-generic / x86_64 |
+| Python / uv | Python 3.13.12 / uv 0.10.6 |
+| 原生依赖 | `curl-cffi 0.15.0` + `mini-racer 0.14.1` 安装成功 |
+| asgk 完整测试 | 120 passed |
+| 百度真实 canary | 600519：18 字段 / 2001 行 / 2018-05-07～2026-07-31 / MA5、10、20 齐全 |
+
+百度 canary 仅串行请求一次，未重试、未并发。
+
+### 端点库存 CI
+
+```bash
+uv run --frozen --project packages/sgw pytest \
+  packages/sgw/tests/test_endpoint_inventory.py -q
+```
+
+结果：25 个 `em_get` 调用 URL 模式全部可静态解析，完整覆盖
+22 个 approved 端点政策；无未分类调用、无孤儿政策。GitHub Actions
+`.github/workflows/endpoint-inventory.yml` 在 push / pull request 时自动执行。
 
 ---
 
