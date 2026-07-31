@@ -6,8 +6,7 @@
 
 | 事项 | 状态 | 依赖 |
 |---|---|---|
-| [pi-agent-functional-matrix](pi-agent-functional-matrix.md) | 🟡 in-progress | 无 |
-| [szse-nonempty-fixture](szse-nonempty-fixture.md) | 🟡 in-progress | 无 |
+| — | — | — |
 
 > **已归档**：
 > - `gateway-mvp.md`（P0 流量网关）2026-07-22 完成，产物 `sgw/` 包
@@ -17,6 +16,8 @@
 > - `skill-integration-test.md`（P4 集成测试）2026-07-23 完成，L1 pi端到端 + L2 locust压测通过
 > - `circuit-state-persistence.md`（P1 熔断状态）2026-08-01 完成，74 项 sgw 测试通过
 > - `gateway-deployment-canary.md`（P1 双平台 canary）2026-08-01 完成，真实出网 3 次
+> - `pi-agent-functional-matrix.md`（10-agent 离线验证）2026-08-01 完成，新增 8 agent / 116 用例
+> - `szse-nonempty-fixture.md`（SZSE 非空 XLSX）2026-08-01 完成，双平台 12 项通过
 >
 > 按归档规则，已完成的 TODO 从 todo 删除，产物落在 skills/。
 

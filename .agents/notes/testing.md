@@ -38,7 +38,10 @@ cache-only、敏感字段白名单及单次尝试配置。所有上游均为 moc
 
 三次均无 403/429、验证码、重试或熔断。SZSE 响应为 3638 字节，工作表名
 “融资融券交易明细”，维度 1×1，唯一单元格为“证券代码”；因此传输和空集解析
-通过，但该次 canary **没有证明非空明细解析**，且受总预算约束未更换日期重试。
+通过。该次真实 canary 本身没有非空记录，且受总预算约束未更换日期重试；非空
+解析由离线两行 XLSX fixture 补齐：公开函数只调用一次 mock `em_get`，保留
+`000001`/`000002` 前导零，并验证融资/融券全部六个数值字段。该 fixture 在
+macOS ARM64 与 Linux x86_64 上均为 `12 passed`，真实上游请求为 0。
 
 pi 按主机分别选用可用模型：macOS 使用 `openai-codex/gpt-5.6-luna`，返回同一
 100 条研报，cache hits +1 且 eastmoney 出网仍为 1。`iamsbb2` 不要求 GPT，
@@ -46,6 +49,27 @@ pi 按主机分别选用可用模型：macOS 使用 `openai-codex/gpt-5.6-luna`�
 `test_chip.py` 与 `test_em_proxy.py`，JSON 事件记录确认唯一 bash tool call，结果
 `10 passed in 0.41s`，无失败、错误或跳过。该 Linux 验证全程离线，没有增加
 家庭 IP 的真实上游请求。
+
+在上述两个基线 agent 之上继续补齐 8 个并行离线 agent，总数达到 10。每个
+agent 只开放 bash 工具、只执行指定 pytest 文件；新增运行没有启动网关或真实
+行情请求：
+
+| Agent | 主机 / 模型 | 覆盖 | 结果 |
+|---|---|---|---|
+| 1 | macOS / Luna | 预热 Eastmoney 研报缓存 | 100 条，cache hit |
+| 2 | Linux / GLM-5.2 | chip + em_proxy | 10 passed |
+| 3 | macOS / Luna | quote | 4 passed |
+| 4 | macOS / Luna | limitup + pool_filter | 14 passed |
+| 5 | macOS / Luna | datacenter + margin_szse | 27 passed |
+| 6 | macOS / Luna | board + risk_event | 24 passed |
+| 7 | Linux / GLM-5.2 | earning | 12 passed |
+| 8 | Linux / GLM-5.2 | holders | 19 passed |
+| 9 | Linux / GLM-5.2 | valuation_hist | 12 passed |
+| 10 | Linux / GLM-5.2 | quote | 4 passed |
+
+新增 8 个 agent 合计 116 个用例全部通过。这里验证的是两种 OS/架构上的 skill
+触发、工具调用和 mock 功能路径；100～1000 agent 的规模保护仍由 L2 mock 的
+single-flight、熔断与状态探针测试覆盖，禁止用真实来源做并发验证。
 
 ### Linux x64 依赖与百度 K 线
 
