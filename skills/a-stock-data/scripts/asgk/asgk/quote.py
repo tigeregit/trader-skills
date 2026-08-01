@@ -51,12 +51,31 @@ def mootdx_bars(code: str, frequency: int = 9, offset: int = 100) -> list[dict]:
         ⚠️ 参数名是 frequency 不是 category（传 category 会被静默吞掉退化成日线）。
         返回不复权原始价，跨除权日需自行复权或改用百度K线。
 
-        ⚠️ mootdx 0.11.7 实测 bars 返回 0 条（底层 get_security_bars 返回空，finance 正常），
-        属该版本库兼容性问题，非本项目可修。日K可靠替代用 `baidu_kline_with_ma`
-        （自带均线，实测 2001 条可用），或腾讯行情取实时价。
+        mootdx 0.11.7 在部分节点返回空日 K 时自动降级到百度日 K；非日线频率
+        不做非等价降级。
     """
     client = tdx_client()
-    return _to_records(client.bars(symbol=code, frequency=frequency, offset=offset))
+    records = _to_records(client.bars(symbol=code, frequency=frequency, offset=offset))
+    if records or frequency not in (4, 9):
+        return records
+
+    # mootdx 0.11.7 的日 K 在部分节点稳定返回空；日线可安全降级到百度。
+    # 分钟/周/月频率不可等价映射，仍按原契约返回 mootdx 结果。
+    data = baidu_kline_with_ma(code)
+    keys = data.get("keys") or []
+    out = []
+    for line in (data.get("rows") or [])[-offset:]:
+        row = dict(zip(keys, line.split(",")))
+        try:
+            out.append({
+                "open": float(row["open"]), "close": float(row["close"]),
+                "high": float(row["high"]), "low": float(row["low"]),
+                "vol": float(row["volume"]), "amount": float(row["amount"]),
+                "datetime": row["time"],
+            })
+        except (KeyError, TypeError, ValueError):
+            continue
+    return out
 
 
 # ── mootdx 五档盘口 ─────────────────────────────────────────────

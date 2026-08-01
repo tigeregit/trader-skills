@@ -42,11 +42,20 @@ def eastmoney_stock_news(code: str, page_size: int = 20) -> list[dict]:
     r = em_get("https://search-api-web.eastmoney.com/search/jsonp",
                params={"cb": "jQuery_news", "param": inner_params},
                headers={"Referer": "https://so.eastmoney.com/"}, timeout=15, tier="N")
-    # 解析 JSONP：去掉 cb(...) 包裹
-    text = r.text
-    json_str = text[text.index("(") + 1:text.rindex(")")]
-    d = json.loads(json_str)
-    articles = d.get("result", {}).get("cmsArticleWebOld", []) or []
+    r.raise_for_status()
+    # 正常响应为 cb({...})；风控响应可能是纯 JSON 且只有 passportWeb。
+    text = r.text.strip()
+    if "(" in text and ")" in text[text.index("(") + 1:]:
+        json_str = text[text.index("(") + 1:text.rindex(")")]
+        d = json.loads(json_str)
+    else:
+        try:
+            d = json.loads(text)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(d, dict):
+        return []
+    articles = (d.get("result") or {}).get("cmsArticleWebOld", []) or []
     return [{
         "title": re.sub(r'<[^>]+>', '', a.get("title", "")),
         "content": re.sub(r'<[^>]+>', '', a.get("content", ""))[:200],

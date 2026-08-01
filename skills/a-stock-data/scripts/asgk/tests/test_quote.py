@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from asgk.quote import baidu_kline_with_ma
+from asgk.quote import baidu_kline_with_ma, mootdx_bars
 
 
 def _response(payload: dict, status: int = 200) -> MagicMock:
@@ -61,3 +61,26 @@ def test_baidu_transport_error_does_not_leak_exception_url():
         with pytest.raises(RuntimeError) as raised:
             baidu_kline_with_ma("600519")
     assert "cookie=secret" not in str(raised.value)
+
+
+def test_mootdx_daily_bars_fall_back_to_baidu_when_empty():
+    client = MagicMock()
+    client.bars.return_value = None
+    payload = {
+        "keys": ["time", "open", "close", "volume", "high", "low", "amount"],
+        "rows": ["2026-07-31,10.0,10.2,1000,10.3,9.9,10200"],
+    }
+    with patch("asgk.quote.tdx_client", return_value=client), \
+         patch("asgk.quote.baidu_kline_with_ma", return_value=payload):
+        result = mootdx_bars("600519", frequency=9, offset=10)
+    assert result == [{"open": 10.0, "close": 10.2, "high": 10.3, "low": 9.9,
+                       "vol": 1000.0, "amount": 10200.0, "datetime": "2026-07-31"}]
+
+
+def test_mootdx_intraday_empty_does_not_use_daily_fallback():
+    client = MagicMock()
+    client.bars.return_value = None
+    with patch("asgk.quote.tdx_client", return_value=client), \
+         patch("asgk.quote.baidu_kline_with_ma") as baidu:
+        assert mootdx_bars("600519", frequency=0, offset=10) == []
+    baidu.assert_not_called()

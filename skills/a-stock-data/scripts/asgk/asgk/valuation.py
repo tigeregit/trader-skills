@@ -59,21 +59,26 @@ def full_valuation(code: str) -> dict:
     eps_cur = eps_next = None
     analyst_count = 0
     try:
-        from asgk.reports import ths_eps_forecast  # P1 待移植（pandas 依赖）
-        df = ths_eps_forecast(code)
-        if df is not None and len(df) >= 1:
+        from asgk.reports import ths_eps_forecast
+        forecast = ths_eps_forecast(code)
+        if hasattr(forecast, "to_dict"):
+            rows = forecast.to_dict("records")
+        else:
+            rows = list(forecast or [])
+        rows.sort(key=lambda row: row.get("年度") or row.get("year") or 0)
+        if rows:
             def _pick(row, name):
-                for c in df.columns:
-                    if name in str(c):
-                        return row.get(c)
+                for key, value in row.items():
+                    if name in str(key):
+                        return value
                 return None
-            r0 = df.iloc[0]
+            r0 = rows[0]
             v = _pick(r0, "均值")
             eps_cur = float(v) if v is not None and str(v) != "nan" else None
             cnt = _pick(r0, "预测机构数")
             analyst_count = int(cnt) if cnt is not None and str(cnt) != "nan" else 0
-            if len(df) >= 2:
-                vn = _pick(df.iloc[1], "均值")
+            if len(rows) >= 2:
+                vn = _pick(rows[1], "均值")
                 eps_next = float(vn) if vn is not None and str(vn) != "nan" else None
     except (ImportError, Exception):
         pass  # ths_eps_forecast 未移植或请求失败，EPS 字段留 None

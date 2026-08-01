@@ -106,6 +106,7 @@ uv run sgw-proxy # 启网关
 
 ## 已知限制
 
-- `mootdx_bars` 在 mootdx 0.11.7 返回空（日K用百度K线替代）。
+- `mootdx_bars` 在 mootdx 0.11.7 返回空日 K 时自动降级到百度；非日线频率不做
+  非等价降级。
 - mootdx 需国内网络（TCP 7709 海外超时）。
 - 北向深股通(sgt)自2024-08披露收紧，仅参考。

@@ -25,6 +25,25 @@ def _s(val) -> str:
     return val or ""
 
 
+def _normalise_board_name(value: str) -> str:
+    """兼容现网名称带“概念/板块/行业”等展示后缀。"""
+    name = re.sub(r"\s+", "", value or "")
+    for suffix in ("概念板块", "行业板块", "概念", "板块", "行业"):
+        if name.endswith(suffix):
+            name = name[:-len(suffix)]
+            break
+    return name
+
+
+def _response_data(response) -> dict:
+    response.raise_for_status()
+    payload = response.json()
+    data = payload.get("data") if isinstance(payload, dict) else None
+    if data is None:
+        raise RuntimeError("东财板块接口返回 data=null")
+    return data
+
+
 def _resolve_board_code(symbol: str, kind: str) -> str:
     """板块名称 → 板块代码（BK 开头直接返回，否则查名称辅助表）。"""
     if re.match(r"^BK\d+", symbol):
@@ -35,17 +54,24 @@ def _resolve_board_code(symbol: str, kind: str) -> str:
               "fltt": "2", "invt": "2", "fid": "f12", "fs": f"m:90 t:{t_code} f:!50",
               "fields": "f12,f14"}
     page = 1
+    suffix_match = None
     while True:
         params["pn"] = str(page)
         r = em_get(_CLIST_URL, params=params, headers={"User-Agent": UA}, timeout=15, tier="S")
-        d = r.json().get("data", {})
+        d = _response_data(r)
         diff = d.get("diff") or []
         for item in diff:
-            if item.get("f14") == symbol:
+            item_name = item.get("f14", "")
+            if item_name == symbol:
                 return item.get("f12")
+            if (suffix_match is None
+                    and _normalise_board_name(item_name) == _normalise_board_name(symbol)):
+                suffix_match = item.get("f12")
         # total 判断是否还有页
         total = d.get("total", 0)
         if page * 200 >= total:
+            if suffix_match:
+                return suffix_match
             raise ValueError(f"未找到板块: {symbol}（kind={kind}）")
         page += 1
 
@@ -74,7 +100,7 @@ def board_constituents(symbol: str, kind: str = "concept") -> list[dict]:
         params["pn"] = str(page)
         params["pz"] = "100"
         r = em_get(_CLIST_URL, params=params, headers={"User-Agent": UA}, timeout=15, tier="S")
-        d = r.json().get("data", {})
+        d = _response_data(r)
         diff = d.get("diff") or []
         for item in diff:
             records.append({

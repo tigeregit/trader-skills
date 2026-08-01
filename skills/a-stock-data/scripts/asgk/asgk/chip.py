@@ -1,7 +1,7 @@
 """asgk.chip — 筹码层（筹码分布 + 主力成本）。
 
 移植自 akshare stock_cyq_em（snapshot fcdbf25）。
-  - K 线获取：push2his（经网关 em_get），取近 210 根
+  - K 线获取：push2his（经网关 em_get），空响应时降级百度，取近 210 根
   - CYQ 计算：vendor JS（py_mini_racer 执行 CYQCalculator，纯数学无 DOM）
   - 返回最近 90 日筹码分布
   - @source 档位：S（日级）
@@ -63,7 +63,11 @@ def chip_distribution(symbol: str, adjust: str = "") -> list[dict]:
                        "klt": "101", "fqt": adjust_map[adjust], "lmt": "210"},
                headers={"User-Agent": UA, "Referer": "https://quote.eastmoney.com/"},
                timeout=15, tier="S")
-    klines = r.json().get("data", {}).get("klines", [])
+    klines = []
+    if r.ok:
+        payload = r.json()
+        data = payload.get("data") or {}
+        klines = data.get("klines") or []
     # 解析 K 线为 records（对齐 akshare CYQ 输入格式）
     records = []
     for line in klines:
@@ -76,6 +80,32 @@ def chip_distribution(symbol: str, adjust: str = "") -> list[dict]:
             "low": float(p[4]), "volume": float(p[5]), "volume_money": float(p[6]),
             "zf": float(p[7]), "zdf": float(p[8]), "zde": float(p[9]), "hsl": float(p[10]),
         })
+
+    # push2his 在部分网络/时段返回 rc=0,data=null；用已验证的百度日 K 继续
+    # 本地 CYQ 计算，避免把上游空响应变成 AttributeError 或永久空结果。
+    if not records:
+        from asgk.quote import baidu_kline_with_ma
+
+        baidu = baidu_kline_with_ma(symbol)
+        keys = baidu.get("keys") or []
+        for line in (baidu.get("rows") or [])[-210:]:
+            row = dict(zip(keys, line.split(",")))
+            try:
+                close = float(row["close"])
+                pre_close = float(row.get("preClose") or close)
+                records.append({
+                    "index": len(records), "date": row["time"],
+                    "open": float(row["open"]), "close": close,
+                    "high": float(row["high"]), "low": float(row["low"]),
+                    "volume": float(row["volume"]),
+                    "volume_money": float(row["amount"]),
+                    "zf": float(row.get("range") or 0),
+                    "zdf": float(row.get("ratio") or 0),
+                    "zde": close - pre_close,
+                    "hsl": float(row.get("turnoverratio") or 0),
+                })
+            except (KeyError, TypeError, ValueError):
+                continue
 
     js = _cyq_engine()
     rows = []

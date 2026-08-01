@@ -6,7 +6,7 @@
 
 | 函数 | 数据 | 源 | 档位 |
 |------|------|----|----|
-| `chip_distribution(symbol, adjust)` | 筹码分布+主力成本(单股近90日) | 东财push2his+本地CYQ | S |
+| `chip_distribution(symbol, adjust)` | 筹码分布+主力成本(单股近90日) | 东财push2his（百度日K降级）+本地CYQ | S |
 
 ## 调用示例
 
@@ -31,5 +31,6 @@ chip_qfq = chip_distribution("600519", adjust="qfq")
 - `avg_cost`/`pct90_low`/`pct90_high` 等成本单位是**元**。
 - `pctXX_concentration` 集中度是小数（数值越小筹码越集中）。
 - CYQ 算法是纯数学（换手率衰减+成交量加权三角分布），vendor 自 akshare 的 `cyq.js`（py_mini_racer 执行，无 DOM 依赖）。
-- 拉取近 210 根 K 线计算，返回最近 90 日筹码分布。
+- 拉取近 210 根 K 线计算，返回最近 90 日筹码分布；东财返回 `data=null` 或空
+  K 线时自动使用百度日 K 继续计算。
 - 日级盘后定稿（S档）。

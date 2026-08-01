@@ -40,4 +40,6 @@ print(v)
 ## 注意
 - 30x PE 是A股成长股合理估值锚点（所有行业统一）。
 - `full_valuation` 的 EPS 来自 `ths_eps_forecast`，机构覆盖<3 家时估值可靠性低。
+- `full_valuation` 同时兼容 `ths_eps_forecast` 当前的 `list[dict]` 返回和历史
+  DataFrame 返回。
 - `pe_digestion` 的 cagr = 下一年EPS/当年EPS - 1。

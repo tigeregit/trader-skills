@@ -21,7 +21,7 @@ from asgk import tencent_quote, baidu_kline_with_ma
 q = tencent_quote(["600519"])
 print(q["600519"])  # {name, price, pe_ttm, pb, mcap_yi(亿), turnover_pct, limit_up, ...}
 
-# 带均线的日K（日K首选，mootdx_bars 有兼容问题）
+# 带均线的日K（日K首选；mootdx_bars 空数据时也会降级到百度）
 bk = baidu_kline_with_ma("600519")
 print(bk["keys"])   # [timestamp, time, open, close, volume, high, low, ..., ma5avgprice, ...]
 print(bk["rows"][-5:])  # 最近5根
@@ -32,7 +32,9 @@ print(latest["time"], latest["close"], latest["ma5avgprice"])
 ```
 
 ## 注意
-- **mootdx_bars**：mootdx 0.11.7 实测返回 0 条（库兼容性问题）。日K用 `baidu_kline_with_ma` 替代。
+- **mootdx_bars**：mootdx 0.11.7 返回空日 K 时自动降级到百度，并保持
+  `{open, close, high, low, vol, amount, datetime}` 返回契约；分钟/周/月频率不做
+  非等价降级。
 - **tencent_quote 字段索引**：PE(TTM)=索引39，PB=索引46（非43，43是振幅%），总市值(亿)=44。
 - mootdx 数据**不复权**，跨除权日需自行复权。
 - mootdx 需国内网络（TCP 7709），海外超时。

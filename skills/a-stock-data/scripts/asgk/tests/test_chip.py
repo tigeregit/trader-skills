@@ -76,8 +76,36 @@ class TestChipDistribution:
                 pass
 
     def test_empty_klines_returns_empty(self):
-        with patch("asgk.chip.em_get", return_value=_kline_resp([])):
+        with patch("asgk.chip.em_get", return_value=_kline_resp([])), \
+             patch("asgk.quote.baidu_kline_with_ma", return_value={"keys": [], "rows": []}):
             assert chip_distribution("000001") == []
+
+    def test_null_data_falls_back_to_baidu(self):
+        response = MagicMock()
+        response.json.return_value = {"rc": 0, "data": None}
+        keys = ["time", "open", "close", "volume", "high", "low", "amount",
+                "range", "ratio", "turnoverratio", "preClose"]
+        rows = [
+            f"2026-07-{day:02d},10.0,10.2,100000,10.3,9.9,1020000,4.0,2.0,1.5,10.0"
+            for day in range(1, 6)
+        ]
+        with patch("asgk.chip.em_get", return_value=response), \
+             patch("asgk.quote.baidu_kline_with_ma",
+                   return_value={"keys": keys, "rows": rows}):
+            result = chip_distribution("600519")
+        assert len(result) == 5
+        assert result[-1]["avg_cost"] > 0
+
+    def test_gateway_error_falls_back_to_baidu(self):
+        response = _kline_resp([])
+        response.ok = False
+        keys = ["time", "open", "close", "volume", "high", "low", "amount",
+                "range", "ratio", "turnoverratio", "preClose"]
+        rows = ["2026-07-31,10.0,10.2,100000,10.3,9.9,1020000,4.0,2.0,1.5,10.0"]
+        with patch("asgk.chip.em_get", return_value=response), \
+             patch("asgk.quote.baidu_kline_with_ma",
+                   return_value={"keys": keys, "rows": rows}):
+            assert len(chip_distribution("600519")) == 1
 
     def test_lmt_210(self):
         """拉取近 210 根 K 线。"""

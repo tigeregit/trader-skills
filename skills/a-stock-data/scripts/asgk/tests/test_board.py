@@ -7,6 +7,7 @@ from __future__ import annotations
 from unittest.mock import patch, MagicMock
 
 from asgk.board import board_constituents, _resolve_board_code
+import pytest
 
 
 def _push2_resp(diff: list, total: int = 0) -> MagicMock:
@@ -35,6 +36,11 @@ class TestResolveBoardCode:
         with patch("asgk.board.em_get", return_value=_push2_resp(_NAME_DIFF, total=2)):
             code = _resolve_board_code("融资融券", "concept")
         assert code == "BK0655"
+
+    def test_name_resolved_with_display_suffix(self):
+        diff = [{"f12": "BK0655", "f14": "融资融券概念"}]
+        with patch("asgk.board.em_get", return_value=_push2_resp(diff, total=1)):
+            assert _resolve_board_code("融资融券", "concept") == "BK0655"
 
     def test_concept_vs_industry_fs(self):
         """概念用 t:3，行业用 t:2。"""
@@ -111,3 +117,11 @@ class TestBoardConstituents:
         with patch("asgk.board._resolve_board_code", return_value="BK0655"), \
              patch("asgk.board.em_get", return_value=_push2_resp([], total=0)):
             assert board_constituents("融资融券", "concept") == []
+
+    def test_null_data_is_not_reported_as_empty(self):
+        response = MagicMock()
+        response.json.return_value = {"rc": 0, "data": None}
+        with patch("asgk.board._resolve_board_code", return_value="BK0655"), \
+             patch("asgk.board.em_get", return_value=response), \
+             pytest.raises(RuntimeError, match="data=null"):
+            board_constituents("融资融券", "concept")

@@ -29,4 +29,5 @@ print(tele[0]["title"][:50])
 - 新闻是**流式数据**(N档)，每次都是新内容，不缓存。
 - `cls_telegraph` 直连 cls.cn + 本地签名（零key），不走网关。
 - `eastmoney_global_news` 的 `sortEnd` 参数必须传日期（已修复，默认当天）。
-- 个股新闻部分住宅IP间歇返回空（东财风控），空时换网络重试。
+- 个股新闻部分住宅 IP 间歇只返回 `passportWeb` 或非 JSONP 风控页；函数将这类
+  HTTP 200 响应归一为空列表。网关自身的 4xx/5xx 仍抛出请求错误，不伪装为空。
