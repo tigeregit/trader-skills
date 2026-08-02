@@ -1,9 +1,9 @@
 """asgk.base — 基础数据层（财务快照/F10/个股信息/财报三表）。
 
-移植自 ref/a-stock-data SKILL.md §6.1-6.4。按 asgk-contract.md 契约：
-  - 6.1/6.2 mootdx：TCP 7709 直连（不封IP），tier=L(季报)/P(公司资料)
-  - 6.3 东财个股信息：经网关(push2)，tier=S
-  - 6.4 新浪财报三表：直连(sina.cn)，tier=L
+实现约定：
+  - mootdx 财务快照/F10：TCP 7709 直连，tier=L/P
+  - 东财个股信息：经网关(push2)，tier=S
+  - 新浪财报三表：直连(sina.cn)，tier=L
 """
 from __future__ import annotations
 

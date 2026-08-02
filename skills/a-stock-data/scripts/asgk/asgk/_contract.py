@@ -1,7 +1,7 @@
 """asgk._contract — 业务函数的元数据声明契约。
 
-@source 装饰器让每个业务函数声明自己的缓存档位/指纹strip/数据源/CLI命令，
-一处定义，驱动缓存、指纹日志、文档生成、CLI 注册。
+@source 装饰器让每个业务函数声明自己的缓存档位、指纹 strip、数据源和可选调用
+入口标识，供缓存、指纹日志和工具发现使用。
 
 设计原则：装饰器是纯声明，运行时零开销——不改变函数行为（tier 仍由函数体内
 em_get 调用时传入），只把元数据存到函数对象属性上，供工具读取。
@@ -34,7 +34,7 @@ class SourceMeta:
                 f"via={self.via!r}, cli={self.cli!r})")
 
 
-# 全局注册表：所有 @source 声明的函数元数据（供 CLI 注册/文档生成/离线分析遍历）
+# 全局注册表：所有 @source 声明的函数元数据，供工具发现和离线分析遍历
 _REGISTRY: list[SourceMeta] = []
 
 
@@ -43,10 +43,10 @@ def source(tier: Tier, *, strip: list[str] | None = None,
     """声明业务函数的元数据。
 
     Args:
-        tier: 缓存档位 P/L/S/R/N（先验方案，gateway-design §3.4.6）
-        strip: 响应哈希需剔除的动态字段（§3.4.7），None=无
+        tier: 缓存档位 P/L/S/R/N
+        strip: 响应哈希需剔除的动态字段，None=无
         via: "gateway"(风控源经网关) / "direct"(腾讯/百度/新浪/mootdx 直连)
-        cli: 对应 CLI 子命令名，None=不暴露为命令行
+        cli: 可选调用入口标识，None=不声明
     """
     def decorator(func: Callable) -> Callable:
         mod = func.__module__.replace("asgk.", "") if func.__module__.startswith("asgk.") else func.__module__
@@ -65,5 +65,5 @@ def source(tier: Tier, *, strip: list[str] | None = None,
 
 
 def registry() -> list[SourceMeta]:
-    """返回所有已声明 @source 的函数元数据（CLI 注册/文档生成用）。"""
+    """返回所有已声明 @source 的函数元数据。"""
     return list(_REGISTRY)

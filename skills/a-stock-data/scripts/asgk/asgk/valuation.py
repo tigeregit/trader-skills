@@ -1,6 +1,6 @@
 """asgk.valuation — 估值计算（纯本地计算 + full_valuation 串联）。
 
-移植自 ref/a-stock-data SKILL.md「估值计算公式」+「流程A」。按 asgk-contract.md：
+实现约定：
   - forward_pe/pe_digestion/calc_peg 纯计算，无网络，无 tier
   - full_valuation 串联腾讯行情(直连) + 一致预期EPS，cli=valuation
 """

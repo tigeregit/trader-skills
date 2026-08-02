@@ -1,7 +1,6 @@
-"""asgk — A股数据共享库（本项目产物）。
+"""asgk — A 股数据共享库。
 
-底层入口 em_get（走网关/直连自适应）+ 各层取数函数。
-移植自 ref/a-stock-data，按 asgk-contract.md 契约组织。
+提供统一网关入口 ``em_get`` 和各数据层的结构化取数函数。
 """
 from asgk.em_proxy import em_get
 from asgk.quote import (

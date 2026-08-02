@@ -3,7 +3,7 @@
 验证 datacenter() 的分页能力（all_pages/max_pages）与默认行为兼容性。
 mock em_get，不打真实东财。
 
-测试方法见 .agents/notes/test-method.md。
+覆盖分页、空响应、字段映射和请求参数等关键行为。
 """
 from __future__ import annotations
 

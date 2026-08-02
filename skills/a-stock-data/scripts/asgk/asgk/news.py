@@ -1,9 +1,9 @@
 """asgk.news — 新闻层（个股新闻/财联社电报/全球资讯）。
 
-移植自 ref/a-stock-data SKILL.md §5.1-5.3。按 asgk-contract.md 契约：
-  - 5.1 东财个股新闻：经网关(search-api-web)，JSONP 解析，tier=N
-  - 5.2 财联社电报：直连(cls.cn，本地签名零key)，tier=N
-  - 5.3 东财全球资讯：经网关(np-weblist)，strip=req_trace，tier=N
+实现约定：
+  - 东财个股新闻：经网关(search-api-web)，JSONP 解析，tier=N
+  - 财联社电报：直连(cls.cn，本地签名零 key)，tier=N
+  - 东财全球资讯：经网关(np-weblist)，strip=req_trace，tier=N
 """
 from __future__ import annotations
 
@@ -97,7 +97,7 @@ def eastmoney_global_news(page_size: int = 50) -> list[dict]:
         [{title, summary(截断200字), time}, ...]
     Note:
         @source(strip=["req_trace"])：req_trace 每次是 uuid4，指纹哈希时需剔除
-        （否则每次响应哈希都不同，误判为高频变化）。见 gateway-design §3.4.7。
+        （否则每次响应哈希都不同，误判为高频变化）。
     """
     from datetime import datetime
     # sortEnd 必须传日期（空串会报 Required parameter 错误），默认当天取最新

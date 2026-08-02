@@ -1,6 +1,6 @@
 """asgk.quote — 行情层（K线/五档盘口/逐笔/腾讯PE-PB/百度均线K线）。
 
-移植自 ref/a-stock-data SKILL.md §1.1-1.3。按 asgk-contract.md 契约：
+实现约定：
   - mootdx（K线/五档/逐笔）：TCP 7709 直连，不经网关
   - 腾讯（PE/PB/市值/换手）：HTTP 直连，不经网关
   - 百度（带MA的K线）：HTTP 直连，不经网关

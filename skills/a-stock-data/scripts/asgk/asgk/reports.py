@@ -1,6 +1,6 @@
 """asgk.reports — 研报层（东财研报 + 同花顺一致预期EPS）。
 
-移植自 ref/a-stock-data SKILL.md §2.1-2.2。按 asgk-contract.md 契约：
+实现约定：
   - 东财研报经网关，P档；同花顺EPS经网关，S档
   - 返回结构化 list[dict]
 """
@@ -23,8 +23,8 @@ def eastmoney_reports(code: str, max_pages: int = 5) -> list[dict]:
         code: 6位股票代码，如 "688017"
         max_pages: 最多翻页数，每页100条
     Returns:
-        研报 record 列表，字段见 ref §2.1（title/publishDate/orgSName/
-        infoCode/predictThisYearEps/emRatingName/indvInduName 等）。
+        研报 record 列表，包含 title/publishDate/orgSName/infoCode/
+        predictThisYearEps/emRatingName/indvInduName 等字段。
     """
     all_records: list[dict] = []
     for page in range(1, max_pages + 1):

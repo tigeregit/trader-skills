@@ -1,8 +1,8 @@
 """asgk.capital — 资金面/筹码层（融资融券/大宗/股东户数/分红/资金流）。
 
-移植自 ref/a-stock-data SKILL.md §4.1-4.5。按 asgk-contract.md 契约：
-  - 4.1-4.4 经 _datacenter（东财 datacenter-web，走网关）
-  - 4.5 经 em_get（东财 push2his，走网关）
+实现约定：
+  - 融资融券/大宗/股东户数/分红经 _datacenter（东财，走网关）
+  - 资金流经 em_get（东财 push2his，走网关）
   - @source 档位：S(日级)/L(季度)/P(历史定稿)
 """
 from __future__ import annotations

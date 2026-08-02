@@ -1,6 +1,6 @@
 """asgk.limitup — 打板层（涨停/炸板/跌停池 + 题材情绪）。
 
-移植自 ref/a-stock-data SKILL.md §8.1-8.3。按 asgk-contract.md 契约：
+实现约定：
   - 东财四池走 push2ex（经网关），盘中R/盘后S
   - 同花顺涨停揭秘走 data.10jqka（经网关），R
   - 情绪由四池组合计算，R

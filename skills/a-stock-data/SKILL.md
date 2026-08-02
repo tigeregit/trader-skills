@@ -1,11 +1,11 @@
 ---
 name: a-stock-data
-description: 当任务需要获取A股真实数据时使用——行情(K线/五档/PE/PB/市值)、研报(评级/一致预期EPS)、信号(热点/北向/龙虎榜/解禁/行业)、资金面(融资融券/大宗/股东户数/分红/资金流)、业绩(预告/快报)、事件(高管增减持/回购/机构调研)、新闻(财联社电报/全球资讯)、财务三表/F10、公告、打板(涨停池/炸板率)、ETF期权(希腊字母/IV)、舆情(互动易/热榜)等。提供 Python 库(asgk) + CLI + 共享流量网关，支持单 IP 下多 agent 并发。仅在需要取数时使用，概念讨论/投资观点无需加载。
+description: 当任务需要获取A股真实数据时使用——行情(K线/五档/PE/PB/市值)、研报(评级/一致预期EPS)、信号(热点/北向/龙虎榜/解禁/行业)、资金面(融资融券/大宗/股东户数/分红/资金流)、业绩(预告/快报)、事件(高管增减持/回购/机构调研)、新闻(财联社电报/全球资讯)、财务三表/F10、公告、打板(涨停池/炸板率)、ETF期权(希腊字母/IV)、舆情(互动易/热榜)等。提供自包含 Python 库 asgk，并通过部署方提供的共享流量网关支持单 IP 下多 agent 并发。仅在需要取数时使用，概念讨论/投资观点无需加载。
 ---
 
 # A股数据 skill
 
-本项目提供 A 股取数能力，**不定义交易策略**。所有东财/同花顺请求经共享网关（全局限流+缓存），腾讯/百度/新浪/mootdx 直连。
+提供 A 股取数能力，**不定义交易策略**。所有东财/同花顺请求经共享网关（全局限流+缓存），腾讯/百度/新浪/mootdx 直连。
 
 ## 快速决策：要什么数据？
 
@@ -44,10 +44,13 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 
 ## 使用方式
 
-asgk 是 uv 项目，执行代码时须在 `scripts/` 目录（或用 `--project`）：
+先把 `A_STOCK_SKILL_DIR` 设为本 `SKILL.md` 所在目录的绝对路径；之后可从任意
+工作目录安装和调用自带的 asgk：
 
 ```bash
-cd skills/a-stock-data/scripts && uv run python -c "
+A_STOCK_SKILL_DIR=/absolute/path/to/a-stock-data
+uv sync --no-dev --project "$A_STOCK_SKILL_DIR/scripts"
+uv run --no-dev --project "$A_STOCK_SKILL_DIR/scripts" python -c "
 from asgk import tencent_quote, eastmoney_reports, full_valuation
 
 q = tencent_quote(['600519'])           # PE/PB/市值（直连腾讯）
@@ -61,47 +64,28 @@ v = full_valuation('600519')             # 完整估值
 风控源（东财/同花顺）**必须经网关**，未配 `ASGK_GW` 调用会抛异常（禁止直连，防封 IP）。
 
 ```bash
-# 1. 启网关（东财/同花顺限流+缓存）
-cd packages/sgw && uv run sgw-proxy
-#   生产环境指定指纹日志目录（按天自动拆分 sgw_fp_YYYYMMDD.jsonl）：
-#   uv run sgw-proxy --fp-dir /var/log/sgw
-
-# 2. 配置 ASGK_GW（二选一）
-#    方式A（推荐，多 agent 部署）：环境变量（systemd/container envfile）
-export ASGK_GW=http://localhost:7700
-#    方式B（开发）：项目根 .env 文件（asgk 自动加载，子 agent 也能继承）
-echo 'ASGK_GW=http://127.0.0.1:7700' > skills/a-stock-data/scripts/.env
+# 使用部署方提供的共享网关地址
+export ASGK_GW=http://127.0.0.1:7700
 ```
 
-`ASGK_GW` 来源优先级：环境变量 > .env。两者都未设时，em_get 抛异常。
-风控源不存在直连 fallback；未配置或无法连接网关时应失败关闭。
+也可把 `ASGK_GW=...` 写入任意 `.env`，再用 `ASGK_ENV` 指向该文件。
+两者都未设时 `em_get` 抛异常。风控源不存在直连 fallback；未配置或无法连接
+网关时应失败关闭。完整接入协议、缓存档位和部署边界见
+[gateway](references/gateway.md)。
 
 
 ## 数据源优先级 & 网关
 
 - **不封 IP 的源直连**：腾讯/百度/新浪/mootdx（TCP），不经网关。
 - **有风控的源经网关**：东财(12子域)/同花顺(4子域)，全局限流 ≤1 req/s + 缓存。
-- 网关是 100~1000 agent 并发的核心设施（单 IP 不封）。
+- 网关是部署环境为 100~1000 agent 共享的外部运行服务，不从本 skill 内启动。
 - 主源被封的降级策略见 [failover](references/failover.md)。
-
-## 缓存档位（由 @source 声明）
-
-| 档 | TTL | 数据类型 |
-|----|-----|---------|
-| P | 30天 | 研报/公告/分红/F10（发布即定稿） |
-| L | 1天 | 财报三表/股东户数（季度） |
-| S | 盘后12h/盘中0 | 龙虎榜/融资融券/板块（日级定稿） |
-| R | no-cache | 行情/K线/资金流（实时） |
-| N | no-cache | 新闻电报（流式） |
-
-详细缓存/分档机制见 `.agents/notes/gateway-design.md`。
 
 ## 安装
 
 ```bash
-cd skills/a-stock-data/scripts
-uv sync          # 安装 sgw + asgk 两个包
-uv run sgw-proxy # 启网关
+A_STOCK_SKILL_DIR=/absolute/path/to/a-stock-data
+uv sync --no-dev --project "$A_STOCK_SKILL_DIR/scripts"
 ```
 
 ## 已知限制

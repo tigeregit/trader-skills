@@ -1,8 +1,8 @@
 """asgk.signal — 信号层（热点/北向/板块/资金流/龙虎榜/解禁/行业）。
 
-移植自 ref/a-stock-data SKILL.md §3.1-3.8。按 asgk-contract.md 契约：
+实现约定：
   - 东财端点经 em_get 走网关；同花顺热点走网关(10jqka组)；北向(hexin.cn)直连
-  - 返回结构化 dict/list（ref 里用 pandas 的已改为 list[dict]）
+  - 返回结构化 dict/list，表格数据统一为 list[dict]
   - @source 声明档位：S(日级定稿)/R(实时)
 """
 from __future__ import annotations

@@ -1,6 +1,6 @@
 """asgk.sentiment — 舆情互动层（互动易/热榜/人气榜/概念命中）。
 
-移植自 ref/a-stock-data SKILL.md §10.1-10.2。按 asgk-contract.md 契约：
+实现约定：
   - 互动易 irm.cninfo.com.cn 直连（POST），tier=P（发布即定稿）
   - 同花顺热榜 dq.10jqka 经网关，tier=R
   - 东财人气榜/概念 emappdata 经网关，tier=R/S

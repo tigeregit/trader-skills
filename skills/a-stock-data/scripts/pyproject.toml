@@ -1,5 +1,4 @@
-# workspace 根：协调 sgw（网关）和 asgk（业务库）两个独立包。
-# 根本身不含代码，不打包。在根目录 uv sync 会装两个子包。
+# skill 自带的 uv workspace；从任意路径用 --project 指向本目录即可安装 asgk。
 [tool.uv.workspace]
 members = ["asgk"]
 
@@ -7,7 +6,3 @@ members = ["asgk"]
 # mootdx 0.11.7 声明但未使用旧 py-mini-racer；它与维护中的 mini-racer
 # 安装相同的 py_mini_racer 命名空间，在 ARM64 上还缺少原生库。
 exclude-dependencies = ["py-mini-racer"]
-
-[dependency-groups]
-# 根级 dev 依赖（测试用，P4 补充 locust 等）
-dev = []

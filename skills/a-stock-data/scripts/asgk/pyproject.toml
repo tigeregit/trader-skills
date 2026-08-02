@@ -13,10 +13,6 @@ dependencies = [
     "curl-cffi>=0.15.0",
 ]
 
-[project.scripts]
-# asgk CLI（P1 scripts-library-port 后期填充入口）
-# asgk = "asgk.cli:main"
-
 [build-system]
 requires = ["hatchling"]
 build-backend = "hatchling.build"
@@ -27,6 +23,5 @@ packages = ["asgk"]
 
 [dependency-groups]
 dev = [
-    "locust>=2.46.1",
     "pytest>=8",
 ]

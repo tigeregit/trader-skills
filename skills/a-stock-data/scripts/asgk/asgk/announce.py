@@ -1,8 +1,8 @@
 """asgk.announce — 公告层（巨潮公告检索）。
 
-移植自 ref/a-stock-data SKILL.md §7.1。按 asgk-contract.md 契约：
+实现约定：
   - 巨潮 cninfo.com.cn 直连（POST，不在风控组），tier=P（发布即定稿）
-  - 含 orgId 动态映射（规避硬编码导致 601xxx 段查不到公告的 #19 bug）
+  - 含 orgId 动态映射，避免硬编码导致部分股票代码查不到公告
 """
 from __future__ import annotations
 

@@ -1,9 +1,9 @@
 """asgk.em_proxy — 统一请求入口 em_get，风控源必经网关。
 
-接口与上游 ref/a-stock-data 的 em_get 兼容（零改动迁移）：
+调用接口：
     em_get(url, params=None, headers=None, timeout=15, **kwargs)
 
-新增可选 tier 参数（分档先验方案，见 gateway-design.md §3.4.6）：
+可选 tier 参数声明缓存档位：
     em_get(url, params=..., tier="S")   # 板块归属→S档
 
 行为：
@@ -12,7 +12,7 @@
 
 ASGK_GW 的来源（优先级从高到低）：
     1. 环境变量 ASGK_GW（最高，部署时 systemd/container envfile 用这个）
-    2. .env 文件里的 ASGK_GW（开发用；从 cwd 或 ASGK_ENV 指定路径加载）
+    2. .env 文件里的 ASGK_GW（从 cwd 或 ASGK_ENV 指定路径加载）
 环境变量优先于 .env。
 
 em_get 只被风控源（东财/同花顺）调用。直连源（腾讯/百度/新浪/mootdx/巨潮）
@@ -88,5 +88,5 @@ def em_get(url: str, params: dict | None = None, headers: dict | None = None,
     raise RuntimeError(
         "ASGK_GW 未设置：风控源（东财/同花顺）禁止直连。"
         "请配置网关地址：设环境变量 ASGK_GW=http://localhost:7700，"
-        "或在项目根创建 .env 文件写入 ASGK_GW=...。"
+        "或用 ASGK_ENV 指向包含 ASGK_GW=... 的 .env 文件。"
     )

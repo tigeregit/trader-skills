@@ -1,6 +1,6 @@
 """asgk.option — ETF期权层（合约清单/T型报价/希腊字母）。
 
-移植自 ref/a-stock-data SKILL.md §9.1。按 asgk-contract.md 契约：
+实现约定：
   - 新浪源直连（hq.sinajs.cn，GBK，必带 Referer），不经网关
   - tier：codes=S(日级慢变), tquote/greeks=R(实时)
 """

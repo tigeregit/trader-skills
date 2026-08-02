@@ -11,7 +11,7 @@
 | 龙虎榜 | 东财 datacenter | 沪深交易所官方(sse/szse) |
 | 资金流 | 东财 push2his | 新浪(日度) |
 | 融资融券 | 东财 `margin_trading`(datacenter) | **深交所官方 `margin_detail_szse`(已实现)** |
-| 公告 | 东财 | 巨潮 cninfo(本项目主源即巨潮) |
+| 公告 | 东财 | 巨潮 cninfo（asgk 默认使用巨潮） |
 | 实时价 | 东财 push2 | 腾讯 qt.gtimg.cn / mootdx TCP |
 | K线 | 东财/百度 | mootdx TCP / 腾讯 |
 
@@ -24,13 +24,14 @@
 
 ## 网关层面的保护
 
-本项目所有东财/同花顺请求经网关（`ASGK_GW`），网关侧：
+asgk 的所有东财/同花顺请求经网关（`ASGK_GW`），网关侧：
 - 全局令牌桶限流（东财组 ≤1 req/s），跨进程生效。
 - 五档缓存（静态 P 档 30 天 / 日级 S 档盘后 12h）。
 - 403 不重试（风控信号，降频应对）。
 
 即便如此，极端并发下仍可能触发风控——此时备用源是最后兜底。
 
-## 已知端点问题（P4 校正后）
-- `mootdx_bars`：mootdx 0.11.7 返回空（日K用 `baidu_kline_with_ma` 替代）。
-- 其余端点 P4 已校正可用。
+## 已知端点问题
+
+- `mootdx_bars`：mootdx 0.11.7 返回空日 K 时自动使用
+  `baidu_kline_with_ma`；非日线频率不做非等价降级。

@@ -1,9 +1,7 @@
 """asgk.client — mootdx 通达信 TCP 客户端封装。
 
-移植自 ref/a-stock-data SKILL.md Prerequisites。通达信 TCP(7709) 不封 IP，
-但 mootdx 0.11.x 有 BESTIP.HQ 空串 bug，需显式服务器探测兜底。
-
-K线/五档盘口/逐笔成交也走这里（P1 后续 quote.py 移植时用）。
+通达信 TCP(7709) 不封 IP，但 mootdx 0.11.x 可能出现 BESTIP.HQ 空串，需显式
+服务器探测兜底。K 线、五档盘口和逐笔成交共用此客户端。
 """
 from __future__ import annotations
 
@@ -11,7 +9,7 @@ import socket
 
 from mootdx.quotes import Quotes
 
-# 实测可用的通达信服务器（ref 2026-06 验证，按延迟排序）
+# 2026-06 实测可用的通达信服务器，按延迟排序
 _TDX_SERVERS = [
     ("119.97.185.59", 7709), ("124.70.133.119", 7709), ("116.205.183.150", 7709),
     ("123.60.73.44", 7709), ("116.205.163.254", 7709), ("121.36.225.169", 7709),
