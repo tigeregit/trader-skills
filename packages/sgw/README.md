@@ -59,6 +59,49 @@ uv run sgw-proxy --max-attempts 1
 uv run sgw-proxy -c /path/to/config.toml
 ```
 
+## systemd user 服务
+
+Linux 上可用便利脚本把 sgw 安装为当前用户的 systemd 服务，不需要 root：
+
+```bash
+./scripts/sgw-service.sh install
+./scripts/sgw-service.sh run
+./scripts/sgw-service.sh status
+./scripts/sgw-service.sh restart
+./scripts/sgw-service.sh stop
+./scripts/sgw-service.sh uninstall
+```
+
+`install` 使用 `uv tool install` 安装独立的 `sgw-proxy`，生成并 enable
+`~/.config/systemd/user/sgw.service`，但不会自动启动。`uninstall` 会停止服务、移除
+unit 并卸载 uv tool，但保留指纹日志、缓存和熔断状态，避免误删运行数据。
+
+安装后也可以绕过脚本，直接使用标准 systemd 命令：
+
+```bash
+systemctl --user start sgw.service
+systemctl --user stop sgw.service
+systemctl --user restart sgw.service
+systemctl --user status sgw.service
+journalctl --user-unit sgw.service -f
+```
+
+默认监听 `127.0.0.1:7700`。安装时可通过环境变量覆盖：
+
+```bash
+SGW_PORT=8080 ./scripts/sgw-service.sh install
+SGW_FP_DIR=/data/sgw/logs \
+SGW_CACHE_DIR=/data/sgw/cache \
+SGW_STATE_DIR=/data/sgw/state \
+./scripts/sgw-service.sh install
+```
+
+默认运行目录遵循 XDG：指纹和熔断状态位于
+`${XDG_STATE_HOME:-$HOME/.local/state}/sgw`，磁盘缓存位于
+`${XDG_CACHE_HOME:-$HOME/.cache}/sgw`。如需退出登录后仍运行，管理员需为该用户启用
+linger：`loginctl enable-linger <user>`。macOS 没有 systemd，脚本的服务管理命令会
+明确拒绝执行；可继续使用前述 `uv run sgw-proxy` 前台方式。
+
 ## agent 侧配置
 
 agent 通过 `ASGK_GW` 环境变量找到网关（asgk 库自动读取）：

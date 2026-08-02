@@ -3,15 +3,22 @@ from __future__ import annotations
 
 import ast
 import itertools
+import os
 from pathlib import Path
 from urllib.parse import urlsplit
+
+import pytest
 
 from sgw.proxy import EndpointPolicy, load_config
 
 
 REPO = Path(__file__).resolve().parents[3]
-ASGK_SOURCE = REPO / "skills" / "a-stock-data" / "scripts" / "asgk" / "asgk"
-CONFIG = REPO / "packages" / "sgw" / "sgw" / "config.toml"
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+ASGK_SOURCE = Path(os.environ.get(
+    "ASGK_SOURCE_DIR",
+    REPO / "skills" / "a-stock-data" / "scripts" / "asgk" / "asgk",
+))
+CONFIG = PACKAGE_ROOT / "sgw" / "config.toml"
 
 
 def _combine(parts: list[list[str]]) -> list[str]:
@@ -87,12 +94,16 @@ def _em_get_urls(path: Path) -> list[tuple[int, str]]:
                 continue
             urls = _strings(node.args[0], env)
             assert isinstance(urls, list) and urls, (
-                f"{path.relative_to(REPO)}:{node.lineno} em_get URL 无法静态归类"
+                f"{path}:{node.lineno} em_get URL 无法静态归类"
             )
             found.extend((node.lineno, url) for url in urls)
     return found
 
 
+@pytest.mark.skipif(
+    not ASGK_SOURCE.is_dir(),
+    reason="asgk source is not bundled with the standalone sgw package",
+)
 def test_every_internal_gateway_endpoint_has_one_approved_policy():
     policies = [
         EndpointPolicy.from_config(raw)
