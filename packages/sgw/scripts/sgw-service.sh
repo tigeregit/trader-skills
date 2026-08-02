@@ -6,29 +6,30 @@ PROJECT_DIR=$(cd -- "$SCRIPT_DIR/.." && pwd)
 UNIT_NAME="sgw.service"
 UNIT_DIR="${XDG_CONFIG_HOME:-$HOME/.config}/systemd/user"
 UNIT_PATH="$UNIT_DIR/$UNIT_NAME"
-STATE_HOME="${XDG_STATE_HOME:-$HOME/.local/state}/sgw"
-CACHE_HOME="${XDG_CACHE_HOME:-$HOME/.cache}/sgw"
+SERVICE_HOME="${XDG_DATA_HOME:-$HOME/.local/share}/sgw"
 
+SGW_WORK_DIR="${SGW_WORK_DIR:-$SERVICE_HOME}"
 SGW_HOST="${SGW_HOST:-127.0.0.1}"
 SGW_PORT="${SGW_PORT:-7700}"
-SGW_FP_DIR="${SGW_FP_DIR:-$STATE_HOME/fingerprints}"
-SGW_CACHE_DIR="${SGW_CACHE_DIR:-$CACHE_HOME}"
-SGW_STATE_DIR="${SGW_STATE_DIR:-$STATE_HOME/state}"
+SGW_FP_DIR="${SGW_FP_DIR:-$SGW_WORK_DIR/fingerprints}"
+SGW_CACHE_DIR="${SGW_CACHE_DIR:-$SGW_WORK_DIR/cache}"
+SGW_STATE_DIR="${SGW_STATE_DIR:-$SGW_WORK_DIR/state}"
 
 usage() {
     cat <<'EOF'
 Usage: sgw-service.sh <command>
 
 Commands:
-  install    Install sgw with uv, write and enable the systemd user unit
+  install    Install sgw globally with uv tool, then write and enable the unit
   run        Start the systemd user service
   stop       Stop the systemd user service
   restart    Restart the systemd user service
   status     Show service status
-  uninstall  Stop and remove the unit and uv tool; keep runtime data
+  uninstall  Remove the unit and uv tool; keep the service work directory
 
 Optional environment variables used by install:
-  UV_BIN, SGW_HOST, SGW_PORT, SGW_FP_DIR, SGW_CACHE_DIR, SGW_STATE_DIR
+  UV_BIN, SGW_WORK_DIR
+  SGW_HOST, SGW_PORT, SGW_FP_DIR, SGW_CACHE_DIR, SGW_STATE_DIR
 
 Manual management after install:
   systemctl --user start|stop|restart|status sgw.service
@@ -77,10 +78,20 @@ systemd_quote() {
     printf '"%s"' "$value"
 }
 
+systemd_path() {
+    local value="$1"
+    value=${value//\\/\\x5c}
+    value=${value// /\\x20}
+    value=${value//$'\t'/\\x09}
+    value=${value//$'\n'/\\x0a}
+    value=${value//%/%%}
+    printf '%s' "$value"
+}
+
 write_unit() {
     local proxy_bin="$1"
     local tmp
-    mkdir -p "$UNIT_DIR" "$SGW_FP_DIR" "$SGW_CACHE_DIR" "$SGW_STATE_DIR"
+    mkdir -p "$UNIT_DIR" "$SGW_WORK_DIR" "$SGW_FP_DIR" "$SGW_CACHE_DIR" "$SGW_STATE_DIR"
     tmp=$(mktemp "$UNIT_PATH.tmp.XXXXXX")
     {
         printf '%s\n' '[Unit]'
@@ -89,6 +100,7 @@ write_unit() {
         printf '%s\n' 'After=network-online.target'
         printf '\n%s\n' '[Service]'
         printf '%s\n' 'Type=simple'
+        printf 'WorkingDirectory=%s\n' "$(systemd_path "$SGW_WORK_DIR")"
         printf 'ExecStart=%s --host %s --port %s --fp-dir %s --cache-dir %s --state-dir %s\n' \
             "$(systemd_quote "$proxy_bin")" \
             "$(systemd_quote "$SGW_HOST")" \
@@ -113,6 +125,7 @@ install_service() {
     local tool_bin_dir proxy_bin
     validate_config
     resolve_uv
+    [[ "$SGW_WORK_DIR" == /* ]] || die "SGW_WORK_DIR must be an absolute path"
     "$UV_BIN" tool install --force "$PROJECT_DIR"
     tool_bin_dir=$("$UV_BIN" tool dir --bin)
     proxy_bin="$tool_bin_dir/sgw-proxy"
@@ -121,6 +134,7 @@ install_service() {
     systemctl --user daemon-reload
     systemctl --user enable "$UNIT_NAME"
     printf 'Installed and enabled %s.\n' "$UNIT_NAME"
+    printf 'Service work directory: %s\n' "$SGW_WORK_DIR"
     printf 'Start it with: %s run\n' "$0"
     printf 'Manual command: systemctl --user start %s\n' "$UNIT_NAME"
 }
@@ -136,8 +150,7 @@ uninstall_service() {
     if "$UV_BIN" tool list | grep -q '^sgw '; then
         "$UV_BIN" tool uninstall sgw
     fi
-    printf 'Uninstalled %s; runtime data was preserved.\n' "$UNIT_NAME"
-    printf 'Preserved: %s, %s, %s\n' "$SGW_FP_DIR" "$SGW_CACHE_DIR" "$SGW_STATE_DIR"
+    printf 'Uninstalled %s and its uv tool; service work directory was preserved.\n' "$UNIT_NAME"
 }
 
 command_name="${1:-}"

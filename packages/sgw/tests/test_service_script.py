@@ -22,6 +22,7 @@ def test_service_lifecycle_with_fake_systemd(tmp_path: Path):
     home = tmp_path / "home"
     fake_bin = tmp_path / "bin"
     tool_bin = tmp_path / "tool-bin"
+    work_dir = tmp_path / "data" / "sgw"
     log = tmp_path / "calls.log"
     for path in (home, fake_bin, tool_bin):
         path.mkdir(parents=True)
@@ -57,8 +58,7 @@ fi
         "PATH": f"{fake_bin}:/usr/bin:/bin",
         "UV_BIN": str(fake_bin / "uv"),
         "XDG_CONFIG_HOME": str(tmp_path / "config"),
-        "XDG_STATE_HOME": str(tmp_path / "state"),
-        "XDG_CACHE_HOME": str(tmp_path / "cache"),
+        "XDG_DATA_HOME": str(tmp_path / "data"),
         "SGW_PORT": "17700",
     }
 
@@ -71,8 +71,12 @@ fi
     run("install")
     unit = tmp_path / "config" / "systemd" / "user" / "sgw.service"
     content = unit.read_text(encoding="utf-8")
+    assert f"WorkingDirectory={work_dir}" in content
     assert f'ExecStart="{tool_bin}/sgw-proxy"' in content
     assert '--host "127.0.0.1" --port "17700"' in content
+    assert f'--fp-dir "{work_dir}/fingerprints"' in content
+    assert f'--cache-dir "{work_dir}/cache"' in content
+    assert f'--state-dir "{work_dir}/state"' in content
     assert "Restart=on-failure" in content
     assert "WantedBy=default.target" in content
 
@@ -81,6 +85,7 @@ fi
     run("stop")
     run("uninstall")
     assert not unit.exists()
+    assert work_dir.exists()
 
     calls = log.read_text(encoding="utf-8")
     assert "tool install --force" in calls

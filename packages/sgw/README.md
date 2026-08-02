@@ -72,9 +72,32 @@ Linux 上可用便利脚本把 sgw 安装为当前用户的 systemd 服务，不
 ./scripts/sgw-service.sh uninstall
 ```
 
-`install` 使用 `uv tool install` 安装独立的 `sgw-proxy`，生成并 enable
-`~/.config/systemd/user/sgw.service`，但不会自动启动。`uninstall` 会停止服务、移除
-unit 并卸载 uv tool，但保留指纹日志、缓存和熔断状态，避免误删运行数据。
+`install` 先通过 `uv tool install` 全局安装 sgw，再生成并 enable unit，但不会自动
+启动。程序及其 Python 环境完全由 uv 管理；systemd 使用 uv tool 暴露的绝对路径启动
+`sgw-proxy`，工作目录只用于承载服务运行时的持久化数据。
+
+默认目录如下：
+
+| 类别 | 默认位置 | 生命周期 |
+| --- | --- | --- |
+| 全局程序入口 | `$(uv tool dir --bin)/sgw-proxy`，通常为 `~/.local/bin/sgw-proxy` | uv 管理 |
+| 全局程序环境 | `$(uv tool dir)/sgw`，通常为 `~/.local/share/uv/tools/sgw/` | uv 管理 |
+| 服务定义 | `${XDG_CONFIG_HOME:-~/.config}/systemd/user/sgw.service` | `install` 生成，`uninstall` 删除 |
+| 服务工作目录 | `${XDG_DATA_HOME:-~/.local/share}/sgw/` | systemd `WorkingDirectory`，`uninstall` 保留 |
+| 指纹日志 | `<服务工作目录>/fingerprints/` | 持久化，`uninstall` 保留 |
+| 响应缓存 | `<服务工作目录>/cache/` | 持久化，`uninstall` 保留 |
+| 熔断状态 | `<服务工作目录>/state/` | 持久化，`uninstall` 保留 |
+
+工作目录与程序安装解耦：删除源码 checkout 不影响已经安装的服务；`uv tool` 的程序
+目录也不存放运行数据。更新源码后重新执行 `install` 会让 uv 覆盖更新全局工具，随后
+重启服务即可使用新版本：
+
+```bash
+# 在仓库根目录执行
+git pull --ff-only
+./packages/sgw/scripts/sgw-service.sh install
+./packages/sgw/scripts/sgw-service.sh restart
+```
 
 安装后也可以绕过脚本，直接使用标准 systemd 命令：
 
@@ -86,21 +109,28 @@ systemctl --user status sgw.service
 journalctl --user-unit sgw.service -f
 ```
 
-默认监听 `127.0.0.1:7700`。安装时可通过环境变量覆盖：
+默认监听 `127.0.0.1:7700`。可为 systemd 指定其他持久化工作目录；该路径会写入
+unit，并同时成为三个数据子目录的根：
+
+```bash
+SGW_WORK_DIR=/srv/sgw ./scripts/sgw-service.sh install
+```
+
+监听地址与持久化目录也可在安装时覆盖：
 
 ```bash
 SGW_PORT=8080 ./scripts/sgw-service.sh install
-SGW_FP_DIR=/data/sgw/logs \
-SGW_CACHE_DIR=/data/sgw/cache \
-SGW_STATE_DIR=/data/sgw/state \
+SGW_FP_DIR=/srv/sgw/fingerprints \
+SGW_CACHE_DIR=/srv/sgw/cache \
+SGW_STATE_DIR=/srv/sgw/state \
 ./scripts/sgw-service.sh install
 ```
 
-默认运行目录遵循 XDG：指纹和熔断状态位于
-`${XDG_STATE_HOME:-$HOME/.local/state}/sgw`，磁盘缓存位于
-`${XDG_CACHE_HOME:-$HOME/.cache}/sgw`。如需退出登录后仍运行，管理员需为该用户启用
-linger：`loginctl enable-linger <user>`。macOS 没有 systemd，脚本的服务管理命令会
-明确拒绝执行；可继续使用前述 `uv run sgw-proxy` 前台方式。
+`uninstall` 会卸载全局 uv tool，但不会删除服务工作目录及其中的数据。自定义目录需要
+在每次重新 `install` 时使用相同设置；日常 `run`、`stop`、`restart` 不需要再次
+传入。如需退出登录后仍运行，管理员需为该用户启用 linger：
+`loginctl enable-linger <user>`。macOS 没有 systemd，脚本的服务管理命令会明确拒绝
+执行；可继续使用前述 `uv run sgw-proxy` 前台方式。
 
 ## agent 侧配置
 
