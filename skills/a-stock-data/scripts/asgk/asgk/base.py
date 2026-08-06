@@ -92,9 +92,17 @@ def sina_financial_report(code: str, report_type: str = "lrb", num: int = 8) -> 
     Returns:
         按报告期倒序的记录列表，每期一条 dict：
         {"报告期": "2026-03-31", "<科目>": "<值>", "<科目>_同比": <同比>, ...}
-    Note:
-        经网关（sina 限流组），tier=L。
+
+    取数路径（§3.4）：优先调 sina_finance 能力（report_list 解析下沉），回退旧路径。
     """
+    data = _server_call("sina_finance", {"code": code, "report_type": report_type, "num": num})
+    if data is not None:
+        return data
+    return _sina_financial_report_legacy(code, report_type, num)
+
+
+def _sina_financial_report_legacy(code: str, report_type: str = "lrb", num: int = 8) -> list[dict]:
+    """回退路径：经 sgw 网关取新浪财报，本地解析 report_list。"""
     prefix = "sh" if code.startswith("6") else "sz"
     r = em_get(
         "https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022",

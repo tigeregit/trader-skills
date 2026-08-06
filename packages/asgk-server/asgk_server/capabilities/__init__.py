@@ -9,6 +9,8 @@
 """
 from . import baidu_kline  # noqa: F401  baidu_kline_with_ma (curl_cffi)
 from . import clist  # noqa: F401  industry_rank / board_constituents
+from . import cls_telegraph  # noqa: F401  cls_telegraph (md5(sha1) sign)
+from . import cninfo  # noqa: F401  announcements / irm
 from . import datacenter  # noqa: F401
 from . import em_hot  # noqa: F401
 from . import fund_flow  # noqa: F401
@@ -18,5 +20,6 @@ from . import news  # noqa: F401
 from . import push2  # noqa: F401  stock_info / concept_blocks
 from . import quote  # noqa: F401
 from . import reports  # noqa: F401
+from . import sina_finance  # noqa: F401  sina_financial_report
 from . import sina_option  # noqa: F401  codes / tquote / greeks
 from . import ths_signal  # noqa: F401
