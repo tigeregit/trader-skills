@@ -456,21 +456,32 @@ file 交付、体积上限保护），独立设计。
 
 ---
 
-## T12 — 文档收尾
+## T12 — 文档收尾 ✅
 
 **目标**：更新所有文档反映新架构。
 
-**改动**：
-- `SKILL.md`：调用方式更新（双入口 + source/format 参数示例）
-- `references/*.md`：去掉 URL/协议细节，改为能力描述 + format/output 用法
-- `design.md` / `gateway-design.md` / `asgk-contract.md`：标注被
-  `capability-proxy-design.md` 取代的部分
-- `AGENTS.md` §2/§3：架构描述更新（能力代理取代透明代理）
-- `data-source-risk-control.md`：迁移进度更新（全部经服务端，无直连）
+**改动**（全部完成）：
+- ✅ `skills/a-stock-data/SKILL.md`：frontmatter + 架构描述更新（能力代理取代透明
+  代理）；环境配置改双路径（ASGK_SERVER 优先 + ASGK_GW 回退）；使用示例加 ASGK_SERVER
+  + CLI 示例；快速决策表加 announce_pdf/report_pdf 行（118 行，<300 行约束）。
+- ✅ `AGENTS.md` §2：能力代理统一出口 + 流量管控经服务端 + 缓存优先 + 代码复用更新。
+- ✅ `AGENTS.md` §3 目录结构：packages/ 加 asgk-server/，sgw/ 标 DEPRECATED。
+- ✅ `AGENTS.md` §6：ref/a-stock-data 重构方案描述更新（指向 capability-proxy-design）。
+- ✅ `.agents/notes/design.md`：顶部加「架构已演进」banner，指向 capability-proxy-design。
+- ✅ `.agents/notes/gateway-design.md`：顶部加「透明代理已被能力代理取代」banner，
+  标注哪些部分仍有效（流量内核/不可降级约束，已原样搬入 asgk-server）。
+- ✅ `.agents/notes/asgk-contract.md`：顶部加「架构已演进」banner，标注两层函数模型
+  的客户端契约仍有效，em_get 降级为回退路径。
+- ✅ `.agents/notes/data-source-risk-control.md`：顶部加迁移状态更新（全部经服务端，
+  无直连；逐源风控结论仍作 config.toml rps 取值依据）。
+- ✅ `skills/a-stock-data/references/docs.md`（新建）：文档层函数速查 + 调用示例 +
+  文档型与结构化差异 + 体积上限 + 二进制传输说明。
 
-**验收**：文档与代码一致，无过时描述
+**验收**：文档与代码一致，无过时描述 ✅（SKILL.md/AGENTS.md/design docs 均反映能力
+代理架构；sgw 标 DEPRECATED；references 加 docs.md 覆盖新能力）。测试绿：server 153 /
+client 211。
 
-**依赖**：T11
+**依赖**：T11 ✅
 
 ---
 
