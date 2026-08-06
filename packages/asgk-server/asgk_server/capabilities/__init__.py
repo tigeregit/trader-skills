@@ -13,6 +13,7 @@ from . import clist  # noqa: F401  industry_rank / board_constituents
 from . import cls_telegraph  # noqa: F401  cls_telegraph (md5(sha1) sign)
 from . import cninfo  # noqa: F401  announcements / irm
 from . import datacenter  # noqa: F401
+from . import docs  # noqa: F401  announce_pdf / report_pdf (binary)
 from . import em_hot  # noqa: F401
 from . import fund_flow  # noqa: F401
 from . import holders  # noqa: F401
