@@ -78,9 +78,18 @@ def cls_telegraph(page_size: int = 50) -> list[dict]:
 
     Returns:
         [{title, content, time(YYYY-MM-DD HH:MM:SS)}, ...]
-    Note:
-        经网关（cls 组），tier=N no-cache。签名在调用方算好放 query 透传。
+
+    取数路径（§3.4）：优先调 cls_telegraph 能力（md5(sha1) 签名 + ctime 转换
+    全下沉服务端），回退旧路径。
     """
+    data = _server_call("cls_telegraph", {"page_size": page_size})
+    if data is not None:
+        return data
+    return _cls_telegraph_legacy(page_size)
+
+
+def _cls_telegraph_legacy(page_size: int = 50) -> list[dict]:
+    """回退路径：经 sgw 网关取 cls 电报，本地签名 + 解析。"""
     params = {"appName": "CailianpressWeb", "os": "web", "sv": "7.7.5",
               "last_time": "", "refresh_type": "1", "rn": str(page_size)}
     # 签名：md5(sha1(按 key 字典序拼接的 query 串))，纯本地算、无需 key
