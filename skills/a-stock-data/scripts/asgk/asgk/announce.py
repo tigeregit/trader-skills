@@ -1,16 +1,15 @@
 """asgk.announce — 公告层（巨潮公告检索）。
 
 实现约定：
-  - 巨潮 cninfo.com.cn 直连（POST，不在风控组），tier=P（发布即定稿）
+  - 巨潮 cninfo.com.cn 经网关（cninfo 组），POST form，tier=P（发布即定稿）
   - 含 orgId 动态映射，避免硬编码导致部分股票代码查不到公告
 """
 from __future__ import annotations
 
 from datetime import datetime
 
-import requests
-
 from asgk._contract import source
+from asgk.em_proxy import em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -34,8 +33,8 @@ def _cninfo_orgid(code: str) -> str:
     global _CNINFO_ORGID_MAP
     if not _CNINFO_ORGID_MAP:
         try:
-            r = requests.get("http://www.cninfo.com.cn/new/data/szse_stock.json",
-                             headers={"User-Agent": UA}, timeout=15)
+            r = em_get("http://www.cninfo.com.cn/new/data/szse_stock.json",
+                       headers={"User-Agent": UA}, timeout=15, tier="P")
             _CNINFO_ORGID_MAP = {s["code"]: s["orgId"]
                                  for s in r.json().get("stockList", [])}
         except Exception:
@@ -50,7 +49,7 @@ def _cninfo_orgid(code: str) -> str:
     return f"gssz0{code}"
 
 
-@source(tier="P", via="direct", cli="announce")
+@source(tier="P", via="gateway", cli="announce")
 def cninfo_announcements(code: str, page_size: int = 30) -> list[dict]:
     """巨潮公告全文检索。
 
@@ -59,6 +58,8 @@ def cninfo_announcements(code: str, page_size: int = 30) -> list[dict]:
         page_size: 条数
     Returns:
         [{title, type, date, url}, ...]
+    Note:
+        经网关（cninfo 组），POST form-encoded，tier=P。
     """
     org_id = _cninfo_orgid(code)
     payload = {
@@ -68,11 +69,11 @@ def cninfo_announcements(code: str, page_size: int = 30) -> list[dict]:
         "searchkey": "", "secid": "", "sortName": "", "sortType": "",
         "isHLtitle": "true",
     }
-    headers = {"User-Agent": UA, "Content-Type": "application/x-www-form-urlencoded",
+    headers = {"User-Agent": UA,
                "Referer": "https://www.cninfo.com.cn/new/disclosure",
                "Origin": "https://www.cninfo.com.cn"}
-    r = requests.post("https://www.cninfo.com.cn/new/hisAnnouncement/query",
-                      data=payload, headers=headers, timeout=15)
+    r = em_get("https://www.cninfo.com.cn/new/hisAnnouncement/query",
+               data=payload, headers=headers, timeout=15, tier="P", method="POST")
     return [{
         "title": item.get("announcementTitle", ""),
         "type": item.get("announcementTypeName", ""),
