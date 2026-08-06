@@ -186,13 +186,24 @@ def baidu_kline_with_ma(code: str, start_time: str = "") -> dict:
     Returns:
         {keys: [字段名...], rows: ["时间戳,日期,开盘,收盘,成交量,最高,最低,...", ...]}
         ``rows`` 中每项是 CSV 字符串，与 ``keys`` 按下标一一对应。
-
+    Raises:
+        RuntimeError: 上游风控/异常（ResultCode != 0、HTTP 非 200、非 JSON）。
     Note:
-        经网关（baidu 组），网关用 curl_cffi 的 Chrome 协议栈画像出网
-        （endpoint 标 egress_client=curl_cffi）。百度会按协议栈画像区分请求，
-        普通 urllib/requests 即使带完整 Chrome headers 仍返回 ResultCode=403，
-        故网关对该端点用 curl_cffi 指纹出网。
+        百度按协议栈画像区分请求，普通 urllib/requests 即使带完整 Chrome headers
+        仍返回 ResultCode=403，故服务端 source 标 egress_client=curl_cffi 指纹出网。
+
+    取数路径（§3.4）：优先调 baidu_kline 能力（curl_cffi + ResultCode 判定 +
+    CSV keys/rows 解析全下沉服务端），回退旧路径（em_get + 本地 _parse_baidu_kline）。
+    回退路径保留 RuntimeError 契约（chip.py / mootdx_bars 降级依赖此异常）。
     """
+    data = _server_call("baidu_kline", {"code": code, "start_time": start_time})
+    if data is not None:
+        return data
+    return _baidu_kline_with_ma_legacy(code, start_time)
+
+
+def _baidu_kline_with_ma_legacy(code: str, start_time: str = "") -> dict:
+    """回退路径：经 sgw 网关取百度 K 线（curl_cffi 指纹由 sgw 配置），本地解析。"""
     params = {"all": "1", "isIndex": "false", "isBk": "false", "isBlock": "false",
               "isFutures": "false", "isStock": "true", "newFormat": "1",
               "group": "quotation_kline_ab", "finClientType": "pc",

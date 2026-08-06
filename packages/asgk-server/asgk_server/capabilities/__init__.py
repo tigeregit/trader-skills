@@ -7,6 +7,7 @@
 - datacenter：东财数据中心统一查询（15 函数共用，具名语义）
 - limitup_pool：东财涨停四池（zt/zb/dt/yzt，pool_type 参数区分）
 """
+from . import baidu_kline  # noqa: F401  baidu_kline_with_ma (curl_cffi)
 from . import clist  # noqa: F401  industry_rank / board_constituents
 from . import datacenter  # noqa: F401
 from . import em_hot  # noqa: F401
