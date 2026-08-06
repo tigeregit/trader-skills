@@ -16,6 +16,7 @@ import requests
 from lxml import html
 
 from asgk._contract import source
+from asgk.em_proxy import _server_call
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -67,9 +68,20 @@ def market_pe_lg(market: str = "上证") -> list[dict]:
         market: 市场关键词，上证/深证/创业板
     Returns:
         [{date, close(收盘指数), pe(平均市盈率)}, ...]
+
+    取数路径（§3.4）：优先调 legulegu 能力（lg_type=pe，CSRF 会话在服务端闭环），
+    回退旧路径（直连 + 本地 CSRF 两步流）。
     """
     if market not in _PE_MARKET:
         raise ValueError(f"PE market 取值: 上证/深证/创业板（科创版走单独URL，暂不支持），得到: {market!r}")
+    data = _server_call("legulegu", {"lg_type": "pe", "market": market})
+    if data is not None:
+        return data
+    return _market_pe_lg_legacy(market)
+
+
+def _market_pe_lg_legacy(market: str) -> list[dict]:
+    """回退路径：直连乐咕，本地 CSRF 两步流。"""
     headers, cookies = _legu_csrf(_PE_PAGE[market])
     r = requests.get("https://legulegu.com/api/stock-data/market-pe",
                      params={"token": _legu_token(), "marketId": _PE_MARKET[market]},
@@ -89,9 +101,20 @@ def market_pb_lg(market: str = "上证") -> list[dict]:
         market: 市场关键词，上证/深证/创业板/科创版
     Returns:
         [{date, close(收盘指数), pb(平均市净率), add_pb(附加市净率)}, ...]
+
+    取数路径（§3.4）：优先调 legulegu 能力（lg_type=pb，CSRF 会话在服务端闭环），
+    回退旧路径。
     """
     if market not in _PB_MARKET:
         raise ValueError(f"PB market 取值: 上证/深证/创业板/科创版，得到: {market!r}")
+    data = _server_call("legulegu", {"lg_type": "pb", "market": market})
+    if data is not None:
+        return data
+    return _market_pb_lg_legacy(market)
+
+
+def _market_pb_lg_legacy(market: str) -> list[dict]:
+    """回退路径：直连乐咕，本地 CSRF 两步流。"""
     headers, cookies = _legu_csrf(_PB_PAGE[market])
     r = requests.get("https://legulegu.com/api/stockdata/index-basic-pb",
                      params={"token": _legu_token(), "indexCode": _PB_MARKET[market]},

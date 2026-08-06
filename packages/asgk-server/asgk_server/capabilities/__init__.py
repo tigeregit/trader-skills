@@ -15,6 +15,7 @@ from . import datacenter  # noqa: F401
 from . import em_hot  # noqa: F401
 from . import fund_flow  # noqa: F401
 from . import holders  # noqa: F401
+from . import legulegu  # noqa: F401  market_pe_lg / market_pb_lg (CSRF session)
 from . import limitup_pool  # noqa: F401
 from . import mootdx  # noqa: F401  bars/quotes/transaction/finance/f10 (TCP pool)
 from . import news  # noqa: F401

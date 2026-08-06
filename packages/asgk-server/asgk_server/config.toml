@@ -92,6 +92,13 @@ domains = []   # TCP 非 HTTP，无域名；按 group 名匹配
 rps = 2.0      # 保守值（mootdx 社区实践高频轮询稳定）
 jitter = [0.1, 0.3]
 
+# 乐咕 legulegu：[§7 决策10] 验证无风控，但需 CSRF 会话（两步流），纳入限流组。
+[[group]]
+name = "legulegu"
+domains = ["legulegu.com"]
+rps = 0.5     # 保守值（历史数据 L 档，日级慢变，无高频需求）
+jitter = [0.5, 1.5]
+
 [circuit]
 # 家庭 IP 无法快速更换：403/429 在代码中立即熔断；以下控制普通故障。
 cooldown_seconds = 300
