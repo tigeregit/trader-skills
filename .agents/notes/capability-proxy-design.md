@@ -88,8 +88,13 @@ agent → asgk 业务函数(硬编码全部上游知识) → em_get(url,params) 
 
 ### 2.2 核心原则
 
-- **客户端是纯数据消费者**：只发语义请求（「我要 600519 的实时行情」），
-  拿结构化数据。不知道有腾讯/百度/通达信这些源，不知道 URL/HTTP/TCP/GBK/指纹。
+- **客户端默认只关心数据**：发语义请求（「我要 600519 的实时行情」）拿结构化
+  数据，默认不关心具体来自哪个源。URL/HTTP/TCP/GBK/指纹等取数细节对客户端不可见。
+- **源可查询、可指定**：当一个能力有多个数据源时，客户端可以：
+  - `list_sources("quote")` → 列出该能力支持的所有源（如 `["tencent","sina","eastmoney"]`）
+  - `tencent_quote(['600519'], source="sina")` → 显式指定走某源（用于对比/调试/绕过熔断）
+  - 不指定时由服务端按优先级 + 健康度自动选源（含熔断降级）
+  - 单源能力（如公告只有巨潮）则 `list_sources` 返回单元素列表，`source` 传错报错
 - **服务端是数据能力代理**：拥有所有上游知识，负责选源、取数、解析、限流、
   缓存、容灾。对外接口是**数据能力**（quote/kline/f10...），不是 URL 转发。
 - **协议无关**：服务端内部知道怎么用 TCP 取通达信、用 curl_cffi 取百度、
@@ -104,6 +109,7 @@ agent → asgk 业务函数(硬编码全部上游知识) → em_get(url,params) 
 | mootdx | TCP 无法 HTTP 代理，被迫直连 | 服务端内嵌 TCP 客户端，天然解决 |
 | legulegu CSRF | 无状态代理无法保持会话 | 服务端持有会话，天然解决 |
 | 加新源 | 改 skill（函数+URL+解析）+ 网关 config + 测试 | 服务端加适配器，客户端接口不变 |
+| 多源对比/切换 | 不支持（源 hardcode 在函数名里） | `source` 参数指定 + `list_sources` 发现 |
 | 上游变更 | 改 skill + 重分发所有 agent | 只改服务端一处 |
 
 ## 三、契约设计
@@ -113,18 +119,25 @@ agent → asgk 业务函数(硬编码全部上游知识) → em_get(url,params) 
 按数据域暴露能力，输入语义参数，输出结构化数据。接口示例：
 
 ```
-POST /v1/quote        {"codes": ["600519"]}           → {code: {price, pe_ttm, pb, ...}}
-POST /v1/kline        {"code": "600519", "ma": true}  → {keys, rows}
-POST /v1/f10          {"code": "600519", "name": "公司概况"} → "文本"
-POST /v1/announce     {"code": "600519", "page_size": 30}  → [{title, date, url}]
-POST /v1/report       {"code": "600519"}              → [{rating, eps, ...}]
-POST /v1/dragon_tiger {"code": "600519"}              → [{...}]
+POST /v1/quote        {"codes": ["600519"]}                        → {code: {price, pe_ttm, pb, ...}}
+POST /v1/quote        {"codes": ["600519"], "source": "sina"}      → 显式指定源（多源能力）
+POST /v1/kline        {"code": "600519", "ma": true}               → {keys, rows}
+POST /v1/kline        {"code": "600519", "source": "mootdx"}       → 强制走 mootdx（不降级百度）
+POST /v1/f10          {"code": "600519", "name": "公司概况"}        → "文本"
+POST /v1/announce     {"code": "600519", "page_size": 30}          → [{title, date, url}]
+POST /v1/report       {"code": "600519"}                           → [{rating, eps, ...}]
 ...
+GET  /v1/sources      ?capability=quote                            → ["tencent","sina","eastmoney"]
 ```
 
-每个能力对应 asgk 现有的一个业务函数，参数语义化（code/date/page_size），
-不含 URL/协议/header。返回值结构与现有业务函数一致（dict/list），保证客户端
-零改动。
+约定：
+- **`source` 可选参数**：多源能力（如 quote/kline/realtime）支持显式指定源。
+  不传时服务端按优先级 + 健康度（熔断状态）自动选源；主源熔断自动降级备源。
+  单源能力（如 announce 只有 cninfo）传 `source` 需匹配唯一源，否则报错。
+- **`GET /v1/sources`**：列出某能力支持的所有源，供客户端发现/校验。不带
+  `capability` 时返回全部能力及其源映射。
+- 参数语义化（code/date/page_size），不含 URL/协议/header。返回值结构与现有
+  业务函数一致（dict/list），保证客户端零改动。
 
 ### 3.2 能力注册表（服务端持有）
 
@@ -134,44 +147,63 @@ POST /v1/dragon_tiger {"code": "600519"}              → [{...}]
 @capability(
     name="quote",
     domain="行情",
-    sources=[                           # 多源容灾链，按优先级
-        {"src": "tencent", "tier": "R", "group": "tencent"},
+    sources=[                           # 多源，按优先级；可被客户端 list/指定
+        {"name": "tencent", "tier": "R", "group": "tencent", "healthy": True},
+        {"name": "sina",    "tier": "R", "group": "sina",    "healthy": True},
     ],
-    cache_tier="R",                      # 缓存档位
-    fallback=None,                       # 容灾降级（如 mootdx空K→百度）
+    default_source="tencent",           # 不指定 source 时首选（熔断则降级下一优先级）
+    fallback=None,                       # 自动降级链（如 kline: mootdx空→baidu）
 )
-def fetch_quote(codes: list[str]) -> dict:
-    # 服务端实现：选源→构造请求→取数→解析→返回结构化数据
+def fetch_quote(codes: list[str], source: str | None = None) -> dict:
+    # 服务端实现：选源(显式或自动)→构造请求→取数→解析→返回结构化数据
     ...
 ```
 
+约定：
+- `sources` 列出该能力的**全部可用源**（驱动 `GET /v1/sources`），按优先级排序；
+  每个 source 的 `healthy` 由熔断器实时更新，自动选源时跳过不健康的。
+- `default_source`：客户端不传 `source` 时的首选；主源熔断自动降级到下一健康源。
+- 客户端传 `source` 时绕过自动选源，强制走指定源（若该源熔断则报错而非降级——
+  显式指定意味着客户端明确要这个源的数据）。
+
 这是现有 `@source(tier, via, cli)` 装饰器的演进：`via`（direct/gateway）被
-`sources`（多源链 + 限流组）取代；URL/编码/签名等实现细节不再是元数据，而是
-能力函数体内的实现（对客户端不可见）。
+`sources`（可枚举可指定的多源 + 限流组 + 健康度）取代；URL/编码/签名等实现细节
+不再是元数据，而是能力函数体内的实现（对客户端不可见）。
 
 ### 3.3 客户端双入口
 
 **Python（零破坏）**：保留 `tencent_quote(['600519'])` 等全部函数名与签名，
 内部从「拼 URL + em_get」改为「调服务端语义接口」。agent 和 references 文档
-零改动。
+零改动（`source` 是新增的可选参数，不传时行为不变）。
 
 ```python
 # 重构后内部（agent 无感）
-def tencent_quote(codes):
-    return _server_call("quote", {"codes": codes})  # 替代 em_get(qt.gtimg.cn...)
+def tencent_quote(codes, source=None):
+    return _server_call("quote", {"codes": codes, "source": source})  # 替代 em_get(qt.gtimg.cn...)
+
+# 多源能力支持显式指定源（可选，新增能力）
+tencent_quote(['600519'], source="sina")  # 强制走新浪
 ```
+
+> 注：函数名 `tencent_quote` 保留是为了零破坏（历史调用方仍在用），语义上
+> 它现在代表「实时行情」能力而非「腾讯这个源」。新代码建议用更显式的别名
+> `quote = tencent_quote`（在 `__init__.py` 导出）。源选择通过 `source` 参数，
+> 不通过函数名。
 
 **CLI（新增，兑现承诺）**：`asgk-contract.md` 第六节承诺但未实现的 CLI：
 
 ```
-asgk quote 600519           # 等价 tencent_quote(['600519'])
-asgk kline 600519           # 等价 baidu_kline_with_ma('600519')
-asgk report 600519          # 等价 eastmoney_reports('600519')
-asgk announce 600519        # 等价 cninfo_announcements('600519')
---format json|table         # 默认 table，json 给管道
+asgk quote 600519                  # 等价 tencent_quote(['600519'])
+asgk quote 600519 --source sina    # 显式指定源
+asgk quote --sources               # 列出 quote 能力支持的源
+asgk kline 600519                  # 等价 baidu_kline_with_ma('600519')
+asgk report 600519                 # 等价 eastmoney_reports('600519')
+asgk announce 600519               # 等价 cninfo_announcements('600519')
+--format json|table                # 默认 table，json 给管道
 ```
 
-CLI 直接调服务端，不经 Python 库（shell/其他语言也能用）。
+CLI 直接调服务端，不经 Python 库（shell/其他语言也能用）。`--source` / `--sources`
+对应语义接口的 `source` 参数和 `GET /v1/sources`。
 
 ### 3.4 em_get 的兼容角色（渐进迁移的枢纽）
 
