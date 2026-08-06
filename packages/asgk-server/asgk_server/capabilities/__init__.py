@@ -18,4 +18,5 @@ from . import news  # noqa: F401
 from . import push2  # noqa: F401  stock_info / concept_blocks
 from . import quote  # noqa: F401
 from . import reports  # noqa: F401
+from . import sina_option  # noqa: F401  codes / tquote / greeks
 from . import ths_signal  # noqa: F401

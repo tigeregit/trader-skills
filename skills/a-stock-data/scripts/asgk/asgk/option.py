@@ -7,7 +7,7 @@
 from __future__ import annotations
 
 from asgk._contract import source
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 SINA_OPT_HDR = {"Referer": "https://stock.finance.sina.com.cn/", "User-Agent": UA}
@@ -37,13 +37,23 @@ def sina_option_codes(underlying: str = "510050", call: bool = True) -> dict:
         call: True认购/False认沽
     Returns:
         {月份YYMM: [合约代码,...]}，第一个 key 即近月。
-    Note:
-        经网关（sina 组），codes=S 档。
+
+    取数路径（§3.4）：优先调 sina_option 能力（option_type=codes，contractMonth +
+    逐月清单 + GBK 解析全下沉），回退旧路径。
     """
+    data = _server_call("sina_option", {"option_type": "codes",
+                                        "underlying": underlying, "call": call})
+    if data is not None:
+        return data
+    return _sina_option_codes_legacy(underlying, call)
+
+
+def _sina_option_codes_legacy(underlying: str = "510050", call: bool = True) -> dict:
+    """回退路径：经 sgw 网关取 contractMonth + 逐月清单，本地 GBK 解析。"""
     cate = {"510050": "50ETF", "510300": "300ETF",
             "588000": "科创50ETF", "510500": "500ETF"}.get(underlying, "50ETF")
     url = ("https://stock.finance.sina.com.cn/futures/api/openapi.php/"
-           f"StockOptionService.getStockName")
+           "StockOptionService.getStockName")
     try:
         r = em_get(url, params={"exchange": "null", "cate": cate},
                    headers=SINA_OPT_HDR, timeout=10, tier="S")
@@ -67,7 +77,18 @@ def sina_option_tquote(code: str) -> dict:
 
     Returns: bid_vol/bid/last/ask/ask_vol/open_interest(持仓量)/pct/strike(行权价)/
     prev_close/open/limit_up/limit_down/name/amplitude/high/low/volume/amount。
+
+    取数路径（§3.4）：优先调 sina_option 能力（option_type=tquote，字段索引映射
+    下沉），回退旧路径。
     """
+    data = _server_call("sina_option", {"option_type": "tquote", "code": code})
+    if data is not None:
+        return data
+    return _sina_option_tquote_legacy(code)
+
+
+def _sina_option_tquote_legacy(code: str) -> dict:
+    """回退路径：经 sgw 网关取 hq sinajs，本地字段索引映射。"""
     v = _sina_opt_list(f"CON_OP_{code}")
     if len(v) < 43:
         return {}
@@ -85,7 +106,18 @@ def sina_option_greeks(code: str) -> dict:
 
     Returns: name/volume/delta/gamma/theta/vega/iv(小数)/high/low/trade_code/strike/last/theory。
     Note: raw[1:4] 是 3 个空串，必须跳过（[raw[0]] + raw[4:]），否则字段错位。
+
+    取数路径（§3.4）：优先调 sina_option 能力（option_type=greeks，跳空串逻辑
+    下沉），回退旧路径。
     """
+    data = _server_call("sina_option", {"option_type": "greeks", "code": code})
+    if data is not None:
+        return data
+    return _sina_option_greeks_legacy(code)
+
+
+def _sina_option_greeks_legacy(code: str) -> dict:
+    """回退路径：经 sgw 网关取 hq sinajs，本地跳空串 + 字段索引映射。"""
     raw = _sina_opt_list(f"CON_SO_{code}")
     if len(raw) < 16:
         return {}
