@@ -1,5 +1,11 @@
 # 测试方法：pi agent + 双层压测
 
+> **⚠️ 操作细节已过时**：本文的**方法论**（pi 端到端 + locust 压测的双层策略）
+> 仍然有效，但操作命令中的 `ASGK_GW`/`skills/a-stock-data/scripts/`/`em_get`/
+> sgw 引用基于已删除的客户端库。当前测试对象是 `packages/asgk-server`
+> （`uv run pytest`，187 测试）。应用本方法论时，把测试对象替换为 asgk-server
+> 服务端 + asgk CLI，把 `ASGK_GW` 换成 `ASGK_SERVER`。
+
 服务于 `.agents/todo/gateway-mvp.md`、`.agents/todo/skill-integration-test.md`。本文是项目正式测试方法定义（非待办）。
 
 ## 一、结论：选用 pi agent，辅以 HTTP 压测

@@ -5,13 +5,18 @@
 > 业务函数内部从「拼 URL + em_get」改为「`_server_call(capability, params)` 调服务端」，
 > 服务端持有全部上游知识。
 >
-> **本文件的以下契约仍然有效**（客户端不变）：
-> - 业务函数返回结构化 Python 对象（dict/list/str/bytes），不返回 Response
-> - `@source` 装饰器元数据声明（tier/via/cli/data_type）——格式化层、CLI 自动发现仍用
-> - 函数签名与返回结构（调用方零破坏）
+> **⚠️ 进一步演进（CLI 并入 server 包后）**：本文件描述的**整个客户端库**
+> （`@source` 装饰器 / `em_get` / 业务函数 / `skills/a-stock-data/scripts/asgk/`）
+> 已于 CLI 重构时**整体删除**。当前 CLI 是纯 HTTP 客户端
+> （`packages/asgk-server/asgk_server/cli/`），命令映射见 `cli/commands.py`，
+> 服务端能力见 `asgk_server/capabilities/`。
 >
-> **已被取代的部分**：`em_get` 作为主路径（现降级为回退路径）、URL/字段映射在客户端
-> （现已下沉服务端）、tier 驱动缓存（现由服务端 cache_policy 六类数据型驱动）。
+> **仍有参考价值的部分**：业务函数的**返回结构约定**（dict/list/str/bytes 的字段
+> 定义）——这些领域知识已沉淀到 `skills/a-stock-data/references/*.md` 和服务端
+> 能力实现里，本文记录了它们的最初设计来源。
+>
+> **已完全废弃的部分**：`@source` 装饰器、`em_get` 底层、两层函数模型、tier 驱动、
+> `ASGK_GW`/sgw 回退路径——全部随客户端库删除。
 
 本文件是 P1（scripts 共享库移植）的接口契约，约束 14 个模块、43 个端点的移植。所有移植的函数必须遵循此契约。
 

@@ -1,5 +1,15 @@
 # 测试操作手册
 
+> **⚠️ 本文档基于已删除的旧架构**：描述的是 `skills/a-stock-data/scripts/` 客户端库
+> 的测试（`em_get` / `ASGK_GW` / sgw 网关 / pi+locust 流程）。该客户端库已于 CLI
+> 重构时整体删除，**本文的操作命令不再可执行**。
+>
+> **当前测试**：`cd packages/asgk-server && uv run pytest`（187 个测试，153 服务端 +
+> 34 CLI）。方法论（pi 端到端 + locust 压测的双层策略）仍可参考 `test-method.md`，
+> 但执行对象已变为 asgk-server 服务端 + asgk CLI。
+>
+> 本文档保留作历史参考，记录了客户端库时代的测试方法。
+
 本项目测试的操作指南。方法论见 `test-method.md`（pi + mock/replay
 双层策略），本文件是可直接执行的命令手册。
 
