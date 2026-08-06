@@ -43,6 +43,8 @@ PROXIED_DOMAIN_SUFFIXES = (
     ".gtimg.cn",             # 腾讯 qt.gtimg.cn 实时行情
     ".sina.cn", ".sinajs.cn",  # 新浪行情/财报/期权
     ".cls.cn",               # 财联社电报
+    ".cninfo.com.cn",        # 巨潮公告/互动易
+    ".legulegu.com",         # 理杏仁估值历史
 )
 
 # 允许从客户端透传到上游的请求头白名单（hop-by-hop/敏感头一律不透传）。
@@ -1040,7 +1042,8 @@ class Gateway:
     # ── 核心请求处理 ──
     def handle(self, target_url: str, params: dict, tier_header: Optional[str],
                client_headers: dict | None = None, *,
-               method: str = "GET", body: dict | None = None) -> tuple[int, bytes, dict]:
+               method: str = "GET", body: dict | None = None,
+               body_type: str = "json") -> tuple[int, bytes, dict]:
         parsed = urlparse(target_url)
         host = parsed.hostname or ""
         if parsed.scheme not in ("http", "https") or parsed.username or parsed.password:
@@ -1128,7 +1131,7 @@ class Gateway:
         try:
             result = self._fetch_upstream(
                 target_url, params, fwd_headers, policy, group, tier, ttl, cache_key,
-                method=method, body=body,
+                method=method, body=body, body_type=body_type,
             )
         except Exception:
             result = (502, b'{"error":"gateway internal upstream failure"}', {"X-Cache-Tier": tier})
@@ -1138,7 +1141,8 @@ class Gateway:
     def _fetch_upstream(self, target_url: str, params: dict, fwd_headers: dict,
                         policy: EndpointPolicy, group: str, tier: str, ttl: int,
                         cache_key: str, *, method: str = "GET",
-                        body: dict | None = None) -> tuple[int, bytes, dict]:
+                        body: dict | None = None,
+                        body_type: str = "json") -> tuple[int, bytes, dict]:
         if self.state_manager is not None:
             allowed, recovered_states = self.state_manager.before_egress()
             if recovered_states:
@@ -1162,7 +1166,12 @@ class Gateway:
             self.group_reqs[group] += 1
             try:
                 if method == "POST" and body is not None:
-                    r = requests.post(request_url, json=body, headers=fwd_headers, timeout=15)
+                    if body_type == "form":
+                        # form-encoded POST（巨潮公告/互动易等）
+                        r = requests.post(request_url, data=body, headers=fwd_headers, timeout=15)
+                    else:
+                        # JSON POST（东财人气榜/概念等）
+                        r = requests.post(request_url, json=body, headers=fwd_headers, timeout=15)
                 else:
                     r = requests.get(request_url, headers=fwd_headers, timeout=15)
                 if r.status_code in (403, 429):
@@ -1282,28 +1291,38 @@ def make_handler(gateway: Gateway):
             params = {k: v[0] for k, v in qs.items() if k != "u"}
             tier = self.headers.get("X-Cache-Tier")
             client_headers = {k: v for k, v in self.headers.items()}
-            # 读取并解析 JSON body（东财人气榜/概念等 POST+JSON 接口）
             length = int(self.headers.get("Content-Length") or 0)
             raw = self.rfile.read(length) if length > 0 else b""
-            try:
-                post_body = json.loads(raw) if raw else None
-            except (ValueError, json.JSONDecodeError):
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"POST body must be valid JSON"}')
-                return
-            if not isinstance(post_body, dict):
-                self.send_response(400)
-                self.send_header("Content-Type", "application/json")
-                self.end_headers()
-                self.wfile.write(b'{"error":"POST body must be a JSON object"}')
-                return
+            ctype = (self.headers.get("Content-Type") or "").lower()
 
-            status, resp_body, headers = gateway.handle(
-                target_url, params, tier, client_headers,
-                method="POST", body=post_body,
-            )
+            if "application/x-www-form-urlencoded" in ctype:
+                # form-encoded POST（巨潮公告/互动易等）：parse_qs 解析成 dict
+                post_body = {k: v[-1] for k, v in parse_qs(raw.decode("utf-8")).items()} if raw else {}
+                status, resp_body, headers = gateway.handle(
+                    target_url, params, tier, client_headers,
+                    method="POST", body=post_body, body_type="form",
+                )
+            else:
+                # JSON POST（东财人气榜/概念等）
+                try:
+                    post_body = json.loads(raw) if raw else None
+                except (ValueError, json.JSONDecodeError):
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"POST body must be valid JSON"}')
+                    return
+                if post_body is not None and not isinstance(post_body, dict):
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"POST body must be a JSON object"}')
+                    return
+                status, resp_body, headers = gateway.handle(
+                    target_url, params, tier, client_headers,
+                    method="POST", body=post_body, body_type="json",
+                )
+
             self.send_response(status)
             for k, v in headers.items():
                 self.send_header(k, v)

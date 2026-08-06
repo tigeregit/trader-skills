@@ -68,7 +68,8 @@ _TIER_HEADER = "X-Cache-Tier"
 
 def em_get(url: str, params: dict | None = None, headers: dict | None = None,
            timeout: int = 15, tier: str | None = None, *,
-           method: str = "GET", json: dict | None = None, **kwargs) -> requests.Response:
+           method: str = "GET", json: dict | None = None,
+           data: dict | None = None, **kwargs) -> requests.Response:
     """统一请求入口。
 
     Args:
@@ -77,23 +78,34 @@ def em_get(url: str, params: dict | None = None, headers: dict | None = None,
         headers: 请求头
         timeout: 超时秒
         tier: 缓存档位 P/L/S/R/N（仅走网关时生效）；None 则网关走兜底规则
-        method: HTTP 方法 "GET"(默认) / "POST"（POST+JSON 接口用）
-        json: POST 请求体（method="POST" 时生效；网关按 method+body 转发并进 cache key）
+        method: HTTP 方法 "GET"(默认) / "POST"
+        json: POST JSON 请求体（method="POST" 时；网关按 method+body 转发并进 cache key）
+        data: POST form 请求体（method="POST" 时，form-encoded；优先级低于 json）
     """
     h = dict(headers or {})
     if tier:
         h[_TIER_HEADER] = tier
 
     if _GW:
-        if method.upper() == "POST" and json is not None:
-            # POST：?u=url（params 仍随 query 转发），body 放请求体经网关透传
+        if method.upper() == "POST":
+            if json is not None:
+                # POST+JSON：?u=url，body 放请求体经网关透传
+                return requests.post(
+                    _GW, params={"u": url, **(params or {})},
+                    json=json, headers=h, timeout=timeout, **kwargs,
+                )
+            if data is not None:
+                # POST+form：?u=url，form body 放请求体，标明 form 类型让网关按 form 转发
+                h["Content-Type"] = "application/x-www-form-urlencoded"
+                return requests.post(
+                    _GW, params={"u": url, **(params or {})},
+                    data=data, headers=h, timeout=timeout, **kwargs,
+                )
+            # POST 空 body（如互动易第二步，参数全在 query）：仅 method=POST 无 body
+            h["Content-Type"] = "application/x-www-form-urlencoded"
             return requests.post(
-                _GW,
-                params={"u": url, **(params or {})},
-                json=json,
-                headers=h,
-                timeout=timeout,
-                **kwargs,
+                _GW, params={"u": url, **(params or {})},
+                data={}, headers=h, timeout=timeout, **kwargs,
             )
         # GET：u=原始URL，其余参数转发；tier 在头里
         return requests.get(

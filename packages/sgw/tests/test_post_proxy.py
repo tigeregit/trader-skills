@@ -130,3 +130,60 @@ class TestEmappdataEndpointsApproved:
                 method="POST", body={"x": 1},
             )
         assert status == 403
+
+
+class TestFormPostForwarding:
+    """巨潮公告/互动易等 form-encoded POST 的转发与缓存。"""
+
+    def test_form_body_forwarded_as_data(self):
+        """form POST 的 body 必须用 requests.post(data=) 发送（非 json=）。"""
+        g = _make_gateway()
+        url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
+        body = {"stock": "600519,gssz0600519", "pageNum": "1"}
+        with patch("sgw.proxy.requests.post", return_value=_fake_resp()) as m:
+            g.handle(url, {}, "P", method="POST", body=body, body_type="form")
+        assert m.call_count == 1
+        _, kwargs = m.call_args
+        assert kwargs["data"] == body        # form 用 data=
+        assert "json" not in kwargs          # 不应混用 json=
+
+    def test_json_body_still_uses_json(self):
+        """JSON POST（body_type=json）仍用 json=，回归。"""
+        g = _make_gateway()
+        url = "https://emappdata.eastmoney.com/stockrank/getAllCurrentList"
+        with patch("sgw.proxy.requests.post", return_value=_fake_resp()) as m:
+            g.handle(url, {}, "R", method="POST", body={"x": 1}, body_type="json")
+        _, kwargs = m.call_args
+        assert kwargs["json"] == {"x": 1}
+
+    def test_different_form_body_not_cross_cached(self):
+        """不同 form body（不同股票）不串缓存。"""
+        g = _make_gateway()
+        url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
+        with patch("sgw.proxy.requests.post", return_value=_fake_resp()) as m:
+            g.handle(url, {}, "P", method="POST", body={"stock": "600519"}, body_type="form")
+            g.handle(url, {}, "P", method="POST", body={"stock": "000001"}, body_type="form")
+        assert m.call_count == 2
+
+    def test_same_form_body_hits_cache(self):
+        """相同 form body 第二次命中缓存（P 档可缓存）。"""
+        g = _make_gateway()
+        url = "https://www.cninfo.com.cn/new/hisAnnouncement/query"
+        with patch("sgw.proxy.requests.post", return_value=_fake_resp()) as m:
+            _, _, h1 = g.handle(url, {}, "P", method="POST", body={"stock": "600519"}, body_type="form")
+            _, _, h2 = g.handle(url, {}, "P", method="POST", body={"stock": "600519"}, body_type="form")
+        assert h1["X-Cache"] == "MISS"
+        assert h2["X-Cache"] == "HIT-MEM"
+        assert m.call_count == 1
+
+    def test_cninfo_endpoints_approved(self):
+        """巨潮端点已 approved。"""
+        g = _make_gateway()
+        for host, path in [
+            ("www.cninfo.com.cn", "/new/hisAnnouncement/query"),
+            ("www.cninfo.com.cn", "/new/data/szse_stock.json"),
+            ("irm.cninfo.com.cn", "/newircs/index/queryKeyboardInfo"),
+            ("irm.cninfo.com.cn", "/newircs/company/question"),
+        ]:
+            p = g.policy_for(host, path)
+            assert p is not None and p.review_status == "approved", f"{host}{path}"

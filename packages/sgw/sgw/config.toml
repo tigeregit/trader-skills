@@ -64,6 +64,20 @@ domains = ["www.cls.cn"]
 rps = 1.0
 jitter = [0.1, 0.5]
 
+# ── 巨潮资讯（cninfo.com.cn，公告+互动易，深交所官方）──────────
+[[group]]
+name = "cninfo"
+domains = ["www.cninfo.com.cn", "irm.cninfo.com.cn"]
+rps = 0.5          # 官方平台保守（2秒1次）
+jitter = [0.5, 1.0]
+
+# ── 理杏仁（legulegu.com，全市场PE/PB历史，需CSRF caller模式）──
+[[group]]
+name = "legulegu"
+domains = ["legulegu.com"]
+rps = 0.2          # 极保守（5秒1次），仅单发验证过未测并发
+jitter = [0.5, 1.0]
+
 # ── 端点策略（准入 / IP 风险 / 响应作用域三轴正交）──────────
 # 未匹配端点一律 unknown 并拒绝，不能仅因 host 已归组就出网。
 # 当前 sgw 是公共数据网关，因此已批准端点均为 controlled + public + shared。
@@ -369,6 +383,82 @@ ip_risk = "controlled"
 response_scope = "public"
 credential_mode = "none"
 cache_mode = "shared"
+
+# ── 巨潮公告/互动易（cninfo.com.cn，POST form，P 档）──────────
+[[endpoint]]
+name = "cninfo-announcement-query"
+host = "www.cninfo.com.cn"
+path = "/new/hisAnnouncement/query"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "cninfo-szse-stock-list"
+host = "www.cninfo.com.cn"
+path = "/new/data/szse_stock.json"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "cninfo-irm-keyboard"
+host = "irm.cninfo.com.cn"
+path = "/newircs/index/queryKeyboardInfo"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "cninfo-irm-question"
+host = "irm.cninfo.com.cn"
+path = "/newircs/company/question"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 理杏仁（legulegu.com，caller 模式透传 CSRF；token 不进 cache key）──
+# 调用方先 GET 页面拿 CSRF token+cookie，再带 X-CSRF-Token/Cookie 调 API。
+# response 是公共的（全市场PE/PB），用 shared cache；token 是会话级防伪不进 key。
+[[endpoint]]
+name = "legulegu-csrf-page"
+host = "legulegu.com"
+path = "/stockdata/*"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "caller"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "legulegu-market-pe"
+host = "legulegu.com"
+path = "/api/stock-data/market-pe"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "caller"
+cache_mode = "shared"
+credential_params = ["token"]
+
+[[endpoint]]
+name = "legulegu-index-pb"
+host = "legulegu.com"
+path = "/api/stockdata/index-basic-pb"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "caller"
+cache_mode = "shared"
+credential_params = ["token"]
 
 [[endpoint]]
 name = "szse-margin"

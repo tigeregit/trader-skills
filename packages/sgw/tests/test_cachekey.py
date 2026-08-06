@@ -127,7 +127,7 @@ class TestGroupOfRegression:
 
     def test_non_proxied_domain_rejected(self):
         g = _make_gateway()
-        assert g.group_of("legulegu.com") is None
+        assert g.group_of("random.example.com") is None
 
     # ── exchange 组（非后缀源，第二层 exact-host 归组）──
     def test_szse_routable_via_exchange_group(self):
@@ -169,6 +169,15 @@ class TestGroupOfRegression:
     def test_cls_routable(self):
         g = _make_gateway()
         assert g.group_of("www.cls.cn") == "cls"
+
+    def test_cninfo_routable(self):
+        g = _make_gateway()
+        assert g.group_of("www.cninfo.com.cn") == "cninfo"
+        assert g.group_of("irm.cninfo.com.cn") == "cninfo"
+
+    def test_legulegu_routable(self):
+        g = _make_gateway()
+        assert g.group_of("legulegu.com") == "legulegu"
 
     def test_push2_unnumbered_routable(self):
         """AKP-BOARD 板块接口主用无编号 push2（已归组，回归确认）。"""
