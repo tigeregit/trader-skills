@@ -2,7 +2,7 @@
 
 实现约定：
   - 东财个股新闻：经网关(search-api-web)，JSONP 解析，tier=N
-  - 财联社电报：直连(cls.cn，本地签名零 key)，tier=N
+  - 财联社电报：经网关(cls 组，本地签名零 key 放 query)，tier=N
   - 东财全球资讯：经网关(np-weblist)，strip=req_trace，tier=N
 """
 from __future__ import annotations
@@ -12,8 +12,6 @@ import json
 import re
 import uuid
 from datetime import datetime
-
-import requests
 
 from asgk._contract import source
 from asgk.em_proxy import em_get
@@ -63,12 +61,14 @@ def eastmoney_stock_news(code: str, page_size: int = 20) -> list[dict]:
     } for a in articles]
 
 
-@source(tier="N", via="direct")
+@source(tier="N", via="gateway")
 def cls_telegraph(page_size: int = 50) -> list[dict]:
     """财联社电报（全市场实时快讯）。v1 API + 本地签名，零 key。
 
     Returns:
         [{title, content, time(YYYY-MM-DD HH:MM:SS)}, ...]
+    Note:
+        经网关（cls 组），tier=N no-cache。签名在调用方算好放 query 透传。
     """
     params = {"appName": "CailianpressWeb", "os": "web", "sv": "7.7.5",
               "last_time": "", "refresh_type": "1", "rn": str(page_size)}
@@ -76,7 +76,7 @@ def cls_telegraph(page_size: int = 50) -> list[dict]:
     qs = "&".join(f"{k}={params[k]}" for k in sorted(params))
     sign = hashlib.md5(hashlib.sha1(qs.encode()).hexdigest().encode()).hexdigest()
     url = f"https://www.cls.cn/v1/roll/get_roll_list?{qs}&sign={sign}"
-    r = requests.get(url, headers={"User-Agent": UA, "Referer": "https://www.cls.cn/"}, timeout=10)
+    r = em_get(url, headers={"User-Agent": UA, "Referer": "https://www.cls.cn/"}, timeout=10, tier="N")
     rows = []
     for item in r.json().get("data", {}).get("roll_data", []) or []:
         ts = item.get("ctime")
