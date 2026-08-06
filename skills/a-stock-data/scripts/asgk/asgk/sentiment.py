@@ -80,11 +80,11 @@ def em_hot_rank(top: int = 50) -> list[dict]:
     """东财人气榜（排名 + 排名变化 + 名称/价格）。
 
     Returns: 每只含 rank/code/name/price/pct/rank_chg。名称需二次请求 push2 ulist 补全。
-    Note: 人气榜是 POST+JSON，em_get 只支持 GET，故直连 emappdata；补全名称的 ulist 经网关。
+    Note: 人气榜 POST+JSON 经网关（body 进 cache key）；补全名称的 ulist GET 经网关。
     """
-    r = requests.post("https://emappdata.eastmoney.com/stockrank/getAllCurrentList",
-                      json={**EM_HOT_BODY, "marketType": "", "pageNo": 1, "pageSize": top},
-                      headers={"User-Agent": UA}, timeout=10)
+    r = em_get("https://emappdata.eastmoney.com/stockrank/getAllCurrentList",
+               json={**EM_HOT_BODY, "marketType": "", "pageNo": 1, "pageSize": top},
+               headers={"User-Agent": UA}, timeout=10, tier="R", method="POST")
     data = r.json().get("data") or []
     if not data:
         return []
@@ -110,11 +110,12 @@ def em_hot_concept(code: str) -> list[dict]:
     """东财个股热门概念命中（这只票当下被市场归到哪些概念在炒）。
 
     Returns: [{concept, bk, hit(命中热度)}, ...] 按热度降序。
+    Note: POST+JSON 经网关（body 含股票代码，进 cache key）。
     """
     prefix = "SH" if code.startswith("6") else "SZ"
-    r = requests.post("https://emappdata.eastmoney.com/stockrank/getHotStockRankList",
-                      json={**EM_HOT_BODY, "srcSecurityCode": prefix + code},
-                      headers={"User-Agent": UA}, timeout=10)
+    r = em_get("https://emappdata.eastmoney.com/stockrank/getHotStockRankList",
+               json={**EM_HOT_BODY, "srcSecurityCode": prefix + code},
+               headers={"User-Agent": UA}, timeout=10, tier="S", method="POST")
     data = r.json().get("data") or []
     return [{"concept": x.get("conceptName"), "bk": x.get("conceptId"),
              "hit": x.get("hitCount")} for x in data]
