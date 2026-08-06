@@ -133,8 +133,7 @@ asgk report digest 40 0.15 --target-pe 25    # PE消化到25x需几年
 
 ## 已知限制
 
-- CLI 经能力代理服务端取数（`ASGK_SERVER`）。服务端未部署/不可达时直接报错
-  （**不再回退旧 sgw 路径**——sgw 已 DEPRECATED，legacy 回退已移除）。
+- CLI 经能力代理服务端取数（`ASGK_SERVER`）。服务端未部署/不可达时直接报错。
 - `asgk quote bars`（mootdx）在 0.11.7 返回空日 K 时由服务端自动降级到百度；非日线
   频率不做非等价降级。
 - mootdx 需国内网络（TCP 7709 海外超时）。

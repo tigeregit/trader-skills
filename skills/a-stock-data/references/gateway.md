@@ -25,7 +25,7 @@ asgk CLI (×1000)                      外网
 2. `~/.config/asgk/cli.toml`（service 脚本 `install` 时自动生成）
 3. 包内默认 `cli.toml.default`（url = http://127.0.0.1:7701）
 
-未配置或服务端不可达时，CLI **直接失败**（不再回退旧 sgw/em_get 路径——已移除）。
+未配置或服务端不可达时，CLI 直接报错。
 
 ## 安装
 
