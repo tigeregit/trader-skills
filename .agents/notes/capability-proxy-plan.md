@@ -376,29 +376,45 @@ baidu 降级在 push2his 被封环境验证；测试 server 139 / client 211 全
 
 ---
 
-## T9 — 文档下载能力（PDF/xlsx 原文，新能力类型）
+## T9 — 文档下载能力（PDF/xlsx 原文，新能力类型） ✅
 
 **目标**：实现 §3.7 的文档下载能力。这是当前项目完全缺失的能力（announce 只
 返回 url 不下载）。文档型与结构化数据性质不同（存原始 bytes、不走格式化层、
 file 交付、体积上限保护），独立设计。
 
-**改动**：
-- `asgk_server/capabilities/docs.py`（新建）：文档下载能力适配器
-  - `announce_pdf(anno_id)`：巨潮公告 PDF 原文下载（解析 detail 页拿 PDF 直链 → 下载 bytes）
-  - `report_pdf(info_code)`：研报 PDF 原文下载
-  - cache_policy="document"（§3.6c 第七类：30天 TTL + 存原始 bytes + 体积上限）
-- `asgk_server/cache.py`：文档型 cache 支持
-  - 存原始 bytes 文件（`<cache_dir>/_docs/<doc_id>.pdf`），不走 JSON 序列化
-  - **体积上限 + LRU 淘汰**（单文件 ≤20MB，总文档 cache ≤2GB）——结构化数据无此问题，文档型必须管
-- `asgk/cache_policy.py`：加 document 类型映射
-- asgk 客户端：`announce_pdf` / `report_pdf` 函数（返回 bytes，output 默认 file）
-- 测试：文档下载 + cache 命中 + 体积上限淘汰
+**改动**（全部完成）：
+- ✅ `asgk_server/binary.py`（新建）：BinaryPayload 标记（bytes + ext + content_type），
+  docs 能力返回它，server 检测后走 doc_cache + base64 回传
+- ✅ `asgk_server/cache.py`：DocumentCache（存原始 bytes 文件 `<cache_dir>/_docs/<doc_id>.<ext>`
+  + `_index.json` 元数据 + **单文件 20MB / 总 2GB 上限 + LRU 淘汰**）
+- ✅ `asgk_server/server.py`：handle_capability 检测 cache_policy=="document" 走 doc_cache
+  分支；_execute_fetch 检测 BinaryPayload 写 doc_cache + base64 响应；HTTP 响应
+  `{"data":"<b64>","_binary":true,"ext":"pdf","content_type":"...","cache":"MISS|HIT-DOC"}`
+- ✅ `asgk_server/capabilities/docs.py`（新建）：docs 能力（doc_type 参数区分）
+  - announce_pdf：annoId → 查 cninfo 公告列表拿 adjunctUrl → static.cninfo.com.cn 下载
+    （需 code 解析 orgId——cninfo 无 id→PDF 直链）
+  - report_pdf：infoCode → pdf.dfcfw.com/pdf/H3_{infoCode}_1.pdf 直接下载
+  - cache_policy="document"（30天 TTL + bytes 文件 + LRU）；20MB 单文件上限保护
+- ✅ `asgk/docs.py`（新建客户端）：announce_pdf / report_pdf 函数（经
+  `_server_call_binary` 解码 base64 拿回 bytes）；data_type="document"（只支持 file 交付）
+- ✅ `asgk/cli.py`：document 型强制 --output file（bytes 不打印 stdout）；位置参数
+  下划线/连字符 dest 兼容修复（anno_id 位置参数 dest 是 "anno-id"）
+- 测试：server 14（test_doc_cache 8 + test_docs 6）/ client 211 全绿
 
 **验收**：
-- `announce_pdf(anno_id)` 下载真实 PDF，返回 bytes
-- 同 anno_id 第二次命中 cache（不重新下载）
-- 超 2GB 时 LRU 淘汰旧文档
-- CLI：`asgk announce_pdf <id> --output file --path x.pdf`
+- ✅ `announce_pdf(anno_id, code)` 下载真实 PDF，返回 bytes（贵州茅台公告 67261B %PDF-）
+- ✅ 同 anno_id 第二次命中 doc_cache（HIT-DOC，5.6s → 0.008s）
+- ✅ 超 20MB 拒绝（单文件上限保护，test_docs 覆盖；2GB 总上限 LRU 在 test_doc_cache 覆盖）
+- ✅ CLI：`asgk announce_pdf 1225431263 600519 --output file --path x.pdf` →
+  生成 PDF document version 1.7, 1 page
+
+**实现笔记**：
+- 二进制传输：bytes 无法经 JSON-RPC（{"data": bytes}），用 base64 编码 + `_binary:true`
+  标记。客户端 `_server_call_binary` 解码。这是文档型相对结构化的唯一特殊路径。
+- announce_pdf 的 annoId→PDF：cninfo 无 id→PDF 直链 API，需按 code+orgId 查公告列表
+  匹配 announcementId 拿 adjunctUrl（复用 cninfo 能力的 _get_orgid + _post）。
+- DocumentCache 与 SemanticCache 完全独立：不同类、不同目录（_docs/ vs capability/），
+  互不干扰。仅 persist 开启时建（文档 MB 级，session-only 无意义）。
 
 **依赖**：T1.5（cache 机制，含文档型支持）；T6/T7 的 announce/report 结构化能力（提供 annoId/infoCode）
 
