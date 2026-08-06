@@ -270,6 +270,34 @@ asgk-contract.md 第六节承诺。
 
 ---
 
+## T9 — 文档下载能力（PDF/xlsx 原文，新能力类型）
+
+**目标**：实现 §3.7 的文档下载能力。这是当前项目完全缺失的能力（announce 只
+返回 url 不下载）。文档型与结构化数据性质不同（存原始 bytes、不走格式化层、
+file 交付、体积上限保护），独立设计。
+
+**改动**：
+- `asgk_server/capabilities/docs.py`（新建）：文档下载能力适配器
+  - `announce_pdf(anno_id)`：巨潮公告 PDF 原文下载（解析 detail 页拿 PDF 直链 → 下载 bytes）
+  - `report_pdf(info_code)`：研报 PDF 原文下载
+  - cache_policy="document"（§3.6c 第七类：30天 TTL + 存原始 bytes + 体积上限）
+- `asgk_server/cache.py`：文档型 cache 支持
+  - 存原始 bytes 文件（`<cache_dir>/_docs/<doc_id>.pdf`），不走 JSON 序列化
+  - **体积上限 + LRU 淘汰**（单文件 ≤20MB，总文档 cache ≤2GB）——结构化数据无此问题，文档型必须管
+- `asgk/cache_policy.py`：加 document 类型映射
+- asgk 客户端：`announce_pdf` / `report_pdf` 函数（返回 bytes，output 默认 file）
+- 测试：文档下载 + cache 命中 + 体积上限淘汰
+
+**验收**：
+- `announce_pdf(anno_id)` 下载真实 PDF，返回 bytes
+- 同 anno_id 第二次命中 cache（不重新下载）
+- 超 2GB 时 LRU 淘汰旧文档
+- CLI：`asgk announce_pdf <id> --output file --path x.pdf`
+
+**依赖**：T1.5（cache 机制，含文档型支持）；T6/T7 的 announce/report 结构化能力（提供 annoId/infoCode）
+
+---
+
 ## T11 — 废弃 sgw + 服务端 systemd 部署
 
 **目标**：sgw 标记废弃，asgk-server 接管部署。
@@ -323,9 +351,10 @@ asgk-contract.md 第六节承诺。
 | T6 push2 族 | ~18 | 每能力 1 commit |
 | T7 编码解析族 | ~7 | 每能力 1 commit |
 | T8 硬骨头 | 5 | mootdx池/legulegu/百度/chip/签名 |
+| T9 文档下载 | 1 | PDF/xlsx 原文（新能力，存bytes+体积上限）|
 | T11 废弃 sgw | 1 | 部署切换 |
 | T12 文档 | 1 | 收尾 |
-| **合计** | **~37** | |
+| **合计** | **~38** | |
 
 > T6/T7 的"每能力 1 commit"可视实施时合并同模块的（如 limitup 4 个池函数
 > 共用一个适配器，可 1 commit）。实际 commit 数预计 25~36。

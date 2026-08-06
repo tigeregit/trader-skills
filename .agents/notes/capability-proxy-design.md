@@ -237,7 +237,7 @@ CLI 直接调服务端，不经 Python 库（shell/其他语言也能用）。`-
 | **键值型**（dict） | 单票估值/盘口 | `json` `md` | csv(单行无意义)、xlsx |
 | **序列型**（K线/资金流） | kline/fund_flow | `json` `csv` `md` `xlsx` | — |
 | **文本型**（F10/研报正文） | mootdx_f10 | `json` `md` `plain` | csv、xlsx |
-| **文档型**（公告 PDF/年报） | 公告原文下载 | `pdf`(原文) `md`(摘要) | csv、json |
+| **文档型**（公告 PDF/年报） | 公告原文下载 | 不走格式化层（见 §3.7，原始 bytes 直交付） | csv、json、md |
 
 客户端请求不支持的组合时报错（如对 F10 请求 csv → `ValueError: 文本型不支持 csv`）。
 
@@ -349,6 +349,7 @@ asgk f10 600519 --format md                # 文本型 → markdown
 | **日级型(随时变)** | 研报评级/质押/解禁 | 日内可能变 | 1h | 结构化 | 否 | per-code |
 | **实时型** | 行情/K线/盘口/资金流/涨停池 | 秒级变 | 0(no-cache) | — | 否 | — |
 | **流式型** | 新闻电报 | 持续追加 | 0(no-cache) | — | 否 | — |
+| **文档型** | 公告PDF原文/研报PDF/年报/招股书 | 发布即不改 | 30天 | **原始bytes** | **是(按体积上限)** | per-doc |
 
 **vs 现状的改进**：
 1. **拆分 P 档**：原 P 档混了"公告(真定稿30天)"和"研报(评级会变)"。新分
@@ -357,6 +358,9 @@ asgk f10 600519 --format md                # 文本型 → markdown
    归到"日级型随时变(1h)"更准确；龙虎榜/融资融券才是真"盘后定稿"。
 3. **实时型仍 no-cache**但保留 singleflight（同秒 1000 agent 取同一票合并为
    一次出网 + 一次解析，结果广播给所有 follower）。
+4. **新增文档型**：公告/研报的 PDF 原文等文件下载，与结构化数据性质不同——
+   缓存的是原始 bytes（不是结构化 dict），格式化层不适用（PDF 就是 PDF），
+   交付天然是 file（几 MB 打印无意义）。详见 §3.7。
 
 > 能力注册表的 `cache_policy` 字段声明所属类型，驱动 TTL/存储/落盘：
 > ```python
@@ -411,6 +415,74 @@ asgk f10 600519 --format md                # 文本型 → markdown
 - **不含** format/output（格式化在客户端，不进服务端 cache key）
 - ignored_params 概念保留（如东财的 ut 凭据参数不进 key 但仍发上游），
   但作用域从"query param"改为"语义参数"
+
+### 3.7 文档下载能力（PDF/xlsx/docx 原文）
+
+前面六类数据类型都是"结构化数据"——服务端解析后返回 dict/list。但有一类
+需求本质不同：**客户端要的就是文件本身**（公告 PDF 原文、研报 PDF、年报、
+招股书）。当前项目完全缺失这个能力（`announce` 只返回 url 不下载）。
+
+#### 与结构化数据的本质区别
+
+| 维度 | 结构化数据（§3.1-3.6） | 文档下载（本节） |
+|------|---------------------|----------------|
+| 服务端返回 | 解析后的 dict/list | 原始 bytes（不解析） |
+| cache 存什么 | 结构化 JSON | 原始 bytes（PDF/xlsx 二进制） |
+| 格式化层（§3.5） | 适用（csv/json/md/xlsx） | **不适用**（PDF 就是 PDF，不转换） |
+| 交付方式 | return/print/file | **file 为主**（几 MB 打印无意义） |
+| 缓存体积 | 每条几 KB | 每份几 MB（需体积上限保护） |
+
+文档下载是**独立的能力类型**，不走 §3.5 格式化层，cache 也单独处理。
+
+#### 能力接口
+
+```
+POST /v1/announce_pdf   {"anno_id": "xxx"}        → bytes (PDF)
+POST /v1/report_pdf     {"info_code": "xxx"}      → bytes (PDF)
+```
+
+- 输入是文档 ID（从对应的结构化能力拿到，如 `announce` 返回的 annoId）
+- 输出是原始 bytes + Content-Type 头（application/pdf 等）
+- 客户端交付：`output='file', path='公告.pdf'`（默认就是 file）
+
+```python
+# Python：结构化能力 + 文档下载能力配合
+announces = cninfo_announcements('600519', page_size=5)   # 结构化：[{title, url, annoId}]
+pdf_bytes = announce_pdf(announces[0]['anno_id'])         # 文档：原始 PDF bytes
+# 或一步到位
+announce_pdf(announces[0]['anno_id'], output='file', path='茅台公告.pdf')
+```
+
+```
+# CLI
+asgk announce 600519 --format table               # 列出公告
+asgk announce_pdf <annoId> --output file --path x.pdf  # 下载PDF
+```
+
+#### cache 策略（文档型，§3.6c 第七类）
+
+- **TTL 30天**：公告/研报 PDF 发布即不改，同定稿型
+- **存原始 bytes，非结构化**：这是 §3.6a"存结构化数据"的**唯一例外**——
+  PDF 无法结构化，cache 存原始 bytes
+- **磁盘持久化**：用 JSON 文件方案的变体——文档型直接存原始 bytes 文件
+  （`<cache_dir>/_docs/<anno_id>.pdf`），不走 JSON 序列化；元数据（expire）
+  用同名 `.meta.json` 或文件 mtime
+- **体积上限保护**（关键）：单文档 cache 设上限（如单文件 ≤20MB，总文档
+  cache ≤2GB），超限 LRU 淘汰。防止大量年报/招股书撑爆磁盘。结构化数据
+  无此问题（每条几 KB），文档型必须管。
+- **singleflight**：同一 PDF 的并发下载合并为一次出网
+
+#### 不混淆的两类"xlsx"
+
+注意区分：
+- **xlsx 作为数据传输格式**（深交所 ShowReport）：上游用 xlsx 传表格数据，
+  服务端解析成 `list[dict]`（`_xlsx.py` 已做），归"表格型结构化数据"，走
+  §3.6 正常流程，客户端可再格式化为 csv/json/md。
+- **xlsx 作为下载文档**（如导出的财报附件）：客户端要的就是这个 xlsx 文件，
+  不解析，归"文档型"，本节流程。
+
+判断依据：**服务端是否解析**。解析→结构化（走六类）；不解析→文档下载（本节）。
+能力注册表用 `data_type="document"` 标注文档型，区别于 `"table"/"kv"/...`。
 
 ## 四、sgw 复用方案（代码级）
 
