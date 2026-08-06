@@ -157,6 +157,27 @@ credential_mode = "none"
 cache_mode = "shared"
 identity_ignored_params = ["req_trace"]
 
+# 人气榜/个股热门概念（POST+JSON，body 进 cache key，见 proxy.handle）
+[[endpoint]]
+name = "eastmoney-hot-rank"
+host = "emappdata.eastmoney.com"
+path = "/stockrank/getAllCurrentList"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-hot-concept"
+host = "emappdata.eastmoney.com"
+path = "/stockrank/getHotStockRankList"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
 [[endpoint]]
 name = "eastmoney-top10-holders"
 host = "emweb.securities.eastmoney.com"
