@@ -14,21 +14,15 @@
 
 ## 调用示例
 
-```python
-from asgk import margin_trading, stock_fund_flow_120d, holder_num_change
+```bash
+# 融资融券明细（rzye=融资余额，单位元）
+asgk 资金 margin 600519 --page-size 5
 
-# 融资融券
-mt = margin_trading("600519", page_size=5)
-print(f"融资余额:{mt[0]['rzye']/1e8:.1f}亿")
+# 股东户数变化（筹码集中度信号：户数持续减少 = 筹码集中 = 主力吸筹）
+asgk 资金 holders_n 600519 --page-size 3
 
-# 股东户数（筹码集中度信号）
-hn = holder_num_change("600519", page_size=3)
-print(f"股东数:{hn[0]['holder_num']} 环比:{hn[0]['change_ratio']}%")
-# 户数持续减少 = 筹码集中 = 主力吸筹
-
-# 120日资金流
-ff = stock_fund_flow_120d("600519")
-print(f"近20日主力累计:{sum(d['main_net'] for d in ff[-20:])/1e8:.2f}亿")
+# 120日资金流（main_net=主力净流入，单位元）
+asgk 资金 fundflow 600519
 ```
 
 ## 注意

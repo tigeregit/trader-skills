@@ -14,21 +14,17 @@
 
 ## 调用示例
 
-```python
-from asgk import tencent_quote, baidu_kline_with_ma
-
+```bash
 # PE/PB/市值（最常用）
-q = tencent_quote(["600519"])
-print(q["600519"])  # {name, price, pe_ttm, pb, mcap_yi(亿), turnover_pct, limit_up, ...}
+asgk 行情 realtime 600519                 # 默认 md 表格
+asgk 行情 realtime 600519 --format json   # JSON（含 name, price, pe_ttm, pb, mcap_yi, ...）
+asgk 行情 realtime 600519 000858          # 多只同时查
 
-# 带均线的日K（日K首选；mootdx_bars 空数据时也会降级到百度）
-bk = baidu_kline_with_ma("600519")
-print(bk["keys"])   # [timestamp, time, open, close, volume, high, low, ..., ma5avgprice, ...]
-print(bk["rows"][-5:])  # 最近5根
+# 带均线的日K（日K首选；mootdx_bars 空数据时服务端自动降级到百度）
+asgk 行情 kline 600519 --format json      # 返回 keys + rows
 
-# rows 是与 keys 对应的 CSV 字符串；先 zip 再按字段取值
-latest = dict(zip(bk["keys"], bk["rows"][-1].split(",")))
-print(latest["time"], latest["close"], latest["ma5avgprice"])
+# rows 是与 keys 对应的 CSV 字符串；取最近一根：
+asgk 行情 kline 600519 --format csv | tail -1
 ```
 
 ## 注意

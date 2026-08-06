@@ -12,19 +12,16 @@ ETF期权数据，新浪源直连（GBK，必带Referer）。
 
 ## 调用示例
 
-```python
-from asgk import sina_option_codes, sina_option_tquote, sina_option_greeks
+```bash
+# 50ETF 近月认购合约清单（--underlying: 510050/510300/588000/510500；--call true=认购 false=认沽）
+asgk 衍生 opt_codes --underlying 510050 --call true
+# 返回 {月份: [合约代码列表]}，取近月列表中间档≈平值
 
-# 50ETF 近月认购合约
-codes = sina_option_codes("510050", call=True)  # underlying: 510050/510300/588000/510500
-near_month = list(codes)[0]
-contract = codes[near_month][len(codes[near_month]) // 2]  # 中间档≈平值
-
-# T型报价 + 希腊字母
-q = sina_option_tquote(contract)
-g = sina_option_greeks(contract)
-print(f"{q['name']} 行权价{q['strike']} 最新{q['last']} 持仓{q['open_interest']:.0f}")
-print(f"  Delta={g['delta']} IV={g['iv']:.2%}")
+# T型报价 + 希腊字母（contract=从上一步挑出的合约代码）
+asgk 衍生 opt_quote <合约代码>
+asgk 衍生 opt_greek <合约代码>
+# opt_quote 字段：name / strike / last / open_interest
+# opt_greek 字段：delta / iv(小数,0.17=17%)
 ```
 
 ## 注意

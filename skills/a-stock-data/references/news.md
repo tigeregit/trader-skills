@@ -12,17 +12,13 @@
 
 ## 调用示例
 
-```python
-from asgk import eastmoney_stock_news, cls_telegraph
-
+```bash
 # 个股新闻
-news = eastmoney_stock_news("600519", page_size=5)
-for n in news[:3]:
-    print(f"{n['time']} {n['source']} {n['title'][:40]}")
+asgk 资讯 stock 600519 --page-size 5
+# 返回字段：time / source / title
 
 # 财联社电报（与全球资讯互为备份）
-tele = cls_telegraph(page_size=10)
-print(tele[0]["title"][:50])
+asgk 资讯 telegraph --page-size 10
 ```
 
 ## 注意

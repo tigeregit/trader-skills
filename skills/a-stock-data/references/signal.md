@@ -17,20 +17,21 @@
 
 ## 调用示例
 
-```python
-from asgk import eastmoney_concept_blocks, daily_dragon_tiger, industry_comparison
-
+```bash
 # 板块归属（题材归因）
-blocks = eastmoney_concept_blocks("600519")
-print(blocks["concept_tags"])  # ['食品饮料','白酒Ⅲ','贵州板块',...]
+asgk 信号 block 600519 --format json
+# 返回 {concept_tags: ['食品饮料','白酒Ⅲ','贵州板块',...]}
 
 # 全市场龙虎榜（盘后定稿）
-dt = daily_dragon_tiger("2026-07-22")
-print(f"上榜{dt['total_records']}只")
+asgk 信号 dragon_d 2026-07-22 --format json
+# 返回 {total_records, ...}
 
-# 行业排名
-ind = industry_comparison(top_n=5)
-print([r["name"] for r in ind["top"]])  # 涨幅前5行业
+# 个股龙虎榜（回看天数）
+asgk 信号 dragon 600519 2026-07-22 --look-back 30
+
+# 行业排名（前N）
+asgk 信号 industry --top-n 5 --format json
+# 返回 {top: [{name, ...}]}，涨幅前5行业
 ```
 
 ## 注意
