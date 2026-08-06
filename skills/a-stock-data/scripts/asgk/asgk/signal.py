@@ -25,9 +25,19 @@ def ths_hot_reason(date: str | None = None) -> list[dict]:
         date: "YYYY-MM-DD"，None=今天
     Returns:
         强势股列表，字段：code/name/reason(题材归因)/close/zhangfu(涨幅%)/huanshou(换手率%)/chengjiaoe 等。
+
+    取数路径（§3.4）：优先调 ths_signal 能力（signal_type=hot_reason），回退旧路径。
     """
     if date is None:
         date = datetime.now().strftime("%Y-%m-%d")
+    data = _server_call("ths_signal", {"signal_type": "hot_reason", "date": date})
+    if data is not None:
+        return data
+    return _ths_hot_reason_legacy(date)
+
+
+def _ths_hot_reason_legacy(date: str) -> list[dict]:
+    """回退路径：经 sgw 网关取 zx.10jqka，本地 JSON 解析。"""
     url = (f"http://zx.10jqka.com.cn/event/api/getharden/"
            f"date/{date}/orderby/date/orderway/desc/charset/GBK/")
     r = em_get(url, headers={"User-Agent": UA}, timeout=10, tier="S")
@@ -49,7 +59,17 @@ def hsgt_realtime() -> list[dict]:
     Note:
         深股通(sgt)自2024-08披露收紧，常只回零星点；hgt 可靠。权威北向用 HKEX 官方日统计。
         data.hexin.cn 经网关（同花顺限流组）；Host 由 requests 按 URL 自动设置。
+
+    取数路径（§3.4）：优先调 ths_signal 能力（signal_type=hsgt），回退旧路径。
     """
+    data = _server_call("ths_signal", {"signal_type": "hsgt"})
+    if data is not None:
+        return data
+    return _hsgt_realtime_legacy()
+
+
+def _hsgt_realtime_legacy() -> list[dict]:
+    """回退路径：经 sgw 网关取 data.hexin hsgt，本地 time/hgt/sgt 拉链解析。"""
     url = "https://data.hexin.cn/market/hsgtApi/method/dayChart/"
     r = em_get(url, headers={"User-Agent": UA, "Referer": "https://data.hexin.cn/"}, timeout=10, tier="R")
     d = r.json()

@@ -9,7 +9,7 @@ from __future__ import annotations
 from io import StringIO
 
 from asgk._contract import source
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 REPORT_API = "https://reportapi.eastmoney.com/report/list"
 _REFERER = {"Referer": "https://data.eastmoney.com/"}
@@ -25,7 +25,18 @@ def eastmoney_reports(code: str, max_pages: int = 5) -> list[dict]:
     Returns:
         研报 record 列表，包含 title/publishDate/orgSName/infoCode/
         predictThisYearEps/emRatingName/indvInduName 等字段。
+
+    取数路径（§3.4）：优先调 reports 能力（report_type=stock），回退旧路径。
     """
+    data = _server_call("reports", {"report_type": "stock", "code": code,
+                                    "max_pages": max_pages})
+    if data is not None:
+        return data
+    return _eastmoney_reports_legacy(code, max_pages)
+
+
+def _eastmoney_reports_legacy(code: str, max_pages: int = 5) -> list[dict]:
+    """回退路径：经 sgw 网关取 reportapi，本地分页。"""
     all_records: list[dict] = []
     for page in range(1, max_pages + 1):
         params = {
@@ -59,7 +70,20 @@ def eastmoney_industry_reports(industry_code: str = "*", max_pages: int = 5,
         begin: 起始日期 "YYYY-MM-DD"
     Returns:
         行业研报 record 列表（含 industryName/industryCode/emRatingName/infoCode 等）。
+
+    取数路径（§3.4）：优先调 reports 能力（report_type=industry），回退旧路径。
     """
+    data = _server_call("reports", {"report_type": "industry",
+                                    "industry_code": industry_code,
+                                    "max_pages": max_pages, "begin": begin})
+    if data is not None:
+        return data
+    return _eastmoney_industry_reports_legacy(industry_code, max_pages, begin)
+
+
+def _eastmoney_industry_reports_legacy(industry_code: str = "*", max_pages: int = 5,
+                                       begin: str = "2024-01-01") -> list[dict]:
+    """回退路径：经 sgw 网关取 reportapi，本地分页。"""
     all_records: list[dict] = []
     for page in range(1, max_pages + 1):
         params = {

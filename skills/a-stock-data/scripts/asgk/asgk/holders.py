@@ -11,7 +11,7 @@ from __future__ import annotations
 
 from asgk._contract import source
 from asgk._datacenter import datacenter as _datacenter
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -41,7 +41,18 @@ def top10_holders(symbol: str, date: str) -> list[dict]:
         [{rank, name(股东名称), shares_type(股份类型), hold_num(持股数),
           ratio(占总股本比例,百分点 54.07=54.07%),
           change(增减), change_ratio(变动比率)}, ...] 共 10 条
+
+    取数路径（§3.4）：优先调 holders 能力（holder_type=sdgd），回退旧路径。
     """
+    data = _server_call("holders", {"symbol": symbol, "date": date,
+                                    "holder_type": "sdgd"})
+    if data is not None:
+        return data
+    return _top10_holders_legacy(symbol, date)
+
+
+def _top10_holders_legacy(symbol: str, date: str) -> list[dict]:
+    """回退路径：经 sgw 网关取 emweb PageSDGD，本地字段映射。"""
     r = em_get(f"{_EMWEB_BASE}/PageSDGD",
                params={"code": symbol.upper(), "date": _date_to_iso(date)},
                headers={"User-Agent": UA}, timeout=15, tier="L")
@@ -70,7 +81,18 @@ def top10_free_holders(symbol: str, date: str) -> list[dict]:
         [{rank, name(股东名称), holder_type(股东类型), shares_type(股份类型),
           hold_num(持股数), ratio(占流通股比例,百分点),
           change(增减), change_ratio(变动比率)}, ...] 共 10 条
+
+    取数路径（§3.4）：优先调 holders 能力（holder_type=sdltgd），回退旧路径。
     """
+    data = _server_call("holders", {"symbol": symbol, "date": date,
+                                    "holder_type": "sdltgd"})
+    if data is not None:
+        return data
+    return _top10_free_holders_legacy(symbol, date)
+
+
+def _top10_free_holders_legacy(symbol: str, date: str) -> list[dict]:
+    """回退路径：经 sgw 网关取 emweb PageSDLTGD，本地字段映射。"""
     r = em_get(f"{_EMWEB_BASE}/PageSDLTGD",
                params={"code": symbol.upper(), "date": _date_to_iso(date)},
                headers={"User-Agent": UA}, timeout=15, tier="L")

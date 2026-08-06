@@ -267,14 +267,17 @@ emquery（§3.4 em_get 枢纽）方案但回退——它是改良版透明代理
   两函数共享 push2/push2his fflow 端点系 + klines CSV 解析，用 period 参数区分
   （minute→push2/kline, daily120→push2his/daykline）。CSV split + 字段索引 +
   dash_zero("-"当0) 下沉服务端。实测 stock_fund_flow_120d 返回 120 条真实日级资金流。
+- ✅ **批量（4 能力覆盖 7 函数）**：
+  - holders（top10_holders + top10_free_holders，emweb PageSDGD/SDLTGD，holder_type 区分）
+  - reports（eastmoney_reports + eastmoney_industry_reports，reportapi 分页，report_type 区分）
+  - ths_signal（ths_hot_reason + hsgt_realtime + ths_hot_list，10jqka/hexin 系，signal_type 区分）
+  - em_hot（em_hot_rank + em_hot_concept，emappdata POST + push2 ulist 补名，hot_type 区分）
+  实测 reports 100 条研报 / holders 10 条股东（茅台集团 54.4%）/ em_hot_rank 5 条人气榜。
 
 **待做**（按共享机制分组，每组一个 commit）：
 - industry_comparison（push2 clist/get，f 字段表 + fs 参数）
-- top10_holders（emweb PageSDGD/PageSDLTGD 两函数共享）
-- top10_holders（emweb PageSDGD/PageSDLTGD 两函数共享）
 - board_constituents（push2 clist/get + 名称→代码解析）
 - news（search-api JSONP + np-weblist）
-- sentiment（ths_hot_list + em_hot_rank/em_hot_concept POST）
 - reports（reportapi report/list 分页）
 - 其余独立函数
 

@@ -10,7 +10,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from asgk._contract import source
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 EM_HOT_BODY = {"appId": "appId01", "globalId": "786e4c21-70dc-435a-93bb-38"}
@@ -61,7 +61,17 @@ def ths_hot_list(period: str = "hour") -> list[dict]:
         period: "hour" / "day"
     Returns:
         每只含 rank/code/name/heat(人气)/pct/rank_chg/concepts(标签)/tag。
+
+    取数路径（§3.4）：优先调 ths_signal 能力（signal_type=hot_list），回退旧路径。
     """
+    data = _server_call("ths_signal", {"signal_type": "hot_list", "period": period})
+    if data is not None:
+        return data
+    return _ths_hot_list_legacy(period)
+
+
+def _ths_hot_list_legacy(period: str = "hour") -> list[dict]:
+    """回退路径：经 sgw 网关取 dq.10jqka hot_list，本地解析。"""
     r = em_get("https://dq.10jqka.com.cn/fuyao/hot_list_data/out/hot_list/v1/stock",
                params={"stock_type": "a", "type": period, "list_type": "normal"},
                headers={"User-Agent": UA}, timeout=10, tier="R")
@@ -81,7 +91,17 @@ def em_hot_rank(top: int = 50) -> list[dict]:
 
     Returns: 每只含 rank/code/name/price/pct/rank_chg。名称需二次请求 push2 ulist 补全。
     Note: 人气榜 POST+JSON 经网关（body 进 cache key）；补全名称的 ulist GET 经网关。
+
+    取数路径（§3.4）：优先调 em_hot 能力（hot_type=rank），回退旧路径。
     """
+    data = _server_call("em_hot", {"hot_type": "rank", "top": top})
+    if data is not None:
+        return data
+    return _em_hot_rank_legacy(top)
+
+
+def _em_hot_rank_legacy(top: int = 50) -> list[dict]:
+    """回退路径：经 sgw 网关取 emappdata POST + push2 ulist 补名。"""
     r = em_get("https://emappdata.eastmoney.com/stockrank/getAllCurrentList",
                json={**EM_HOT_BODY, "marketType": "", "pageNo": 1, "pageSize": top},
                headers={"User-Agent": UA}, timeout=10, tier="R", method="POST")
@@ -111,7 +131,17 @@ def em_hot_concept(code: str) -> list[dict]:
 
     Returns: [{concept, bk, hit(命中热度)}, ...] 按热度降序。
     Note: POST+JSON 经网关（body 含股票代码，进 cache key）。
+
+    取数路径（§3.4）：优先调 em_hot 能力（hot_type=concept），回退旧路径。
     """
+    data = _server_call("em_hot", {"hot_type": "concept", "code": code})
+    if data is not None:
+        return data
+    return _em_hot_concept_legacy(code)
+
+
+def _em_hot_concept_legacy(code: str) -> list[dict]:
+    """回退路径：经 sgw 网关取 emappdata POST，本地解析。"""
     prefix = "SH" if code.startswith("6") else "SZ"
     r = em_get("https://emappdata.eastmoney.com/stockrank/getHotStockRankList",
                json={**EM_HOT_BODY, "srcSecurityCode": prefix + code},
