@@ -11,7 +11,7 @@ from datetime import datetime, timedelta
 
 from asgk._contract import source
 from asgk._datacenter import datacenter as _datacenter
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -72,7 +72,17 @@ def eastmoney_concept_blocks(code: str) -> dict:
 
     Returns:
         {total, boards: [{name, code(BK码), change_pct, lead_stock}], concept_tags: [板块名...]}
+
+    取数路径（§3.4）：优先调 concept_blocks 能力（服务端持 secid/diff 解析），回退旧路径。
     """
+    data = _server_call("concept_blocks", {"code": code})
+    if data is not None:
+        return data
+    return _eastmoney_concept_blocks_legacy(code)
+
+
+def _eastmoney_concept_blocks_legacy(code: str) -> dict:
+    """回退路径：经 sgw 网关取 push2 slist/get，本地 diff 解析。"""
     market_code = 1 if code.startswith("6") else 0
     params = {
         "fltt": "2", "invt": "2",

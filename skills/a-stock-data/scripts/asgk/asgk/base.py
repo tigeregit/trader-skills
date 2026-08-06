@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from asgk._contract import source
 from asgk.client import tdx_client
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -54,7 +54,17 @@ def eastmoney_stock_info(code: str) -> dict:
     Returns:
         {code, name, industry, total_shares, float_shares, mcap(总市值,元),
          float_mcap(流通市值,元), list_date(YYYYMMDD), price}
+
+    取数路径（§3.4）：优先调 stock_info 能力（服务端持 secid/f字段表），回退旧路径。
     """
+    data = _server_call("stock_info", {"code": code})
+    if data is not None:
+        return data
+    return _eastmoney_stock_info_legacy(code)
+
+
+def _eastmoney_stock_info_legacy(code: str) -> dict:
+    """回退路径：经 sgw 网关取 push2 stock/get，本地字段映射。"""
     market_code = 1 if code.startswith("6") else 0
     r = em_get("https://push2.eastmoney.com/api/qt/stock/get",
                params={"fltt": "2", "invt": "2",

@@ -257,10 +257,16 @@ emquery（§3.4 em_get 枢纽）方案但回退——它是改良版透明代理
   四池共享 _em_zt_api（同 push2ex 端点系 + ut/dpt 参数），用 pool_type 参数区分。
   字段映射（c→code, p/1000→price, zttj→zt_stat）留客户端（§6.3 纯计算）。
   实测 em_zt_pool 经具名能力返回 79 条真实涨停数据。
+- ✅ **stock_info + concept_blocks**（push2.py，共享 _secid 市场前缀逻辑）：
+  字段映射（f57→code, f14→name 等）下沉服务端。实测 concept_blocks 返回 28 个板块
+  （食品饮料/白酒Ⅲ/白酒Ⅱ），客户端发 {code} 零上游知识。stock_info 端点在本环境
+  被拒连（push2.eastmoney.com/api/qt/stock/get 风控，同 host 的 slist/get 可达），
+  非代码问题，回退路径正确。
 
 **待做**（按共享机制分组，每组一个 commit）：
-- stock_info（push2 stock/get，f 字段表）
-- concept_blocks（push2 slist/get）
+- fund_flow（push2his fflow：minute + daykline 两函数共享）
+- industry_comparison（push2 clist/get）
+- top10_holders（emweb PageSDGD/PageSDLTGD 两函数共享）
 - fund_flow（push2his fflow：minute + daykline 两函数共享 fflow 端点系）
 - industry_comparison（push2 clist/get，f 字段表 + fs 参数）
 - top10_holders（emweb PageSDGD/PageSDLTGD 两函数共享）
