@@ -1,6 +1,6 @@
 [project]
 name = "asgk-server"
-version = "0.1.0"
+version = "1.0.0"
 description = "能力代理服务端：吞噬 sgw 流量内核，按数据域暴露语义能力"
 requires-python = ">=3.11"
 dependencies = [

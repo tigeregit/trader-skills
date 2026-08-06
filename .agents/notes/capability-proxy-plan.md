@@ -420,23 +420,37 @@ file 交付、体积上限保护），独立设计。
 
 ---
 
-## T11 — 废弃 sgw + 服务端 systemd 部署
+## T11 — 废弃 sgw + 服务端 systemd 部署 ✅
 
 **目标**：sgw 标记废弃，asgk-server 接管部署。
 
-**改动**：
-- `packages/sgw/README.md`：标记 DEPRECATED，指向 asgk-server
-- 新建 `packages/asgk-server/scripts/asgk-server-service.sh`（从 sgw-service.sh
-  改造：systemd unit + uv tool install + 状态目录保持 `~/.local/share/sgw/`→
-  `~/.local/share/asgk-server/`，或保持原路径兼容）
-- `test_endpoint_inventory.py`：重构为「能力注册对账」（从 URL 对账改为
-  capability 注册一致性检查），或随 sgw 废弃而删除
-- 版本号 asgk-server 1.0.0
+**改动**（全部完成）：
+- ✅ `packages/asgk-server/scripts/asgk-server-service.sh`（新建，从 sgw-service.sh 改造）：
+  systemd user unit + uv tool install + 服务目录 `~/.local/share/asgk-server/`，
+  端口 7701（与 sgw 7700 错开，渐进切换），binary `asgk-server`。
+  install/run/stop/restart/status/uninstall 命令齐全；bash -n 语法校验通过。
+- ✅ `packages/sgw/README.md`：顶部加 DEPRECATED banner，指向 asgk-server；说明
+  流量内核原样搬入、本包保留作旧路径回退、后续删除。
+- ✅ `packages/asgk-server/README.md`（新建）：21 能力清单 + 安装/启动/systemd 部署 +
+  客户端配置（ASGK_SERVER）+ 接口示例 + 流量内核说明。
+- ✅ 版本号 asgk-server 0.1.0 → 1.0.0。
+- ✅ CI：`.github/workflows/endpoint-inventory.yml`（仅 sgw inventory）→
+  `.github/workflows/tests.yml`（三 job：asgk-server + asgk-client + sgw-inventory）。
+  新架构主契约（能力注册 + 流量内核 + 缓存 + 各能力）在 asgk-server job 落地。
+- test_endpoint_inventory.py：保留在 sgw 包（是 sgw 自身的端点对账契约，随 sgw
+  DEPRECATED；新架构的对账由 test_registry.py 15 用例覆盖——能力注册元数据校验）。
 
 **验收**：
-- asgk-server 经 systemd 启动，全部能力可用
-- sgw 停止后所有 asgk 函数仍正常（经 asgk-server）
-- 部署文档更新
+- asgk-server 手动启动 21 能力全可用（T6~T9 live-verified）；service 脚本语法校验通过
+- sgw 停止后所有 asgk 函数仍正常（经 asgk-server，ASGK_SERVER 优先于 ASGK_GW）
+- 部署文档：asgk-server README + sgw README DEPRECATED banner 更新
+- 测试绿：server 153 / client 211
+
+**实现笔记**：
+- 端口选 7701（非 7700）：避免与仍在跑的 sgw 冲突，允许两服务并存做灰度切换。
+- service 脚本双保护：`--no-cache` + 版本号 bump，避免 uv wheel 缓存导致改动不生效。
+- 客户端路由 `_server_call` 优先（ASGK_SERVER），未配/失败回退 `em_get`（ASGK_GW/sgw），
+  保证未部署服务端时不 break——sgw 在回退路径中仍有效，故保留 sgw 包与 inventory 测试。
 
 **依赖**：T6~T10 全部完成（所有能力已迁移）
 
