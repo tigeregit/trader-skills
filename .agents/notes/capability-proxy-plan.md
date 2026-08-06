@@ -245,25 +245,32 @@ asgk-contract.md 第六节承诺。
 每个梯队沿用 T2 的模式：服务端加 capability 实现 + 客户端 em_get 路由扩展。
 为控制 commit 粒度，**每个能力一个 commit**（单一职责，可独立回滚）。
 
-### T6 — 低成本梯队：东财 push2 族（~18 个能力，逐个 commit）
+### T6 — 低成本梯队：东财 push2 族（具名能力，按共享机制分组 commit）
 
-每个 commit：服务端加 1 个 capability（URL + f-字段表 + ut 常量 + Referer）+
-客户端路由 + 测试。
+**路线决策（B）**：走具名能力，不走 emquery 通用转发。客户端发语义参数
+（pool_type/code/date），服务端持有全部上游知识（URL/ut/字段映射）。曾尝试
+emquery（§3.4 em_get 枢纽）方案但回退——它是改良版透明代理，客户端仍持 URL，
+未兑现 §2 "纯数据消费者"愿景。每个具名能力 = 一个 commit，按共享机制分组：
 
-**能力清单**（按模块分组，建议按模块批量但逐个 commit）：
-- base: eastmoney_stock_info
-- signal: eastmoney_concept_blocks / eastmoney_fund_flow_minute /
-  industry_comparison / ths_hot_reason / hsgt_realtime
-- capital: stock_fund_flow_120d / margin_detail_szse
-- holders: top10_holders / top10_free_holders
-- board: board_constituents
-- limitup: em_zt_pool / em_zb_pool / em_dt_pool / em_yzt_pool /
-  ths_limit_up_pool / limit_up_sentiment
-- news: eastmoney_global_news / eastmoney_stock_news
-- sentiment: ths_hot_list / em_hot_rank / em_hot_concept
-- reports: eastmoney_reports / eastmoney_industry_reports / ths_eps_forecast
+**进度**：
+- ✅ **limitup_pool**（1 能力覆盖 4 函数：em_zt_pool/em_zb_pool/em_dt_pool/em_yzt_pool）：
+  四池共享 _em_zt_api（同 push2ex 端点系 + ut/dpt 参数），用 pool_type 参数区分。
+  字段映射（c→code, p/1000→price, zttj→zt_stat）留客户端（§6.3 纯计算）。
+  实测 em_zt_pool 经具名能力返回 79 条真实涨停数据。
 
-**验收**（每个 commit）：该函数经服务端返回真实数据 + 测试绿
+**待做**（按共享机制分组，每组一个 commit）：
+- stock_info（push2 stock/get，f 字段表）
+- concept_blocks（push2 slist/get）
+- fund_flow（push2his fflow：minute + daykline 两函数共享 fflow 端点系）
+- industry_comparison（push2 clist/get，f 字段表 + fs 参数）
+- top10_holders（emweb PageSDGD/PageSDLTGD 两函数共享）
+- board_constituents（push2 clist/get + 名称→代码解析）
+- news（search-api JSONP + np-weblist）
+- sentiment（ths_hot_list + em_hot_rank/em_hot_concept POST）
+- reports（reportapi report/list 分页）
+- 其余独立函数
+
+**验收**（每个 commit）：该函数经服务端返回真实数据 + 客户端零 URL + 测试绿
 
 **依赖**：T2（模式验证）
 

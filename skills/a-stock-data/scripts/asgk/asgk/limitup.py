@@ -12,7 +12,7 @@ from datetime import datetime
 import requests
 
 from asgk._contract import source
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 ZTB_UT = "7eea3edcaed734bea9cbfc24409ed989"
@@ -22,6 +22,9 @@ _EM_POOL_URLS = {
     "getTopicDTPool": "https://push2ex.eastmoney.com/getTopicDTPool",
     "getYesterdayZTPool": "https://push2ex.eastmoney.com/getYesterdayZTPool",
 }
+# endpoint → 服务端 pool_type（具名能力参数，§3.1）
+_POOL_TYPE = {"getTopicZTPool": "zt", "getTopicZBPool": "zb",
+              "getTopicDTPool": "dt", "getYesterdayZTPool": "yzt"}
 
 
 def _fmt_zt_time(t) -> str:
@@ -31,7 +34,28 @@ def _fmt_zt_time(t) -> str:
 
 
 def _em_zt_api(endpoint: str, sort: str, date: str) -> list[dict]:
-    """东财涨停板通用请求（push2ex，经网关）。data 为 null = 非交易日。"""
+    """东财涨停板四池通用查询。
+
+    取数路径（§3.4 渐进迁移）：
+      1. 优先调能力代理服务端 POST /v1/limitup_pool（服务端持有 push2ex URL/ut/参数）
+      2. 服务端未配/不可达/报错 → 回退旧 em_get 网关路径
+
+    返回 result.data.pool 原始记录数组（data 为 null = 非交易日 → 空）。
+    字段映射在调用方（em_zt_pool 等），本函数只取数。
+    """
+    pool_type = _POOL_TYPE.get(endpoint)
+    if pool_type is not None:
+        data = _server_call("limitup_pool", {"pool_type": pool_type, "date": date})
+        if data is not None:
+            return data
+    return _em_zt_api_legacy(endpoint, sort, date)
+
+
+def _em_zt_api_legacy(endpoint: str, sort: str, date: str) -> list[dict]:
+    """回退路径：经 sgw 网关取 push2ex，本地解析 pool。
+
+    服务端未部署或不可达时使用。与服务端 fetch_limitup_pool 的参数构造一致。
+    """
     try:
         url = _EM_POOL_URLS[endpoint]
     except KeyError as exc:
