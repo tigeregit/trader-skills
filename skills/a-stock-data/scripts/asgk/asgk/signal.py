@@ -1,7 +1,7 @@
 """asgk.signal — 信号层（热点/北向/板块/资金流/龙虎榜/解禁/行业）。
 
 实现约定：
-  - 东财端点经 em_get 走网关；同花顺热点走网关(10jqka组)；北向(hexin.cn)直连
+  - 东财端点经 em_get 走网关；同花顺热点走网关(10jqka组)；北向(data.hexin.cn)经网关
   - 返回结构化 dict/list，表格数据统一为 list[dict]
   - @source 声明档位：S(日级定稿)/R(实时)
 """
@@ -37,8 +37,10 @@ def ths_hot_reason(date: str | None = None) -> list[dict]:
     return data.get("data") or []
 
 
-# ── 3.2 北向资金（hexin.cn 直连，不封 IP）────────────────────────
-@source(tier="R", via="direct")
+# ── 3.2 北向资金（data.hexin.cn，经网关）────────────────────────
+# 注：data.hexin.cn 属同花顺系，与 .10jqka.com.cn 共用 hexin-v 风控，一处被封会
+# 连累 zx.10jqka(热点) 等全系成片失联，故经网关串行限流。原"直连不封IP"注释有误。
+@source(tier="R", via="gateway")
 def hsgt_realtime() -> list[dict]:
     """沪深股通当日实时分钟流向（含集合竞价 09:10-15:00）。
 
@@ -46,12 +48,10 @@ def hsgt_realtime() -> list[dict]:
         [{time, hgt_yi(沪股通累计净买入,亿元), sgt_yi(深股通累计净买入,亿元)}, ...]
     Note:
         深股通(sgt)自2024-08披露收紧，常只回零星点；hgt 可靠。权威北向用 HKEX 官方日统计。
+        data.hexin.cn 经网关（同花顺限流组）；Host 由 requests 按 URL 自动设置。
     """
     url = "https://data.hexin.cn/market/hsgtApi/method/dayChart/"
-    # hexin.cn 直连（不经网关），需特殊 Host/Referer 头
-    import requests
-    headers = {"User-Agent": UA, "Host": "data.hexin.cn", "Referer": "https://data.hexin.cn/"}
-    r = requests.get(url, headers=headers, timeout=10)
+    r = em_get(url, headers={"User-Agent": UA, "Referer": "https://data.hexin.cn/"}, timeout=10, tier="R")
     d = r.json()
     times = d.get("time", [])
     hgt = d.get("hgt", [])

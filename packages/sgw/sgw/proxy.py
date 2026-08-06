@@ -36,7 +36,8 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = HERE / "config.toml"
 
 # 东财/同花顺等风控源走网关；其余(腾讯/百度/新浪/mootdx-TCP)直连不经网关
-PROXIED_DOMAIN_SUFFIXES = (".eastmoney.com", ".10jqka.com.cn")
+# .hexin.cn 与 .10jqka.com.cn 同属同花顺系、共用 hexin-v 风控，故一并经网关
+PROXIED_DOMAIN_SUFFIXES = (".eastmoney.com", ".10jqka.com.cn", ".hexin.cn")
 
 # 允许从客户端透传到上游的请求头白名单（hop-by-hop/敏感头一律不透传）。
 # 覆盖深交所 Referer、同花顺 hexin-v(Cookie)、乐咕 CSRF、东财 Accept 等需求。
