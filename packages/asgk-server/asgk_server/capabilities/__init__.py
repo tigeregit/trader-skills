@@ -8,6 +8,7 @@
 - limitup_pool：东财涨停四池（zt/zb/dt/yzt，pool_type 参数区分）
 """
 from . import baidu_kline  # noqa: F401  baidu_kline_with_ma (curl_cffi)
+from . import chip  # noqa: F401  chip_distribution (cyq.js)
 from . import clist  # noqa: F401  industry_rank / board_constituents
 from . import cls_telegraph  # noqa: F401  cls_telegraph (md5(sha1) sign)
 from . import cninfo  # noqa: F401  announcements / irm

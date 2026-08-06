@@ -14,7 +14,7 @@ from pathlib import Path
 from py_mini_racer import MiniRacer
 
 from asgk._contract import source
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 _VENDOR_DIR = Path(__file__).parent / "_vendor"
@@ -51,10 +51,22 @@ def chip_distribution(symbol: str, adjust: str = "") -> list[dict]:
           pct90_low, pct90_high(90%成本区间,元), pct90_concentration(90%集中度),
           pct70_low, pct70_high(70%成本区间,元), pct70_concentration(70%集中度)}, ...]
         最近 90 日
+
+    取数路径（§3.4）：优先调 chip 能力（push2his K线 + 百度降级 + cyq.js 计算全
+    下沉服务端），回退旧路径（em_get 取 K 线 + 本地 py_mini_racer 算 CYQ）。
     """
     adjust_map = {"qfq": "1", "hfq": "2", "": "0"}
     if adjust not in adjust_map:
         raise ValueError(f"adjust 取值: ''(不复权)/'qfq'(前复权)/'hfq'(后复权)，得到: {adjust!r}")
+    data = _server_call("chip", {"code": symbol, "adjust": adjust})
+    if data is not None:
+        return data
+    return _chip_distribution_legacy(symbol, adjust)
+
+
+def _chip_distribution_legacy(symbol: str, adjust: str = "") -> list[dict]:
+    """回退路径：em_get 取 K 线 + 本地 py_mini_racer 算 CYQ。"""
+    adjust_map = {"qfq": "1", "hfq": "2", "": "0"}
     market_code = 1 if symbol.startswith("6") else 0
     r = em_get("https://push2his.eastmoney.com/api/qt/stock/kline/get",
                params={"secid": f"{market_code}.{symbol}",
