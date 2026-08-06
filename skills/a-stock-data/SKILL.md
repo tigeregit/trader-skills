@@ -9,20 +9,21 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 服务端持有全部上游知识（URL/编码/字段映射/签名/协议），做全局限流+缓存+熔断；
 CLI 只发语义请求（如「要 600519 实时行情」），零上游知识。
 
-## 前置：安装
+## 前置：检查可用性
 
-skill 只含文档，取数靠 `asgk` CLI + `asgk-server` 服务端（同一包装两个 bin）。
-安装、启动服务、systemd/background 后端选择、单例防多开机制等详见
-[安装与启动](references/install.md)。
-
-最简流程（clone 全仓后）：
+skill 只含文档，取数靠 `asgk` CLI（经 asgk-server 服务端出网）。用前先 check：
 
 ```bash
-./packages/asgk-server/scripts/asgk-server-service.sh install
-# 装出 asgk-server + asgk 两个 bin，自动启动服务（systemd 或后台），配置好 CLI
-asgk --list                  # 验证：列出 9 大类 × 子命令
-asgk quote realtime 600519   # 验证：茅台实时行情
+command -v asgk >/dev/null 2>&1 && { asgk quote realtime --sources >/dev/null 2>&1 && echo "✓ ready" || echo "✗ server down → asgk-server-service.sh start"; } || echo "✗ no asgk → install.md"
 ```
+
+- 输出 `✓ ready` → 可用，直接看下方决策表取数。
+- 输出 `✗ server down` → asgk 已装但服务端没起，启动它：
+  ```bash
+  asgk-server-service.sh start          # 需在 clone 的仓库目录下
+  ```
+- 输出 `✗ no asgk` → 完全没装，按 [安装与启动](references/install.md) 走
+  （clone 全仓 → `asgk-server-service.sh install` 一键装 + 启动）。
 
 ## 快速决策：要什么数据？
 
