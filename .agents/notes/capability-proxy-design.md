@@ -153,6 +153,8 @@ GET  /v1/sources      ?capability=quote                            → ["tencent
     ],
     default_source="tencent",           # 不指定 source 时首选（熔断则降级下一优先级）
     fallback=None,                       # 自动降级链（如 kline: mootdx空→baidu）
+    data_type="kv",                     # 数据形态(kv/table/series/text/doc) 驱动客户端格式校验
+    supported_formats=["json", "md"],   # 该能力支持的输出格式（客户端格式化用）
 )
 def fetch_quote(codes: list[str], source: str | None = None) -> dict:
     # 服务端实现：选源(显式或自动)→构造请求→取数→解析→返回结构化数据
@@ -218,6 +220,81 @@ CLI 直接调服务端，不经 Python 库（shell/其他语言也能用）。`-
 迁移期内，已下沉的能力走服务端语义接口，未下沉的仍走旧 em_get+sgw 路径。
 **业务函数零改动**，em_get 内部按 URL 路由（已注册的语义能力走新路径，其余
 走旧路径）。这让每阶段的迁移互相独立，主分支全程可用。
+
+### 3.5 客户端格式化与交付（输出层）
+
+**服务端只返结构化数据（dict/list），格式化与交付全在客户端。** 这保证：
+服务端无状态、缓存不受格式影响（同数据只缓存一份，多格式按需渲染）、多个 agent
+共享缓存不被格式碎片化。
+
+#### 能力数据类型 → 支持格式矩阵
+
+不同数据类型天然支持不同格式（由数据形态决定，非主观限制）：
+
+| 数据类型 | 例子 | 支持格式 | 不支持 |
+|---------|------|---------|--------|
+| **表格型**（list[dict]） | 行情/研报/龙虎榜/公告 | `json` `csv` `md` `xlsx` | — |
+| **键值型**（dict） | 单票估值/盘口 | `json` `md` | csv(单行无意义)、xlsx |
+| **序列型**（K线/资金流） | kline/fund_flow | `json` `csv` `md` `xlsx` | — |
+| **文本型**（F10/研报正文） | mootdx_f10 | `json` `md` `plain` | csv、xlsx |
+| **文档型**（公告 PDF/年报） | 公告原文下载 | `pdf`(原文) `md`(摘要) | csv、json |
+
+客户端请求不支持的组合时报错（如对 F10 请求 csv → `ValueError: 文本型不支持 csv`）。
+
+#### 交付方式
+
+- **`return`（默认）**：返回 Python 对象（dict/list/str/bytes）
+- **`print`**：格式化后打印到 stdout（CLI 默认）
+- **`file`**：写入文件，返回路径
+
+#### 接口设计
+
+Python（业务函数加 `format`/`output` 可选参数，不传时行为不变——零破坏）：
+
+```python
+# 默认: 返回结构化 dict（零破坏，现有代码无感）
+tencent_quote(['600519'])                              → dict
+
+# 指定格式 + 交付（新增可选参数）
+tencent_quote(['600519'], format='csv')                → "code,price,pe\n600519,1309,19.7" (str)
+tencent_quote(['600519'], format='md', output='print') → 打印 markdown 表格到 stdout
+dragon_tiger_board('600519', format='xlsx', output='file', path='./dt.xlsx') → './dt.xlsx'
+mootdx_f10('600519', format='md')                      → markdown 文本（文本型不支持csv）
+```
+
+CLI（`--format` / `--output` / `--path`）：
+
+```
+asgk quote 600519                          # 默认 table 打印
+asgk quote 600519 --format json            # JSON 打印
+asgk quote 600519 --format csv --output file --path quotes.csv
+asgk kline 600519 --format xlsx --output file --path k.xlsx
+asgk f10 600519 --format md                # 文本型 → markdown
+```
+
+#### 实现归属
+
+- **格式化**：客户端库 `asgk/_format.py`（新增），按数据类型分发：
+  - `csv`/`md`：纯 Python（csv 标准库 + 简单表格渲染）
+  - `json`：标准库
+  - `xlsx`：pandas + openpyxl（已是现有依赖，`_xlsx.py` 在用）
+  - `plain`：原样文本
+- **交付**：客户端库 `asgk/_output.py`（新增），return/print/file 三态
+- **格式校验**：每个能力在注册表声明 `supported_formats`，客户端请求前校验，
+  不支持的组合在客户端就报错（不打扰服务端）
+
+```python
+@capability(
+    name="f10",
+    data_type="text",           # 驱动格式校验
+    supported_formats=["json", "md", "plain"],
+    ...
+)
+```
+
+> 设计要点：格式化是纯客户端计算，无网络无状态。它与 §3.4 的 em_get 兼容、
+> §3.3 的双入口正交——format/output 参数在 Python 函数和 CLI 两侧一致暴露，
+> 服务端完全不感知。纯计算函数（valuation 的 forward_pe 等）同样支持格式化。
 
 ## 四、sgw 复用方案（代码级）
 
@@ -310,7 +387,8 @@ systemd 部署中固化（`sgw-service.sh`）。服务端搬入时保持路径�
 
 ### 6.3 纯计算函数不下沉
 `valuation.py` 的 `forward_pe` / `pe_digestion` / `calc_peg` 是纯本地计算，
-无网络，留在客户端。`full_valuation`（串联多源）内部调语义接口。
+无网络，留在客户端。`full_valuation`（串联多源）内部调语义接口。纯计算函数
+同样支持 §3.5 的客户端格式化（format/output 参数），因其返回值也是结构化数据。
 
 ### 6.4 rps 取值不动
 各限流组 rps（社区保守 ×1.5，见 config.toml 注释 + data-source-risk-control.md）
