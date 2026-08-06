@@ -64,14 +64,18 @@ T1 是所有后续任务的地基；T1.5(cache refactor)是 T1 后最优先的�
 这是流量内核搬入时**改动最大**的部分，独立 commit + 独立验收。
 
 **改动**：
-- `asgk_server/cache.py`（新建，从 sgw Cache/DiskCache 改造）：
+- `asgk_server/cache.py`（新建，从 sgw Cache 改造）：
   - **存储内容**：从 `r.content`（原始字节）改为 fetch 返回的结构化数据
     （dict/list，JSON 序列化存入）
   - **cache key**：从 `tier|canonical_url` 改为 `capability|source|semantic_key`
     （§3.6b/f）。新增 `_semantic_key(capability, source, params)` 取代
     `_canonical_url`：语义参数排序+去重+哈希，不含 source/format/output
   - **per-source 独立**：同 capability 不同 source 各自缓存，不跨源共享（§3.6b）
-  - DiskCache 的 BLOB 从"上游字节"改为"结构化 JSON"
+  - **磁盘持久化改用 JSON 文件**（不沿用 sgw 的 SQLite DiskCache）：每缓存项
+    一文件 `<cache_dir>/<capability>/<source>/<param_hash>.json`，含
+    `{value, expire}`；SQLite 对 cache 过度工程（无查询需求 + cache 可重建
+    不需 ACID + 实测仅6条597KB），见设计 §3.6d。零依赖纯标准库。
+  - 熔断状态库（CircuitStateStore）仍用 SQLite（安全闩要 ACID，不换）
 - `asgk_server/registry.py`：CapabilityMeta 加 `cache_policy` 字段
   （definitive/quarterly/daily_settled/daily_volatile/realtime/streaming，
   §3.6c 六类）

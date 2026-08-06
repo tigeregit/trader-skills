@@ -365,13 +365,30 @@ asgk f10 600519 --format md                # 文本型 → markdown
 > @capability(name="quote",    cache_policy="realtime", ...)     # 实时型
 > ```
 
-#### d. 存储方式：内存 + 磁盘（沿用 sgw 双层，存的内容变了）
+#### d. 存储方式：内存 + JSON 文件（**不再用 SQLite 存 cache**）
 
-- **内存 Cache**（搬 sgw）：存结构化数据（dict/list，JSON 序列化进 dict），
-  命中即返。原样复用 sgw 的 Cache 类（key/value/ttl/expire）。
-- **磁盘 DiskCache**（搬 sgw）：仅"定稿型"+"季度型"落盘（P/L 对应），重启
-  恢复。复用 sgw 的 DiskCache（SQLite+WAL），但存的 BLOB 从"上游字节"改为
-  "结构化数据的 JSON"。原样复用 write-through + load_all 回填 + 惰性过期删除。
+- **内存 Cache**（搬 sgw Cache 类）：存结构化数据（dict/list），命中即返。
+  原样复用 sgw 的 Cache 类（key/value/ttl/expire 语义不变，value 从 bytes 变
+  Python 对象）。
+- **磁盘持久化：JSON 文件，每缓存项一文件**（**不沿用 sgw 的 SQLite DiskCache**）：
+
+  sgw 用 SQLite 存 cache 是过度工程。分析：
+  - sgw 的 DiskCache 对 SQL 的使用极轻量：单表 6 列，只有按主键 get/set +
+    启动全表扫描，**无范围查询/聚合/JOIN/索引**，本质是"带过期的持久 KV"。
+  - SQLite 的 BLOB 优势（存任意二进制）在新架构消失——存的是结构化 JSON（文本）。
+  - SQLite 的 WAL 崩溃安全对 cache **不必要**：cache 是可重建的（miss 就重取），
+    非不可恢复数据。这与熔断状态（必须 ACID，安全闩）性质完全不同。
+  - 实测当前 cache 表仅 6 条 / 597KB（多数能力 R 档 no-cache 不落盘）；满载预估
+    十几万条/一两百 MB，文件方案完全可行。
+
+  **新方案**：`<cache_dir>/<capability>/<source>/<param_hash>.json`，每文件含
+  `{value: 结构化数据, expire: ts}`。过期用文件 mtime 或 expire 字段判断；
+  启动 load_all 遍历目录回填内存 + 删过期文件。零依赖（纯标准库 os/json/pathlib），
+  人可读易调试（cat 即看），与结构化数据天然契合。
+
+  > **熔断状态库仍用 SQLite**（CircuitStateStore 不变）——那是安全闩，要 ACID，
+  > 丢了会让受控来源在未知状态下出网。cache 和熔断状态性质不同，存储介质分开。
+
 - **singleflight**（搬 sgw，零改）：所有类型（含 realtime 的 TTL=0）都走
   singleflight 合并并发 miss。realtime 型虽不 cache，但同秒并发合并为一次
   出网+解析，结果广播。这是 sgw 已有的设计（`proxy.py:1112` 注释"即使 TTL=0
@@ -403,7 +420,7 @@ asgk f10 600519 --format md                # 文本型 → markdown
 |--------|--------------|------|
 | `TokenBucket` | 707-740 | 限流，纯 acquire() 接口 |
 | `Cache` | 744-770 | 内存缓存（**存的内容变：结构化数据非字节，见 §3.6**）|
-| `DiskCache` | 774-860 | SQLite+WAL（**存的内容变 + key 规范化改，见 §3.6**）|
+| `DiskCache` | 774-860 | **替换为 JSON 文件持久化**（SQLite 对 cache 过度工程，见 §3.6d）|
 | `SingleFlight` | 166-189 | 并发 miss 合并（零改，含 realtime TTL=0 的合并）|
 | `CircuitBreaker` | 192-294 | 熔断 + canary 探针 |
 | `CircuitStateStore` | 297-396 | 熔断状态 SQLite 主库 |
