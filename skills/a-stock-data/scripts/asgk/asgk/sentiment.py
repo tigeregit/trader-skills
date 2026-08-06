@@ -1,15 +1,13 @@
 """asgk.sentiment — 舆情互动层（互动易/热榜/人气榜/概念命中）。
 
 实现约定：
-  - 互动易 irm.cninfo.com.cn 直连（POST），tier=P（发布即定稿）
+  - 互动易 irm.cninfo.com.cn 经网关（cninfo 组，POST form），tier=P（发布即定稿）
   - 同花顺热榜 dq.10jqka 经网关，tier=R
   - 东财人气榜/概念 emappdata 经网关，tier=R/S
 """
 from __future__ import annotations
 
 from datetime import datetime
-
-import requests
 
 from asgk._contract import source
 from asgk.em_proxy import em_get
@@ -18,7 +16,7 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 EM_HOT_BODY = {"appId": "appId01", "globalId": "786e4c21-70dc-435a-93bb-38"}
 
 
-@source(tier="P", via="direct")
+@source(tier="P", via="gateway")
 def cninfo_irm(code: str, page_size: int = 30, page_num: int = 1) -> list[dict]:
     """互动易问答（深沪统一走巨潮）。
 
@@ -27,19 +25,21 @@ def cninfo_irm(code: str, page_size: int = 30, page_num: int = 1) -> list[dict]:
     Returns:
         每条含 code/company/question(提问)/answer(回复,None=未回复)/answerer/ask_time。
     Note:
-        两步请求：① queryKeyboardInfo 拿 orgId；② question 拿问答（参数放 query string 非 body）。
+        经网关（cninfo 组），POST form。两步请求：① queryKeyboardInfo 拿 orgId
+        （form body）；② question 拿问答（参数放 query string，空 body）。
     """
     try:
-        r1 = requests.post("https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo",
-                           data={"keyWord": code}, headers={"User-Agent": UA}, timeout=10)
+        r1 = em_get("https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo",
+                    data={"keyWord": code}, headers={"User-Agent": UA},
+                    timeout=10, tier="P", method="POST")
         d1 = r1.json().get("data") or []
         if not d1:
             return []
         org_id = d1[0].get("secid")
-        params = {"_t": 1, "stockcode": code, "orgId": org_id, "pageSize": page_size,
-                  "pageNum": page_num, "keyWord": "", "startDay": "", "endDay": ""}
-        r2 = requests.post("https://irm.cninfo.com.cn/newircs/company/question",
-                           params=params, headers={"User-Agent": UA}, timeout=10)
+        params = {"_t": "1", "stockcode": code, "orgId": org_id, "pageSize": str(page_size),
+                  "pageNum": str(page_num), "keyWord": "", "startDay": "", "endDay": ""}
+        r2 = em_get("https://irm.cninfo.com.cn/newircs/company/question",
+                    params=params, headers={"User-Agent": UA}, timeout=10, tier="P", method="POST")
         rows = r2.json().get("rows") or []
     except Exception:
         return []
