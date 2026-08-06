@@ -32,7 +32,7 @@ def mootdx_finance(code: str) -> dict:
     return df.to_dict("records")[0]
 
 
-@source(tier="P", via="direct")
+@source(tier="P", via="direct", data_type="text")
 def mootdx_f10(code: str, name: str = "公司概况") -> str:
     """mootdx F10 公司文本资料（9 大类）。
 

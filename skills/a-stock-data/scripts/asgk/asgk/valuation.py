@@ -38,7 +38,7 @@ def calc_peg(pe: float, cagr: float) -> float:
     return pe / (cagr * 100)
 
 
-@source(tier="P", via="gateway", cli="valuation")
+@source(tier="P", via="gateway", cli="valuation", data_type="kv")
 def full_valuation(code: str) -> dict:
     """单票完整估值分析（串联腾讯行情 + 一致预期EPS）。
 

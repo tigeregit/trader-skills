@@ -189,10 +189,20 @@ dragon_tiger_board / lockup_expiry / daily_dragon_tiger
 - `asgk/tests/test_format.py`（各格式 × 各数据类型）
 
 **验收**：
-- `tencent_quote(['600519'], format='csv')` 返回 csv 字符串
-- `dragon_tiger_board('600519', format='xlsx', output='file', path='/tmp/x.xlsx')` 生成文件
-- F10 请求 csv 报 ValueError
-- 不传 format 时行为不变（回归）
+- ✅ `tencent_quote(['600519'], format='md')` 返回 kv 型 markdown（实测 贵州茅台 实时数据）
+- ✅ `margin_trading('600519', format='xlsx', output='file', path=...)` 生成 5132 字节 xlsx 文件
+- ✅ F10(text 型) 请求 csv 报 ValueError（在客户端报错，不打扰服务端）
+- ✅ 不传 format 时行为不变（零破坏，182 测试全绿）
+- 注：tencent_quote 是 kv 型不支持 csv（计划写 csv 是 table 型场景，margin_trading 已验证）
+
+**状态**：✅ 已完成（commit 待提交）
+
+**实施备注**（设计调整）：
+- **装饰器注入而非逐函数改签名**：@source 装饰器拦截 format/output/path 参数（不传给业务函数），
+  在返回值上过格式化层。这样 45 个业务函数零改动——调用方传 format= 时装饰器处理，
+  不传时原样返回。比计划"业务函数加参数"侵入性小得多。
+- **data_type 声明覆盖全量函数**：为 45 个 @source 函数补了 data_type（kv/table/series/text），
+  驱动格式校验。未声明的兜底按返回类型推断。
 
 **依赖**：T1（用 data_type 字段；与 T2/T3 并行）
 

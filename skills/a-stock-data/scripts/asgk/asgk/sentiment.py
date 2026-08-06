@@ -16,7 +16,7 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 EM_HOT_BODY = {"appId": "appId01", "globalId": "786e4c21-70dc-435a-93bb-38"}
 
 
-@source(tier="P", via="gateway")
+@source(tier="P", via="gateway", data_type="table")
 def cninfo_irm(code: str, page_size: int = 30, page_num: int = 1) -> list[dict]:
     """互动易问答（深沪统一走巨潮）。
 
@@ -53,7 +53,7 @@ def cninfo_irm(code: str, page_size: int = 30, page_num: int = 1) -> list[dict]:
     return out
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="table")
 def ths_hot_list(period: str = "hour") -> list[dict]:
     """同花顺热榜（名称+人气+概念标签+排名变化）。
 
@@ -75,7 +75,7 @@ def ths_hot_list(period: str = "hour") -> list[dict]:
     return out
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="table")
 def em_hot_rank(top: int = 50) -> list[dict]:
     """东财人气榜（排名 + 排名变化 + 名称/价格）。
 
@@ -105,7 +105,7 @@ def em_hot_rank(top: int = 50) -> list[dict]:
              "rank_chg": it.get("hisRc")} for it in data]
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def em_hot_concept(code: str) -> list[dict]:
     """东财个股热门概念命中（这只票当下被市场归到哪些概念在炒）。
 

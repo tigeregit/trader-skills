@@ -28,7 +28,7 @@ def _date_to_iso(date: str) -> str:
     return f"{date[:4]}-{date[4:6]}-{date[6:]}"
 
 
-@source(tier="L", via="gateway")
+@source(tier="L", via="gateway", data_type="table")
 def top10_holders(symbol: str, date: str) -> list[dict]:
     """十大股东明细（单股，按报告期）。
 
@@ -57,7 +57,7 @@ def top10_holders(symbol: str, date: str) -> list[dict]:
     } for row in data]
 
 
-@source(tier="L", via="gateway")
+@source(tier="L", via="gateway", data_type="table")
 def top10_free_holders(symbol: str, date: str) -> list[dict]:
     """十大流通股东明细（单股，按报告期）。
 
@@ -87,7 +87,7 @@ def top10_free_holders(symbol: str, date: str) -> list[dict]:
     } for row in data]
 
 
-@source(tier="L", via="gateway")
+@source(tier="L", via="gateway", data_type="table")
 def holder_change(date: str) -> list[dict]:
     """股东持股变化统计（全市场，按报告期）。
 
@@ -122,7 +122,7 @@ def holder_change(date: str) -> list[dict]:
     } for row in data]
 
 
-@source(tier="L", via="gateway")
+@source(tier="L", via="gateway", data_type="table")
 def holder_teamwork(holder_type: str = "全部") -> list[dict]:
     """股东协同（按股东类型）。
 

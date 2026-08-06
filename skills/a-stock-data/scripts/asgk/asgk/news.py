@@ -19,7 +19,7 @@ from asgk.em_proxy import em_get
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
 
-@source(tier="N", via="gateway")
+@source(tier="N", via="gateway", data_type="table")
 def eastmoney_stock_news(code: str, page_size: int = 20) -> list[dict]:
     """东财个股新闻（JSONP 接口）。
 
@@ -61,7 +61,7 @@ def eastmoney_stock_news(code: str, page_size: int = 20) -> list[dict]:
     } for a in articles]
 
 
-@source(tier="N", via="gateway")
+@source(tier="N", via="gateway", data_type="table")
 def cls_telegraph(page_size: int = 50) -> list[dict]:
     """财联社电报（全市场实时快讯）。v1 API + 本地签名，零 key。
 
@@ -89,7 +89,7 @@ def cls_telegraph(page_size: int = 50) -> list[dict]:
     return rows
 
 
-@source(tier="N", via="gateway", strip=["req_trace"])
+@source(tier="N", via="gateway", strip=["req_trace"], data_type="table")
 def eastmoney_global_news(page_size: int = 50) -> list[dict]:
     """东方财富全球财经资讯（7×24 滚动）。
 

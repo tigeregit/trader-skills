@@ -43,7 +43,7 @@ def _em_zt_api(endpoint: str, sort: str, date: str) -> list[dict]:
     return (r.json().get("data") or {}).get("pool") or []
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="table")
 def em_zt_pool(date: str) -> list[dict]:
     """涨停池。date=YYYYMMDD（交易日）。
 
@@ -62,7 +62,7 @@ def em_zt_pool(date: str) -> list[dict]:
     return out
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="table")
 def em_zb_pool(date: str) -> list[dict]:
     """炸板池（涨停后开板）。"""
     out = []
@@ -77,7 +77,7 @@ def em_zb_pool(date: str) -> list[dict]:
     return out
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="table")
 def em_dt_pool(date: str) -> list[dict]:
     """跌停池。"""
     out = []
@@ -90,7 +90,7 @@ def em_dt_pool(date: str) -> list[dict]:
     return out
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def em_yzt_pool(date: str) -> list[dict]:
     """昨日涨停池（昨涨停今表现，算晋级率/赚钱效应）。"""
     out = []
@@ -105,7 +105,7 @@ def em_yzt_pool(date: str) -> list[dict]:
     return out
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="table")
 def ths_limit_up_pool(date: str) -> list[dict]:
     """同花顺涨停揭秘（涨停原因题材 + 封板成功率 + 板型）。date=YYYYMMDD。
 
@@ -131,7 +131,7 @@ def ths_limit_up_pool(date: str) -> list[dict]:
     return out
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="kv")
 def limit_up_sentiment(date: str) -> dict:
     """打板情绪温度计：连板梯队 + 炸板率 + 涨跌停对比。"""
     zt, zb, dt = em_zt_pool(date), em_zb_pool(date), em_dt_pool(date)

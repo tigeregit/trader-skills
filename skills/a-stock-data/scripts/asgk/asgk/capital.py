@@ -25,7 +25,7 @@ def _to_num(val):
         return None
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def margin_trading(code: str, page_size: int = 30) -> list[dict]:
     """融资融券明细（日级）。
 
@@ -43,7 +43,7 @@ def margin_trading(code: str, page_size: int = 30) -> list[dict]:
     } for row in data]
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def block_trade(code: str, page_size: int = 20) -> list[dict]:
     """大宗交易记录（日级）。
 
@@ -66,7 +66,7 @@ def block_trade(code: str, page_size: int = 20) -> list[dict]:
     return rows
 
 
-@source(tier="L", via="gateway")
+@source(tier="L", via="gateway", data_type="table")
 def holder_num_change(code: str, page_size: int = 10) -> list[dict]:
     """股东户数变化（季度级）。
 
@@ -85,7 +85,7 @@ def holder_num_change(code: str, page_size: int = 10) -> list[dict]:
     } for row in data]
 
 
-@source(tier="P", via="gateway")
+@source(tier="P", via="gateway", data_type="table")
 def dividend_history(code: str, page_size: int = 20) -> list[dict]:
     """分红送转历史（发布即定稿）。
 
@@ -105,7 +105,7 @@ def dividend_history(code: str, page_size: int = 20) -> list[dict]:
     } for row in data]
 
 
-@source(tier="S", via="gateway", cli="fundflow")
+@source(tier="S", via="gateway", cli="fundflow", data_type="table")
 def stock_fund_flow_120d(code: str) -> list[dict]:
     """个股资金流（日级，最近120个交易日）。
 
@@ -137,7 +137,7 @@ def stock_fund_flow_120d(code: str) -> list[dict]:
     return rows
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def margin_detail_szse(date: str) -> list[dict]:
     """深交所融资融券明细（官方容灾源，东财被封时兜底）。
 

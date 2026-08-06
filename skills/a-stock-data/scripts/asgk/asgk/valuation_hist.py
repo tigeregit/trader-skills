@@ -57,7 +57,7 @@ def _legu_csrf(page_url: str) -> tuple[dict, dict]:
             dict(r.cookies))
 
 
-@source(tier="L", via="direct")
+@source(tier="L", via="direct", data_type="table")
 def market_pe_lg(market: str = "上证") -> list[dict]:
     """全市场市盈率历史（乐咕）。
 
@@ -79,7 +79,7 @@ def market_pe_lg(market: str = "上证") -> list[dict]:
              "close": row.get("close"), "pe": row.get("pe")} for row in data]
 
 
-@source(tier="L", via="direct")
+@source(tier="L", via="direct", data_type="table")
 def market_pb_lg(market: str = "上证") -> list[dict]:
     """全市场市净率历史（乐咕）。
 

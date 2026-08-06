@@ -34,7 +34,7 @@ def _prefix(code: str) -> str:
 
 
 # ── mootdx K线 ─────────────────────────────────────────────────
-@source(tier="R", via="direct", cli="kline")
+@source(tier="R", via="direct", cli="kline", data_type="series")
 def mootdx_bars(code: str, frequency: int = 9, offset: int = 100) -> list[dict]:
     """mootdx K线数据（不复权原始价）。
 
@@ -105,7 +105,7 @@ def mootdx_transaction(code: str, date: str | None = None) -> list[dict]:
 
 
 # ── 腾讯 PE/PB/市值 ─────────────────────────────────────────────
-@source(tier="R", via="gateway", cli="quote")
+@source(tier="R", via="gateway", cli="quote", data_type="kv")
 def tencent_quote(codes: list[str]) -> dict[str, dict]:
     """腾讯财经实时行情（PE/PB/市值/换手率/涨跌停/指数/ETF）。
 
@@ -176,7 +176,7 @@ def _tencent_quote_legacy(codes: list[str]) -> dict[str, dict]:
 
 
 # ── 百度带MA的K线 ───────────────────────────────────────────────
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="series")
 def baidu_kline_with_ma(code: str, start_time: str = "") -> dict:
     """百度股市通K线（自带 ma5/ma10/ma20 均价，无需本地算）。
 

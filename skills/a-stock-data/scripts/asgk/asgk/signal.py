@@ -17,7 +17,7 @@ UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
 
 # ── 3.1 同花顺热点 ──────────────────────────────────────────────
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def ths_hot_reason(date: str | None = None) -> list[dict]:
     """同花顺当日强势股 + 题材归因 reason tags。
 
@@ -40,7 +40,7 @@ def ths_hot_reason(date: str | None = None) -> list[dict]:
 # ── 3.2 北向资金（data.hexin.cn，经网关）────────────────────────
 # 注：data.hexin.cn 属同花顺系，与 .10jqka.com.cn 共用 hexin-v 风控，一处被封会
 # 连累 zx.10jqka(热点) 等全系成片失联，故经网关串行限流。原"直连不封IP"注释有误。
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="table")
 def hsgt_realtime() -> list[dict]:
     """沪深股通当日实时分钟流向（含集合竞价 09:10-15:00）。
 
@@ -66,7 +66,7 @@ def hsgt_realtime() -> list[dict]:
 
 
 # ── 3.3 个股板块归属 ────────────────────────────────────────────
-@source(tier="S", via="gateway", cli="block")
+@source(tier="S", via="gateway", cli="block", data_type="kv")
 def eastmoney_concept_blocks(code: str) -> dict:
     """个股所属板块/概念归属（东财 slist，一次请求拿全）。
 
@@ -95,7 +95,7 @@ def eastmoney_concept_blocks(code: str) -> dict:
 
 
 # ── 3.4 个股分钟资金流 ──────────────────────────────────────────
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="table")
 def eastmoney_fund_flow_minute(code: str) -> list[dict]:
     """个股资金流向（分钟级，当日盘中）。
 
@@ -120,7 +120,7 @@ def eastmoney_fund_flow_minute(code: str) -> list[dict]:
 
 
 # ── 3.5 龙虎榜席位 ──────────────────────────────────────────────
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="kv")
 def dragon_tiger_board(code: str, trade_date: str, look_back: int = 30) -> dict:
     """个股龙虎榜（上榜记录 + 买卖席位 TOP5 + 机构动向）。
 
@@ -161,7 +161,7 @@ def dragon_tiger_board(code: str, trade_date: str, look_back: int = 30) -> dict:
 
 
 # ── 3.6 限售解禁日历 ────────────────────────────────────────────
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="kv")
 def lockup_expiry(code: str, trade_date: str, forward_days: int = 90) -> dict:
     """限售解禁日历（历史解禁 + 未来待解禁）。
 
@@ -188,7 +188,7 @@ def lockup_expiry(code: str, trade_date: str, forward_days: int = 90) -> dict:
 
 
 # ── 3.7 行业板块排名 ────────────────────────────────────────────
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="kv")
 def industry_comparison(top_n: int = 20) -> dict:
     """全行业涨跌幅排名（~100 个行业）。
 
@@ -212,7 +212,7 @@ def industry_comparison(top_n: int = 20) -> dict:
 
 
 # ── 3.8 全市场龙虎榜 ────────────────────────────────────────────
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="kv")
 def daily_dragon_tiger(trade_date: str | None = None, min_net_buy: float | None = None) -> dict:
     """全市场龙虎榜（当日所有上榜股票 + 净买额排名）。
 

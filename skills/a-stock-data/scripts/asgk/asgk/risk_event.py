@@ -19,7 +19,7 @@ def _s(val) -> str:
     return val or ""
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def mgmt_trade() -> list[dict]:
     """董监高持股变动明细（全市场，无参数）。
 
@@ -54,7 +54,7 @@ def mgmt_trade() -> list[dict]:
     } for row in data]
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def repurchase() -> list[dict]:
     """股票回购明细（全市场，无参数）。
 
@@ -94,7 +94,7 @@ def repurchase() -> list[dict]:
     } for row in data]
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def institute_research(start_date: str) -> list[dict]:
     """机构调研明细（全市场，按开始日期过滤）。
 

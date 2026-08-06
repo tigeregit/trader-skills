@@ -22,7 +22,7 @@ def _s(val) -> str:
     return val or ""
 
 
-@source(tier="L", via="gateway")
+@source(tier="L", via="gateway", data_type="table")
 def earning_forecast(date: str) -> list[dict]:
     """业绩预告（全市场，按报告期扫描）。
 
@@ -59,7 +59,7 @@ def earning_forecast(date: str) -> list[dict]:
     } for row in data]
 
 
-@source(tier="L", via="gateway")
+@source(tier="L", via="gateway", data_type="table")
 def earning_express(date: str) -> list[dict]:
     """业绩快报（全市场，按报告期扫描）。
 

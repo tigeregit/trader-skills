@@ -28,7 +28,7 @@ def _sina_opt_list(param: str) -> list:
     return t.split('"')[1].split(",") if '"' in t else []
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="kv")
 def sina_option_codes(underlying: str = "510050", call: bool = True) -> dict:
     """ETF期权合约清单。
 
@@ -61,7 +61,7 @@ def sina_option_codes(underlying: str = "510050", call: bool = True) -> dict:
     return out
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="kv")
 def sina_option_tquote(code: str) -> dict:
     """期权T型报价。
 
@@ -79,7 +79,7 @@ def sina_option_tquote(code: str) -> dict:
         "low": _opt_f(v[40]), "volume": _opt_f(v[41]), "amount": _opt_f(v[42])}
 
 
-@source(tier="R", via="gateway")
+@source(tier="R", via="gateway", data_type="kv")
 def sina_option_greeks(code: str) -> dict:
     """期权希腊字母 + 隐含波动率。
 

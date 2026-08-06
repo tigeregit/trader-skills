@@ -22,7 +22,7 @@ def _s(val) -> str:
 _GOODWILL_TOKEN = "894050c76af8597a853f5b408b759f5d"
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def pledge_ratio(date: str) -> list[dict]:
     """股权质押比例（全市场，按交易日）。
 
@@ -58,7 +58,7 @@ def pledge_ratio(date: str) -> list[dict]:
     } for row in data]
 
 
-@source(tier="L", via="gateway")
+@source(tier="L", via="gateway", data_type="table")
 def goodwill(date: str) -> list[dict]:
     """商誉明细（全市场，按报告期）。
 

@@ -49,7 +49,7 @@ def _cninfo_orgid(code: str) -> str:
     return f"gssz0{code}"
 
 
-@source(tier="P", via="gateway", cli="announce")
+@source(tier="P", via="gateway", cli="announce", data_type="table")
 def cninfo_announcements(code: str, page_size: int = 30) -> list[dict]:
     """巨潮公告全文检索。
 

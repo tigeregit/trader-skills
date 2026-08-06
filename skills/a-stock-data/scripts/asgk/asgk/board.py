@@ -76,7 +76,7 @@ def _resolve_board_code(symbol: str, kind: str) -> str:
         page += 1
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def board_constituents(symbol: str, kind: str = "concept") -> list[dict]:
     """板块成份股（板块→成份股反向查询）。
 

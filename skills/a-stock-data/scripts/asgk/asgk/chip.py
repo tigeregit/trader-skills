@@ -36,7 +36,7 @@ def _s(val) -> str:
     return val or ""
 
 
-@source(tier="S", via="gateway")
+@source(tier="S", via="gateway", data_type="table")
 def chip_distribution(symbol: str, adjust: str = "") -> list[dict]:
     """筹码分布 + 主力成本（单股，最近 90 日）。
 
