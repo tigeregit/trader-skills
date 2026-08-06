@@ -155,6 +155,21 @@ class TestGroupOfRegression:
         g = _make_gateway()
         assert g.group_of("datacenter.eastmoney.com") == "eastmoney"
 
+    # ── 腾讯/新浪/财联归组（风控核实后经网关）──
+    def test_tencent_routable(self):
+        g = _make_gateway()
+        assert g.group_of("qt.gtimg.cn") == "tencent"
+
+    def test_sina_routable(self):
+        g = _make_gateway()
+        assert g.group_of("hq.sinajs.cn") == "sina"
+        assert g.group_of("quotes.sina.cn") == "sina"
+        assert g.group_of("stock.finance.sina.com.cn") == "sina"
+
+    def test_cls_routable(self):
+        g = _make_gateway()
+        assert g.group_of("www.cls.cn") == "cls"
+
     def test_push2_unnumbered_routable(self):
         """AKP-BOARD 板块接口主用无编号 push2（已归组，回归确认）。"""
         g = _make_gateway()

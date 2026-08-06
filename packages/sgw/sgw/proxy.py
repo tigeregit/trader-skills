@@ -35,9 +35,15 @@ import requests
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = HERE / "config.toml"
 
-# 东财/同花顺等风控源走网关；其余(腾讯/百度/新浪/mootdx-TCP)直连不经网关
-# .hexin.cn 与 .10jqka.com.cn 同属同花顺系、共用 hexin-v 风控，故一并经网关
-PROXIED_DOMAIN_SUFFIXES = (".eastmoney.com", ".10jqka.com.cn", ".hexin.cn")
+# 风控源走网关。腾讯/新浪/财联经资料核实均有 IP 风控(data-source-risk-control.md)，
+# .hexin.cn 与 .10jqka.com.cn 同属同花顺系、共用 hexin-v 风控，故一并经网关。
+# 注：百度(.baidu.com)需网关支持 curl_cffi 指纹出网，单列处理；mootdx 走 TCP 单列。
+PROXIED_DOMAIN_SUFFIXES = (
+    ".eastmoney.com", ".10jqka.com.cn", ".hexin.cn",
+    ".gtimg.cn",             # 腾讯 qt.gtimg.cn 实时行情
+    ".sina.cn", ".sinajs.cn",  # 新浪行情/财报/期权
+    ".cls.cn",               # 财联社电报
+)
 
 # 允许从客户端透传到上游的请求头白名单（hop-by-hop/敏感头一律不透传）。
 # 覆盖深交所 Referer、同花顺 hexin-v(Cookie)、乐咕 CSRF、东财 Accept 等需求。

@@ -43,6 +43,27 @@ domains = [
 rps = 0.5          # 交易所更保守（2秒1次）
 jitter = [0.5, 1.0]
 
+# ── 腾讯实时行情（qt.gtimg.cn，GBK 文本）──────────────────────
+[[group]]
+name = "tencent"
+domains = ["qt.gtimg.cn"]
+rps = 1.0
+jitter = [0.1, 0.5]
+
+# ── 新浪（行情 hq.sinajs.cn / 财报 quotes.sina.cn / 期权 stock.finance.sina.com.cn）──
+[[group]]
+name = "sina"
+domains = ["hq.sinajs.cn", "quotes.sina.cn", "stock.finance.sina.com.cn"]
+rps = 1.0
+jitter = [0.1, 0.5]
+
+# ── 财联社电报（cls.cn，N 档流式 no-cache）──────────────────────
+[[group]]
+name = "cls"
+domains = ["www.cls.cn"]
+rps = 1.0
+jitter = [0.1, 0.5]
+
 # ── 端点策略（准入 / IP 风险 / 响应作用域三轴正交）──────────
 # 未匹配端点一律 unknown 并拒绝，不能仅因 host 已归组就出网。
 # 当前 sgw 是公共数据网关，因此已批准端点均为 controlled + public + shared。
@@ -290,6 +311,59 @@ cache_mode = "shared"
 name = "hexin-hsgt-daychart"
 host = "data.hexin.cn"
 path = "/market/hsgtApi/method/dayChart/"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 腾讯实时行情（qt.gtimg.cn，GBK 文本，R 档）──────────────────
+[[endpoint]]
+name = "tencent-quote"
+host = "qt.gtimg.cn"
+path = "/q"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 新浪行情/财报/期权（GBK/JSON，Referer 经白名单透传）──────────
+[[endpoint]]
+name = "sina-hq-list"
+host = "hq.sinajs.cn"
+path = "/list"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "sina-financial-report"
+host = "quotes.sina.cn"
+path = "/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "sina-option-codes"
+host = "stock.finance.sina.com.cn"
+path = "/futures/api/openapi.php/StockOptionService.getStockName"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 财联社电报（cls.cn，N 档 no-cache，签名由调用方算好放 query）──
+[[endpoint]]
+name = "cls-telegraph"
+host = "www.cls.cn"
+path = "/v1/roll/get_roll_list"
 review_status = "approved"
 ip_risk = "controlled"
 response_scope = "public"
