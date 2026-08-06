@@ -1,9 +1,9 @@
 """asgk.quote — 行情层（K线/五档盘口/逐笔/腾讯PE-PB/百度均线K线）。
 
 实现约定：
-  - mootdx（K线/五档/逐笔）：TCP 7709 直连，不经网关
-  - 腾讯（PE/PB/市值/换手）：HTTP 直连，不经网关
-  - 百度（带MA的K线）：HTTP 直连，不经网关
+  - mootdx（K线/五档/逐笔）：TCP 7709 直连，不经网关（暂未迁移）
+  - 腾讯（PE/PB/市值/换手）：经网关（tencent 组）
+  - 百度（带MA的K线）：HTTP 直连（待网关支持 curl_cffi 后迁移）
   - tier：日K=R(含今日实时根), 分钟K/五档/逐笔=R, 腾讯行情=R
 """
 from __future__ import annotations
@@ -16,6 +16,7 @@ from curl_cffi import requests as curl_requests
 
 from asgk._contract import source
 from asgk.client import tdx_client
+from asgk.em_proxy import em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -108,7 +109,7 @@ def mootdx_transaction(code: str, date: str | None = None) -> list[dict]:
 
 
 # ── 腾讯 PE/PB/市值 ─────────────────────────────────────────────
-@source(tier="R", via="direct", cli="quote")
+@source(tier="R", via="gateway", cli="quote")
 def tencent_quote(codes: list[str]) -> dict[str, dict]:
     """腾讯财经实时行情（PE/PB/市值/换手率/涨跌停/指数/ETF）。
 
@@ -117,11 +118,14 @@ def tencent_quote(codes: list[str]) -> dict[str, dict]:
     Returns:
         {code: {name, price, pe_ttm, pb, mcap_yi(亿), float_mcap_yi, turnover_pct,
         change_pct, limit_up, limit_down, ...}}
+    Note:
+        经网关（tencent 限流组）。返回 GBK 文本，显式 decode("gbk")。
     """
     prefixed = [_prefix(c) + c for c in codes]
-    req = urllib.request.Request("https://qt.gtimg.cn/q=" + ",".join(prefixed))
-    req.add_header("User-Agent", "Mozilla/5.0")
-    data = urllib.request.urlopen(req, timeout=10).read().decode("gbk")
+    r = em_get("https://qt.gtimg.cn/q",
+               params={"q": ",".join(prefixed)},
+               headers={"User-Agent": "Mozilla/5.0"}, timeout=10, tier="R")
+    data = r.content.decode("gbk")
 
     result = {}
     for line in data.strip().split(";"):

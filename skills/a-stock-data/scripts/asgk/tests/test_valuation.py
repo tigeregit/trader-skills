@@ -1,21 +1,15 @@
 """组合估值接口测试（离线）。"""
 from __future__ import annotations
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 from asgk.valuation import full_valuation
 
 
-def _tencent_response() -> MagicMock:
-    values = [""] * 50
-    values[1] = "贵州茅台"
-    values[3] = "1350.60"
-    values[39] = "20.41"
-    values[44] = "16883.60"
-    values[46] = "7.25"
-    response = MagicMock()
-    response.read.return_value = ('v_sh600519="' + "~".join(values) + '";').encode("gbk")
-    return response
+def _tencent_quote_result() -> dict:
+    """模拟 tencent_quote 返回的单票行情（经网关后的结构化结果）。"""
+    return {"600519": {"name": "贵州茅台", "price": 1350.60, "pe_ttm": 20.41,
+                       "mcap_yi": 16883.60, "pb": 7.25}}
 
 
 def test_full_valuation_accepts_list_records_forecast():
@@ -23,7 +17,8 @@ def test_full_valuation_accepts_list_records_forecast():
         {"年度": 2026, "预测机构数": 46, "均值": 68.7},
         {"年度": 2027, "预测机构数": 40, "均值": 73.96},
     ]
-    with patch("urllib.request.urlopen", return_value=_tencent_response()), \
+    # full_valuation 经网关调 tencent_quote，mock 它而非底层 urlopen
+    with patch("asgk.valuation.tencent_quote", return_value=_tencent_quote_result()), \
          patch("asgk.reports.ths_eps_forecast", return_value=forecast):
         result = full_valuation("600519")
     assert result["eps_cur"] == 68.7

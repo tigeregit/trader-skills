@@ -2,14 +2,14 @@
 
 实现约定：
   - forward_pe/pe_digestion/calc_peg 纯计算，无网络，无 tier
-  - full_valuation 串联腾讯行情(直连) + 一致预期EPS，cli=valuation
+  - full_valuation 串联腾讯行情(经网关) + 一致预期EPS，cli=valuation
 """
 from __future__ import annotations
 
 import math
-import urllib.request
 
 from asgk._contract import source
+from asgk.quote import tencent_quote
 
 
 def forward_pe(price: float, eps_forecast: float) -> float:
@@ -38,22 +38,20 @@ def calc_peg(pe: float, cagr: float) -> float:
     return pe / (cagr * 100)
 
 
-@source(tier="P", via="direct", cli="valuation")
+@source(tier="P", via="gateway", cli="valuation")
 def full_valuation(code: str) -> dict:
     """单票完整估值分析（串联腾讯行情 + 一致预期EPS）。
 
     Returns: name/price/mcap_yi/pe_ttm/pb/eps_cur/eps_next/pe_fwd/cagr_pct/peg/
     digest_years/analyst_count。EPS 相关字段在 ths_eps_forecast 不可用时为 None。
     """
-    # 1. 腾讯实时行情（直连，GBK）
-    prefix = "sh" if code.startswith(("6", "9")) else ("bj" if code.startswith("8") else "sz")
-    req = urllib.request.Request(f"https://qt.gtimg.cn/q={prefix}{code}")
-    req.add_header("User-Agent", "Mozilla/5.0")
-    vals = urllib.request.urlopen(req, timeout=10).read().decode("gbk").split('"')[1].split("~")
-    price = float(vals[3])
-    pe_ttm = float(vals[39]) if vals[39] else 0
-    pb = float(vals[46]) if vals[46] else 0
-    mcap = float(vals[44])
+    # 1. 腾讯实时行情（经网关，复用 tencent_quote 的解析）
+    q = tencent_quote([code]).get(code, {})
+    price = float(q.get("price") or 0)
+    pe_ttm = float(q.get("pe_ttm") or 0)
+    pb = float(q.get("pb") or 0)
+    mcap = float(q.get("mcap_yi") or 0)
+    name = q.get("name", "")
 
     # 2. 机构一致预期EPS（ths_eps_forecast 尚未移植，try 容错）
     eps_cur = eps_next = None
@@ -91,7 +89,7 @@ def full_valuation(code: str) -> dict:
               if pe_fwd > 30 and cagr > 0 else 0)
 
     return {
-        "name": vals[1], "price": price, "mcap_yi": mcap,
+        "name": name, "price": price, "mcap_yi": mcap,
         "pe_ttm": pe_ttm, "pb": pb,
         "eps_cur": eps_cur, "eps_next": eps_next,
         "pe_fwd": round(pe_fwd, 1) if eps_cur else None,
