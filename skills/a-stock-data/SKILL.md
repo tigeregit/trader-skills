@@ -12,17 +12,26 @@ CLI 只发语义请求（如「要 600519 实时行情」），零上游知识�
 ## 前置：检查可用性
 
 skill 只含文档，取数靠 `asgk` CLI（经 asgk-server 服务端出网）。用前先 check：
+asgk 是否安装、server 是否启动。按你的系统选一条命令：
 
+**POSIX（Linux / macOS / WSL bash）**：
 ```bash
 command -v asgk >/dev/null 2>&1 && { asgk quote realtime --sources >/dev/null 2>&1 && echo "✓ ready" || echo "✗ server down → asgk-server-service.sh start"; } || echo "✗ no asgk → install.md"
 ```
 
-- 输出 `✓ ready` → 可用，直接看下方决策表取数。
-- 输出 `✗ server down` → asgk 已装但服务端没起，启动它：
+**Windows（PowerShell）**：
+```powershell
+if (Get-Command asgk -ErrorAction SilentlyContinue) { asgk quote realtime --sources *> $null; if ($LASTEXITCODE -eq 0) { "✓ ready" } else { "✗ server down → bash asgk-server-service.sh start" } } else { "✗ no asgk → install.md" }
+```
+
+按输出决定下一步：
+- `✓ ready` → 可用，直接看下方决策表取数。
+- `✗ server down` → asgk 已装但服务端没起，启动它（需在 clone 的仓库目录下）：
   ```bash
-  asgk-server-service.sh start          # 需在 clone 的仓库目录下
+  asgk-server-service.sh start          # POSIX
+  bash asgk-server-service.sh start     # Windows（Git Bash / WSL）
   ```
-- 输出 `✗ no asgk` → 完全没装，按 [安装与启动](references/install.md) 走
+- `✗ no asgk` → 完全没装，按 [安装与启动](references/install.md) 走
   （clone 全仓 → `asgk-server-service.sh install` 一键装 + 启动）。
 
 ## 快速决策：要什么数据？
