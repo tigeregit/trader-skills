@@ -1,14 +1,13 @@
 """asgk.option — ETF期权层（合约清单/T型报价/希腊字母）。
 
 实现约定：
-  - 新浪源直连（hq.sinajs.cn，GBK，必带 Referer），不经网关
+  - 新浪源经网关（sina 组，GBK，必带 Referer）
   - tier：codes=S(日级慢变), tquote/greeks=R(实时)
 """
 from __future__ import annotations
 
-import requests
-
 from asgk._contract import source
+from asgk.em_proxy import em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 SINA_OPT_HDR = {"Referer": "https://stock.finance.sina.com.cn/", "User-Agent": UA}
@@ -22,14 +21,14 @@ def _opt_f(x):
 
 
 def _sina_opt_list(param: str) -> list:
-    """新浪 hq.sinajs.cn 取值（GBK，逗号分隔，去 var hq_str_XXX="..." 壳）。"""
-    r = requests.get(f"https://hq.sinajs.cn/list={param}", headers=SINA_OPT_HDR, timeout=10)
-    r.encoding = "gbk"
-    t = r.text
+    """新浪 hq.sinajs.cn 取值（GBK，逗号分隔，去 var hq_str_XXX="..." 壳）。经网关。"""
+    r = em_get("https://hq.sinajs.cn/list",
+               params={"list": param}, headers=SINA_OPT_HDR, timeout=10, tier="R")
+    t = r.content.decode("gbk")
     return t.split('"')[1].split(",") if '"' in t else []
 
 
-@source(tier="S", via="direct")
+@source(tier="S", via="gateway")
 def sina_option_codes(underlying: str = "510050", call: bool = True) -> dict:
     """ETF期权合约清单。
 
@@ -38,13 +37,17 @@ def sina_option_codes(underlying: str = "510050", call: bool = True) -> dict:
         call: True认购/False认沽
     Returns:
         {月份YYMM: [合约代码,...]}，第一个 key 即近月。
+    Note:
+        经网关（sina 组），codes=S 档。
     """
     cate = {"510050": "50ETF", "510300": "300ETF",
             "588000": "科创50ETF", "510500": "500ETF"}.get(underlying, "50ETF")
     url = ("https://stock.finance.sina.com.cn/futures/api/openapi.php/"
-           f"StockOptionService.getStockName?exchange=null&cate={cate}")
+           f"StockOptionService.getStockName")
     try:
-        months = requests.get(url, headers=SINA_OPT_HDR, timeout=10).json()["result"]["data"]["contractMonth"]
+        r = em_get(url, params={"exchange": "null", "cate": cate},
+                   headers=SINA_OPT_HDR, timeout=10, tier="S")
+        months = r.json()["result"]["data"]["contractMonth"]
     except Exception:
         return {}
     months = [m.replace("-", "")[2:] for m in months[1:]]  # 丢首个，转 YYMM
@@ -58,7 +61,7 @@ def sina_option_codes(underlying: str = "510050", call: bool = True) -> dict:
     return out
 
 
-@source(tier="R", via="direct")
+@source(tier="R", via="gateway")
 def sina_option_tquote(code: str) -> dict:
     """期权T型报价。
 
@@ -76,7 +79,7 @@ def sina_option_tquote(code: str) -> dict:
         "low": _opt_f(v[40]), "volume": _opt_f(v[41]), "amount": _opt_f(v[42])}
 
 
-@source(tier="R", via="direct")
+@source(tier="R", via="gateway")
 def sina_option_greeks(code: str) -> dict:
     """期权希腊字母 + 隐含波动率。
 
