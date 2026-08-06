@@ -50,7 +50,19 @@ def mootdx_bars(code: str, frequency: int = 9, offset: int = 100) -> list[dict]:
 
         mootdx 0.11.7 在部分节点返回空日 K 时自动降级到百度日 K；非日线频率
         不做非等价降级。
+
+    取数路径（§3.4）：优先调 mootdx 能力（mootdx_type=bars，TCP 客户端池 + 探测
+    兜底链 + 日线百度降级全下沉服务端），回退旧路径（本地 tdx_client）。
     """
+    data = _server_call("mootdx", {"mootdx_type": "bars", "code": code,
+                                   "frequency": frequency, "offset": offset})
+    if data is not None:
+        return data
+    return _mootdx_bars_legacy(code, frequency, offset)
+
+
+def _mootdx_bars_legacy(code: str, frequency: int = 9, offset: int = 100) -> list[dict]:
+    """回退路径：本地 tdx_client 取 K 线，日线空响应降级百度。"""
     client = tdx_client()
     records = _to_records(client.bars(symbol=code, frequency=frequency, offset=offset))
     if records or frequency not in (4, 9):
@@ -84,7 +96,17 @@ def mootdx_quotes(codes: list[str]) -> list[dict]:
         codes: 6位代码列表
     Returns:
         每只含 price/open/high/low/last_close/bid1~5/ask1~5/bid_vol1~5/ask_vol1~5/vol/amount/servertime。
+
+    取数路径（§3.4）：优先调 mootdx 能力（mootdx_type=quotes），回退旧路径。
     """
+    data = _server_call("mootdx", {"mootdx_type": "quotes", "symbols": list(codes)})
+    if data is not None:
+        return data
+    return _mootdx_quotes_legacy(codes)
+
+
+def _mootdx_quotes_legacy(codes: list[str]) -> list[dict]:
+    """回退路径：本地 tdx_client 取五档盘口。"""
     client = tdx_client()
     return _to_records(client.quotes(symbol=codes))
 
@@ -99,7 +121,17 @@ def mootdx_transaction(code: str, date: str | None = None) -> list[dict]:
         date: "YYYYMMDD"，None=当天
     Returns:
         [{time, price, vol, num, buyorsell(0买/1卖/2中性)}, ...]
+
+    取数路径（§3.4）：优先调 mootdx 能力（mootdx_type=transaction），回退旧路径。
     """
+    data = _server_call("mootdx", {"mootdx_type": "transaction", "code": code, "date": date})
+    if data is not None:
+        return data
+    return _mootdx_transaction_legacy(code, date)
+
+
+def _mootdx_transaction_legacy(code: str, date: str | None = None) -> list[dict]:
+    """回退路径：本地 tdx_client 取逐笔成交。"""
     client = tdx_client()
     return _to_records(client.transaction(symbol=code, date=date) if date else client.transaction(symbol=code))
 

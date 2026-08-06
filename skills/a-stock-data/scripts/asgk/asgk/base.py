@@ -23,7 +23,17 @@ def mootdx_finance(code: str) -> dict:
     Returns:
         含 liutongguben/zongguben/eps/bvps/roe/profit/income 等 ~37 字段的 dict。
         字段名见 mootdx 文档（拼音缩写）。
+
+    取数路径（§3.4）：优先调 mootdx 能力（mootdx_type=finance），回退旧路径。
     """
+    data = _server_call("mootdx", {"mootdx_type": "finance", "code": code})
+    if data is not None:
+        return data
+    return _mootdx_finance_legacy(code)
+
+
+def _mootdx_finance_legacy(code: str) -> dict:
+    """回退路径：本地 tdx_client 取财务快照。"""
     client = tdx_client()
     df = client.finance(symbol=code)
     # mootdx 返回 1×37 DataFrame，转为 dict
@@ -42,7 +52,17 @@ def mootdx_f10(code: str, name: str = "公司概况") -> str:
               资本运作/业内点评/行业分析/公司大事
     Returns:
         该类目的文本内容（"股东研究"含历史十大股东，可达 16000+ chars）。
+
+    取数路径（§3.4）：优先调 mootdx 能力（mootdx_type=f10），回退旧路径。
     """
+    data = _server_call("mootdx", {"mootdx_type": "f10", "code": code, "name": name})
+    if data is not None:
+        return data
+    return _mootdx_f10_legacy(code, name)
+
+
+def _mootdx_f10_legacy(code: str, name: str = "公司概况") -> str:
+    """回退路径：本地 tdx_client 取 F10 文本。"""
     client = tdx_client()
     return client.F10(symbol=code, name=name) or ""
 
