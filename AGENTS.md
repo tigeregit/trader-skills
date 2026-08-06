@@ -12,10 +12,10 @@
 
 本项目 skill 将在**相同 IP 下被 100～1000 个 agent 并发使用**。这是与普通单 agent skill 最大的差异，所有设计须服从这一约束：
 
-- **能力代理统一出口**：数据获取经**能力代理服务端**（`packages/asgk-server`）出网——服务端持有全部上游知识（URL/编码/字段映射/签名/协议），按数据域暴露 21 个具名能力（`POST /v1/<capability>`），客户端只发语义请求（如「要 600519 实时行情」），**零上游知识**。`asgk` CLI 随 `asgk-server` 包安装（`uv tool install asgk-server` 装出 `asgk-server` + `asgk` 两个 bin），服务端地址按 `ASGK_SERVER` 环境变量 > `~/.config/asgk/cli.toml` > 包内默认（7701）解析。服务端不可达时**直接失败**（旧 `em_get`/`ASGK_GW` 回退已移除，sgw 仅留参考）。
+- **能力代理统一出口**：数据获取经**能力代理服务端**（`packages/asgk-server`）出网——服务端持有全部上游知识（URL/编码/字段映射/签名/协议），按数据域暴露 22 个具名能力（`POST /v1/<capability>`），客户端只发语义请求（如「要 600519 实时行情」），**零上游知识**。`asgk` CLI 随 `asgk-server` 包安装（`uv tool install asgk-server` 装出 `asgk-server` + `asgk` 两个 bin），服务端地址按 `ASGK_SERVER` 环境变量 > `~/.config/asgk/cli.toml` > 包内默认（7701）解析。服务端不可达时**直接失败**（旧 `em_get`/`ASGK_GW` 回退已移除，sgw 仅留参考）。
 - **流量管控优先**：带风控的数据源（东财、同花顺等）一旦被多 agent 并发打，必然封 IP。所有此类请求**必须经能力代理服务端**（服务端吞噬 sgw 全部流量内核：令牌桶限流/熔断/缓存/singleflight），agent 不得各自直连。403/429 立即熔断（家庭 IP 无法快速更换）。
 - **缓存优先**：同一只票的静态/低频数据（如 PE、股本、公告）多 agent 共享服务端的语义缓存层（六类数据型 TTL/persist + 文档型 LRU），命中即不打外网。
-- **代码沉淀在 packages**：数据获取逻辑沉淀为 `packages/asgk-server`（服务端 21 能力 + asgk CLI），skill 只放文档（SKILL.md + references），不自带代码，降低 token 消耗与重复实现。
+- **代码沉淀在 packages**：数据获取逻辑沉淀为 `packages/asgk-server`（服务端 22 能力 + asgk CLI），skill 只放文档（SKILL.md + references），不自带代码，降低 token 消耗与重复实现。
 
 ## 3. 目录结构
 
@@ -48,9 +48,9 @@ trader-skills/
 
 遵循 ZCode 的 **progressive disclosure（渐进式披露）** 原则以最大化 token 效率：
 
-1. **路由层精简**：`SKILL.md` 只放「要什么数据 → 读哪个文件 / 调哪个脚本」的路由表与触发描述，目标 < 300 行。
+1. **路由层精简**：`SKILL.md` 只放「要什么数据 → 敲哪个 `asgk <大类> <子命令>`」的路由表与触发描述，目标 < 300 行。
 2. **分层拆分**：把领域细节按数据层/数据源拆到 `references/`，model 按需读取单层，不把全部端点一次性灌入上下文。
-3. **代码进 scripts/**：可运行实现沉淀为脚本/库，SKILL 里只给调用示例，不内嵌长实现。
+3. **代码进 packages**：可运行实现沉淀为 `packages/asgk-server`（服务端能力 + CLI），skill 只放文档调用示例，不内嵌长实现，不在 skill 内自带代码。
 4. **描述要主动**：`description` 字段写清「做什么 + 何时触发」，略带推力，避免 under-trigger。
 5. **新增/修改 skill 前先看 `ref/`**：是否已有相似实现可改造。
 
@@ -77,7 +77,7 @@ trader-skills/
 
 - `ref/a-stock-data`：A股全栈数据工具包（10 层 / 43 端点 / 15 数据源），作为 `skills/a-stock-data` 的**改造蓝本**。
   - 上游：https://github.com/simonlin1212/a-stock-data
-  - 它是**单 agent 单文件**形态（127KB SKILL.md 全量入上下文），已按 `.agents/notes/capability-proxy-design.md` 重构为本项目形态：`packages/asgk-server` 持有全部上游知识（服务端 21 能力 + asgk CLI 9 大类），`skills/a-stock-data` 是纯文档（SKILL.md + references），不自带代码。
+  - 它是**单 agent 单文件**形态（127KB SKILL.md 全量入上下文），已按 `.agents/notes/capability-proxy-design.md` 重构为本项目形态：`packages/asgk-server` 持有全部上游知识（服务端 22 能力 + asgk CLI 10 大类），`skills/a-stock-data` 是纯文档（SKILL.md + references），不自带代码。
 
 ## 7. TODO 管理
 
