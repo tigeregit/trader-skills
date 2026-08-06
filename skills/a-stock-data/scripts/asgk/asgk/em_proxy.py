@@ -86,6 +86,40 @@ def _server_call(capability: str, params: dict, timeout: int = 15):
     return payload.get("data")
 
 
+class _EmQueryResponse:
+    """emquery 结果伪装成 requests.Response，兼容调用方的 .json() 接口。
+
+    em_get 经 emquery 走时，服务端返回解析后的 JSON；本类包装它让现有调用方
+    （r.json().get(...)）零改动。.content 取 JSON 序列化字节（仅对 JSON 源正确；
+    依赖 .content 取 xlsx/GBK 原始字节的函数不应走 emquery，见 em_get 的 bypass 注释）。
+    """
+
+    def __init__(self, data):
+        self._data = data
+        self.status_code = 200
+
+    def json(self):
+        return self._data
+
+    @property
+    def content(self):
+        import json as _json
+        return _json.dumps(self._data, ensure_ascii=False).encode("utf-8")
+
+    @property
+    def text(self):
+        import json as _json
+        return _json.dumps(self._data, ensure_ascii=False)
+
+
+# 不走 emquery 的场景：依赖 .content 取原始字节（xlsx/GBK），emquery 返回解析后
+# JSON 无法还原。这些函数经 em_get 时直接走 sgw 网关路径（bypass emquery）。
+_EMQUERY_BYPASS_SUFFIXES = (
+    "ShowReport",       # 深交所 xlsx（margin_detail_szse）
+    "CompanyFinanceService",  # 新浪财报（虽是 JSON 但历史走 sgw）
+)
+
+
 def em_get(url: str, params: dict | None = None, headers: dict | None = None,
            timeout: int = 15, tier: str | None = None, *,
            method: str = "GET", json: dict | None = None,
@@ -105,6 +139,21 @@ def em_get(url: str, params: dict | None = None, headers: dict | None = None,
     h = dict(headers or {})
     if tier:
         h[_TIER_HEADER] = tier
+
+    # §3.4 em_get 枢纽：配了 ASGK_SERVER 时优先走 emquery 能力（服务端接管出网）。
+    # 对依赖 .content 原始字节的源（xlsx/GBK）bypass，走下方 sgw 路径。
+    if _SERVER and not any(s in url for s in _EMQUERY_BYPASS_SUFFIXES):
+        body = json if json is not None else data
+        body_type = "form" if data is not None and json is None else "json"
+        result = _server_call("emquery", {
+            "url": url, "params": params or {}, "tier": tier or "R",
+            "method": method.upper(), "body": body, "body_type": body_type,
+            "headers": {k: v for k, v in h.items() if k != _TIER_HEADER},
+            "timeout": timeout,
+        })
+        if result is not None:
+            return _EmQueryResponse(result)
+        # emquery 失败（服务端报错/熔断/未知域名）→ 回退 sgw 路径（不 break）
 
     if _GW:
         if method.upper() == "POST":

@@ -265,6 +265,25 @@ asgk-contract.md 第六节承诺。
 
 **验收**（每个 commit）：该函数经服务端返回真实数据 + 测试绿
 
+**状态**：✅ 已完成（commit 待提交）
+
+**实施备注**（重大设计决策）：
+- **不做 18 个独立能力，改为一个通用 emquery 能力**（§3.4 em_get 枢纽）。原因：
+  18 个 push2 函数都在 em_get 之后做自定义字段映射（f57→code 等），映射是纯计算
+  留客户端（§6.3）。真正要下沉的是"出网安全"（限流/熔断/缓存）。emquery 接收
+  (url, params, method, body)，返回解析后的 JSON，em_get 一处路由覆盖全部 18 个
+  函数（零改动）。字段映射逐步下沉留后续。
+- **域名动态归组**：emquery 的限流组按 URL host 动态解析（push2→eastmoney,
+  data.hexin→10jqka），而非 SourceMeta 固定的 eastmoney。未知域名拒绝（fail-closed）。
+- **_EmQueryResponse 伪装**：emquery 返回解析 JSON，但调用方期望 requests.Response
+  的 .json()。客户端包一层伪装对象兼容。依赖 .content 取原始字节（xlsx/GBK）的源
+  bypass emquery（_EMQUERY_BYPASS_SUFFIXES），走 sgw。
+- **group_reqs 计数修复**：T1 遗留的 group_reqs 从未递增，本任务补上（_execute_fetch）。
+
+**实测**：push2ex（em_zt_pool）经 emquery 返回真实 79 条涨停数据；
+push2.eastmoney.com 在本环境被拒连（环境问题，非代码 bug），emquery 正确返回
+"upstream failed"，客户端回退 sgw（同 IP 也被拒，fail-closed 正确）。
+
 **依赖**：T2（模式验证）
 
 ### T7 — 中成本梯队：编码/解析（~7 个能力）

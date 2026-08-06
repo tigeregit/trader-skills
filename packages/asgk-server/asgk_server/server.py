@@ -55,6 +55,12 @@ def load_config(path: Path) -> dict:
         return tomllib.load(f)
 
 
+def _host_of(url: str) -> str:
+    """从 URL 提取小写 host（emquery 按域名归限流组用）。"""
+    from urllib.parse import urlparse
+    return (urlparse(url).hostname or "").lower()
+
+
 class CapabilityServer:
     """能力代理服务端主体：持有流量内核 + 能力注册表，处理语义请求。
 
@@ -228,6 +234,14 @@ class CapabilityServer:
             return 503, {"error": str(e)}
 
         group = sm.group
+        # emquery 是 URL 级通用能力：限流组按 URL 的域名动态归组
+        # （push2→eastmoney, data.hexin→10jqka 等），而非 SourceMeta 固定的 eastmoney。
+        # 未知域名（无对应限流组）拒绝出网（fail-closed）。
+        if capability_name == "emquery" and isinstance(params.get("url"), str):
+            resolved = self.domain_group.get(_host_of(params["url"]))
+            if resolved is None:
+                return 400, {"error": f"emquery: 域名无对应限流组: {params['url']!r}"}
+            group = resolved
         policy = meta.cache_policy
         ttl = self._ttl_for_policy(policy)
         persist = should_persist(policy)
@@ -293,6 +307,8 @@ class CapabilityServer:
             source_meta=sm,
             max_attempts=self.max_attempts,
         )
+        # 计数（统计用）：每次实际尝试出网递增该组请求数
+        self.group_reqs[group] = self.group_reqs.get(group, 0) + 1
         try:
             data = fetch(ctx=ctx, **params)
         except requests.RequestException:
