@@ -25,9 +25,21 @@ def cninfo_irm(code: str, page_size: int = 30, page_num: int = 1) -> list[dict]:
     Returns:
         每条含 code/company/question(提问)/answer(回复,None=未回复)/answerer/ask_time。
     Note:
-        经网关（cninfo 组），POST form。两步请求：① queryKeyboardInfo 拿 orgId
-        （form body）；② question 拿问答（参数放 query string，空 body）。
+        两步请求：① queryKeyboardInfo 拿 orgId（form body）；② question 拿问答
+        （参数放 query string，空 body）。
+
+    取数路径（§3.4）：优先调 cninfo 能力（cninfo_type=irm，两步 POST 流在服务端
+    闭环——解决无状态代理无法保持会话的问题），回退旧路径。
     """
+    data = _server_call("cninfo", {"cninfo_type": "irm", "code": code,
+                                   "page_size": page_size, "page_num": page_num})
+    if data is not None:
+        return data
+    return _cninfo_irm_legacy(code, page_size, page_num)
+
+
+def _cninfo_irm_legacy(code: str, page_size: int = 30, page_num: int = 1) -> list[dict]:
+    """回退路径：经 sgw 网关两步 POST，本地解析。"""
     try:
         r1 = em_get("https://irm.cninfo.com.cn/newircs/index/queryKeyboardInfo",
                     data={"keyWord": code}, headers={"User-Agent": UA},

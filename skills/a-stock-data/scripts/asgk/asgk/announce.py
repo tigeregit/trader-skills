@@ -9,7 +9,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from asgk._contract import source
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -58,9 +58,18 @@ def cninfo_announcements(code: str, page_size: int = 30) -> list[dict]:
         page_size: 条数
     Returns:
         [{title, type, date, url}, ...]
-    Note:
-        经网关（cninfo 组），POST form-encoded，tier=P。
+
+    取数路径（§3.4）：优先调 cninfo 能力（cninfo_type=announce，orgId 动态映射 +
+    POST form + 时间戳转换全下沉服务端），回退旧路径。
     """
+    data = _server_call("cninfo", {"cninfo_type": "announce", "code": code, "page_size": page_size})
+    if data is not None:
+        return data
+    return _cninfo_announcements_legacy(code, page_size)
+
+
+def _cninfo_announcements_legacy(code: str, page_size: int = 30) -> list[dict]:
+    """回退路径：经 sgw 网关取巨潮公告，本地 orgId 解析 + POST form。"""
     org_id = _cninfo_orgid(code)
     payload = {
         "stock": f"{code},{org_id}", "tabName": "fulltext",
