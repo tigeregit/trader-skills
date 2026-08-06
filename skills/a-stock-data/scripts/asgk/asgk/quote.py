@@ -12,7 +12,7 @@ import json
 
 from asgk._contract import source
 from asgk.client import tdx_client
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -114,8 +114,27 @@ def tencent_quote(codes: list[str]) -> dict[str, dict]:
     Returns:
         {code: {name, price, pe_ttm, pb, mcap_yi(亿), float_mcap_yi, turnover_pct,
         change_pct, limit_up, limit_down, ...}}
+
+    取数路径（§3.4 渐进迁移）：
+        1. 优先调能力代理服务端 POST /v1/quote（服务端持有腾讯 URL/GBK/字段映射）
+        2. 服务端未配/不可达/报错 → 回退旧 em_get 网关路径（GBK 解码在此）
+
     Note:
-        经网关（tencent 限流组）。返回 GBK 文本，显式 decode("gbk")。
+        腾讯返回 GBK 文本需 decode("gbk")。服务端路径已在服务端解码；回退路径在本函数解码。
+    """
+    # 1. 能力代理服务端（推荐路径）
+    data = _server_call("quote", {"codes": list(codes)})
+    if data is not None:
+        return data
+    # 2. 回退：旧 sgw 网关路径（GBK 文本经 em_get 取回，本地解析）
+    return _tencent_quote_legacy(codes)
+
+
+def _tencent_quote_legacy(codes: list[str]) -> dict[str, dict]:
+    """回退路径：经 sgw 网关取腾讯 GBK 文本，本地解码+字段映射。
+
+    服务端未部署或不可达时使用。与 capabilities/quote.py._parse_tencent_payload
+    的字段映射完全一致（53 字段），保证两条路径返回结构相同。
     """
     prefixed = [_prefix(c) + c for c in codes]
     r = em_get("https://qt.gtimg.cn/q",

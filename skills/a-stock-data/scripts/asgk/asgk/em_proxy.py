@@ -1,28 +1,20 @@
-"""asgk.em_proxy — 统一请求入口 em_get，风控源必经网关。
+"""asgk.em_proxy — 统一请求入口 em_get（网关）+ _server_call（能力代理服务端）。
 
-调用接口：
-    em_get(url, params=None, headers=None, timeout=15, **kwargs)
-    em_get(url, params=..., method="POST", json={...}, tier="R")  # POST+JSON
+两个出网通道（能力代理重构 §3.3/§3.4 渐进迁移）：
 
-可选 tier 参数声明缓存档位：
-    em_get(url, params=..., tier="S")   # 板块归属→S档
+1. em_get(url, ...) — 旧路径，透明 HTTP 代理（sgw），风控源必经。
+   设了 ASGK_GW → 转发到网关（全局限流+缓存）；没设 → 失败关闭（禁止直连）。
+   未下沉到能力代理服务端的函数仍走这条。
 
-可选 method/json 参数支持 POST+JSON 接口（如东财人气榜 emappdata）：
-    em_get(url, method="POST", json=body, tier="R")  # body 经网关透传并进 cache key
+2. _server_call(capability, params) — 新路径，调能力代理服务端的语义接口。
+   设了 ASGK_SERVER → POST /v1/<capability>，返回结构化数据；没设 → 返回 None
+   （调用方据此回退旧 em_get 路径，保证未部署服务端时不 break）。
+   已下沉的函数（如 tencent_quote）优先走这条。
 
-行为：
-    - 设了 ASGK_GW → 请求转发到网关（全局限流+缓存），tier 放 X-Cache-Tier 头
-      · GET：?u=url&k=v，params 随 query 转发
-      · POST：?u=url，json body 放请求体转发（网关按 method+body 走上游）
-    - 没设 ASGK_GW → **默认抛异常**（禁止风控源直连，杜绝忘配网关被封 IP）
-
-ASGK_GW 的来源（优先级从高到低）：
-    1. 环境变量 ASGK_GW（最高，部署时 systemd/container envfile 用这个）
-    2. .env 文件里的 ASGK_GW（从 cwd 或 ASGK_ENV 指定路径加载）
+ASGK_GW / ASGK_SERVER 的来源（优先级从高到低）：
+    1. 环境变量（最高，部署时 systemd/container envfile 用这个）
+    2. .env 文件（从 cwd 或 ASGK_ENV 指定路径加载）
 环境变量优先于 .env。
-
-em_get 只被风控源（东财/同花顺）调用。直连源（腾讯/百度/新浪/mootdx/巨潮）
-不走 em_get，不受此约束——它们本就直连。
 """
 from __future__ import annotations
 
@@ -64,7 +56,35 @@ def _load_dotenv() -> None:
 
 _load_dotenv()
 _GW = os.environ.get("ASGK_GW")  # 如 http://127.0.0.1:7700；未设则失败关闭
+_SERVER = os.environ.get("ASGK_SERVER")  # 如 http://127.0.0.1:7701；未设则回退旧路径
 _TIER_HEADER = "X-Cache-Tier"
+
+
+def _server_call(capability: str, params: dict, timeout: int = 15):
+    """调能力代理服务端的语义接口：POST /v1/<capability>。
+
+    返回结构化数据（dict/list），或 None（未配服务端 / 调用失败 / 服务端报错）。
+    调用方据此回退旧 em_get 路径（§3.4 渐进迁移：未部署服务端时不 break）。
+
+    与 em_get 的区别：em_get 返回 requests.Response（原始字节，调用方自解析）；
+    _server_call 返回已解析的结构化数据（服务端持有全部上游知识）。
+    """
+    if not _SERVER:
+        return None
+    try:
+        r = requests.post(
+            f"{_SERVER}/v1/{capability}", json=params, timeout=timeout,
+        )
+    except requests.RequestException:
+        return None  # 服务端未启动/不可达 → 回退
+    if r.status_code != 200:
+        return None  # 服务端报错（熔断/上游失败）→ 回退
+    try:
+        payload = r.json()
+    except ValueError:
+        return None
+    return payload.get("data")
+
 
 def em_get(url: str, params: dict | None = None, headers: dict | None = None,
            timeout: int = 15, tier: str | None = None, *,

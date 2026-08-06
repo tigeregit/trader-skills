@@ -32,6 +32,7 @@ import requests
 from . import registry
 from .cache import JsonDiskCache, SemanticCache, semantic_key
 from .cache_policy import resolve_ttl, should_persist
+from .context import FetchContext, SourceBlocked, SourceUnhealthy
 from .egress import egress_request
 from .traffic import (
     CircuitBreaker,
@@ -39,6 +40,9 @@ from .traffic import (
     SingleFlight,
     TokenBucket,
 )
+# 导入 capabilities 包触发各 @capability 注册（真实数据能力）。
+# 放在 registry/context 之后，确保装饰器与 FetchContext 可用。
+from . import capabilities as _capabilities  # noqa: F401
 
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = HERE / "config.toml"
@@ -330,54 +334,6 @@ class CapabilityServer:
             self.cache.disk.close()
         if self.state_manager:
             self.state_manager.close()
-
-
-class FetchContext:
-    """能力函数的流量上下文：fetch 内部用它 acquire 限流、反馈熔断。
-
-    fetch 约定：
-      - 出网前调 ctx.acquire()（限流 + 熔断 canary 判定）
-      - 成功调 ctx.on_success()，失败调 ctx.on_failure(status, immediate)
-      - 或对 requests 异常用 ctx.on_network_error()
-    """
-
-    def __init__(self, group: str, bucket: TokenBucket, circuit: CircuitBreaker,
-                 source_meta: registry.SourceMeta, max_attempts: int):
-        self.group = group
-        self.bucket = bucket
-        self.circuit = circuit
-        self.source = source_meta
-        self.max_attempts = max_attempts
-        self.failed = False
-        self.last_status: int | str | None = None
-
-    def acquire(self) -> bool:
-        """限流 + 熔断 canary 判定。返回 False 表示熔断中不可出网。"""
-        self.bucket.acquire()
-        return self.circuit.before_request()
-
-    def on_success(self) -> None:
-        self.circuit.success()
-        self.last_status = 200
-
-    def on_failure(self, status: int | None = None, *, immediate: bool = False) -> None:
-        self.circuit.failure(immediate=immediate, status=status)
-        self.last_status = status
-        if immediate or status in (500, 502, 503, 504):
-            self.failed = True
-
-    def on_network_error(self) -> None:
-        self.circuit.failure()
-        self.failed = True
-        self.last_status = "network"
-
-
-class SourceBlocked(Exception):
-    """熔断/状态闩打开，受控源不可出网。"""
-
-
-class SourceUnhealthy(Exception):
-    """指定源熔断或无健康源可用。"""
 
 
 # ── HTTP handler ──────────────────────────────────────────────

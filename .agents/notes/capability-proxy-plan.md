@@ -119,10 +119,20 @@ T1 是所有后续任务的地基；T1.5(cache refactor)是 T1 后最优先的�
 - `asgk_server/tests/test_quote.py`（mock 腾讯上游）
 
 **验收**：
-- `tencent_quote(['600519'])` 经服务端返回真实数据（与旧路径一致）
-- `/v1/sources?capability=quote` 返回 `["tencent"]`
-- 未启动服务端时，quote 回退旧 sgw 路径（不 break）
-- asgk 现有测试全绿
+- ✅ `tencent_quote(['600519'])` 经服务端返回真实数据（实测 贵州茅台 price=1308.55
+  pe_ttm=19.78 pb=7.02，与旧路径一致）
+- ✅ `/v1/sources?capability=quote` 返回 `["tencent"]`
+- ✅ 未启动服务端时，quote 回退旧 sgw 路径（test_fallback_to_gateway_when_server_unset）
+- ✅ asgk 测试全绿（142 passed，含 4 个新增 tencent 路由测试）
+
+**状态**：✅ 已完成（commit 待提交）
+
+**实施备注**：
+- 用 `_server_call(capability, params)` 取代 plan 中的 `_SUNK_CAPABILITIES` URL 路由——
+  tencent_quote 有自定义 GBK+53 字段解析，em_get 返回 Response 会让解析崩溃，故
+  tencent_quote 直接调语义接口（返回结构化 dict），em_get URL 路由留给后续无需
+  自定义解析的批次（datacenter 族）。
+- 抽 context.py（FetchContext/SourceBlocked/SourceUnhealthy）破 server↔capabilities 循环导入。
 
 **依赖**：T1
 
