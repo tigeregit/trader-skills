@@ -286,22 +286,36 @@ emquery（§3.4 em_get 枢纽）方案但回退——它是改良版透明代理
 
 **依赖**：T2（模式验证）
 
-### T7 — 中成本梯队：编码/解析（~7 个能力）
+### T7 — 中成本梯队：编码/解析（~7 个能力） ✅
 
 含 GBK 解码、CSV split、JSONP 剥壳、xlsx 解析、字段索引数组。
 
-**能力清单**：
-- quote: baidu_kline_with_ma（ResultCode 风控判定 + CSV keys/rows）
-- option: sina_option_codes / sina_option_tquote / sina_option_greeks
-  （GBK + 字段索引 + greeks 跳空串）
-- base: sina_financial_report
-- announce: cninfo_announcements（POST form + orgId 映射预取）
-- sentiment: cninfo_irm（两步 POST 流）
-- news: cls_telegraph
+**能力清单**（route B：具名能力，编码/解析/签名全下沉服务端）：
+- ✅ baidu_kline：百度带 MA 的日 K（ResultCode 风控判定 + CSV keys/rows 解析下沉；
+  source=baidu egress_client=curl_cffi；live-verified 600519 返 2001 行）
+- ✅ sina_option：ETF 期权三变体（option_type 参数区分 codes/tquote/greeks；
+  GBK decode + var 壳剥离 + 43 字段索引 + greeks 跳空串全下沉；
+  live-verified 510050 codes/tquote/greeks 三变体）
+- ✅ sina_finance：新浪财报三表（report_list 按报告期 dict 解析下沉；
+  cache=quarterly；live-verified 600519 lrb 三期）
+- ✅ cninfo：巨潮公告 + 互动易（cninfo_type 参数区分 announce/irm；
+  orgId 动态映射模块级缓存（所有 agent 共享）+ 两步 POST 流服务端闭环；
+  live-verified 600519 公告 + 000001 互动易问答）
+- ✅ cls_telegraph：财联社电报（md5(sha1(sorted-qs)) 签名下沉；
+  cache=streaming；live-verified 5 条实时电报）
 
-**验收**：同 T6
+**验收**：同 T6 ✅（5 能力 / 7 函数全部经服务端返回真实数据 + 客户端零 URL +
+测试绿：server 125 / client 211）。
 
-**依赖**：T2
+**实现笔记**：
+- baidu_kline 的 curl_cffi 指纹由 source.egress_client 声明，egress_request 按
+  client 名选出网方式（百度协议栈风控的核心规避点）。
+- sina_option.codes 是多步（contractMonth + 逐月 hq），逐月循环用
+  tier_acquire=False 共享首请求的限流配额，避免 N 次限流等待。
+- cninfo orgId 映射拉取走限流+熔断反馈，失败回退硬编码规则（gssh0/gsbj0/gssz0）。
+- 所有客户端保留 `_legacy` 回退路径（em_get + 本地解析），零破坏渐进迁移。
+
+**依赖**：T2（模式验证）
 
 ### T8 — 高成本梯队：算法/协议硬骨头（5 个，逐个 commit）
 
