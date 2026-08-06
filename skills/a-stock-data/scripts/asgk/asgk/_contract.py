@@ -33,19 +33,21 @@ _DEFAULT_FORMATS: dict[str, list[str]] = {
 class SourceMeta:
     """业务函数的元数据。"""
 
-    __slots__ = ("tier", "strip", "via", "cli", "name", "func",
+    __slots__ = ("tier", "strip", "via", "cli", "name", "func", "wrapped",
                  "data_type", "supported_formats")
 
     def __init__(self, tier: Tier, strip: list[str] | None, via: Via,
                  cli: str | None, name: str, func: Callable,
                  data_type: DataType | None = None,
-                 supported_formats: list[str] | None = None):
+                 supported_formats: list[str] | None = None,
+                 wrapped: Callable | None = None):
         self.tier = tier
         self.strip = strip
         self.via = via
         self.cli = cli
         self.name = name          # 如 "signal.eastmoney_concept_blocks"
-        self.func = func
+        self.func = func          # 原始函数（无格式化）
+        self.wrapped = wrapped    # @source 包装后的函数（含格式化/交付注入）
         self.data_type = data_type
         self.supported_formats = supported_formats
 
@@ -100,6 +102,7 @@ def source(tier: Tier, *, strip: list[str] | None = None,
             return _apply_format(result, meta, fmt, output, path)
 
         wrapper._asgk_meta = meta  # 挂到包装函数上供工具读取
+        meta.wrapped = wrapper  # 供 CLI 调用（含格式化注入）
         _REGISTRY.append(meta)
         return wrapper
 

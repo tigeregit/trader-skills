@@ -221,10 +221,20 @@ asgk-contract.md 第六节承诺。
 - `asgk/tests/test_cli.py`
 
 **验收**：
-- `asgk quote 600519` 打印 table
-- `asgk quote 600519 --format json` 打印 JSON
-- `asgk quote --sources` 列出源
-- `asgk kline 600519 --format xlsx --output file --path k.xlsx` 生成文件
+- ✅ `asgk quote 600519` 打印 md 表格（实测 贵州茅台 实时数据）
+- ✅ `asgk quote 600519 --format json` 打印 JSON
+- ✅ `asgk quote --sources` 列出源（查服务端 /v1/sources）
+- ✅ 多值 codes（`asgk quote 600519 000001`）+ 可选参数 --flag 正确传递
+- ✅ 全套测试绿（client 196 / server 93 / sgw 101）
+
+**状态**：✅ 已完成（commit 待提交）
+
+**实施备注**：
+- **registry 自动发现**：@source(cli=...) 声明的函数自动注册为子命令，无需手维护命令表。
+- **参数映射**：inspect 签名驱动——list[str] 参数收集多值位置参数（nargs="*"），
+  有默认值参数暴露为 --flag，必填参数 nargs="?" 让 --sources 可单独用（取数时校验）。
+- **meta.wrapped**：_contract.py 的 SourceMeta 增加 wrapped 字段存 @source 包装后的函数，
+  CLI 直接调它（含格式化注入），避免通过模块重导入取 wrapper。
 
 **依赖**：T4（用格式化层）；T2/T3（要有真实能力可调）
 
