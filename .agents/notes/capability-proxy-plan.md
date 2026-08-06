@@ -317,35 +317,60 @@ emquery（§3.4 em_get 枢纽）方案但回退——它是改良版透明代理
 
 **依赖**：T2（模式验证）
 
-### T8 — 高成本梯队：算法/协议硬骨头（5 个，逐个 commit）
+### T8 — 高成本梯队：算法/协议硬骨头（5 个，逐个 commit） ✅
 
-这是重构的核心收益所在，每个都是独立工程：
+这是重构的核心收益所在，每个都是独立工程。route B 下全部完成：
 
-**T8.1 — mootdx TCP 客户端池**（解决 5 个直连函数）
-- 服务端 `asgk_server/sources/mootdx.py`：内嵌 mootdx 客户端池
-  （线程安全 + 长连接保活 + heartbeat），实现 bars/quotes/transaction/finance/f10
-  五个能力
-- 客户端 mootdx_bars/quotes/transaction/finance/f10 切到服务端
-- **这是新架构最大收益**：5 个 TCP 函数首次走代理，有熔断保护
+**T8.1 — mootdx TCP 客户端池**（5 个直连函数）✅
+- 服务端 `capabilities/mootdx.py`（注意：计划写 sources/，实际放 capabilities/
+  与其他能力一致）：内嵌 mootdx 客户端池（线程安全 lazy-init，所有 agent 共享
+  一个池而非各自建连），mootdx_type 参数区分 bars/quotes/transaction/finance/f10
+- mootdx 0.11.x BESTIP.HQ 空串 bug 的探测兜底链（探测→bestip→factory）下沉
+- bars 日线空响应降级百度（复用进程内 baidu_kline capability）
+- OSError 网络错误清池重置
+- 客户端 5 函数（quote.py mootdx_bars/quotes/transaction + base.py
+  mootdx_finance/f10）切到服务端，回退本地 tdx_client
+- **新架构最大收益**：5 个 TCP 函数首次走代理，有限流+熔断保护
+- live-verified：bars/finance 真实数据；quotes/transaction/f10 与 legacy 一致
+  （mootdx 0.11.7 当前节点 quotes 返空、F10 name 参数弃用——非本重构引入）
 
-**T8.2 — legulegu CSRF 会话**（解决 2 个回退函数）
-- 服务端 `asgk_server/sources/legulegu.py`：持有 cookie jar，CSRF 两步流在
-  服务端闭环（解决无状态代理无法保持会话的问题）
+**T8.2 — legulegu CSRF 会话**（2 个回退函数）✅
+- 服务端 `capabilities/legulegu.py`：CSRF 两步流在服务端闭环（GET 页面→解析
+  `<meta _csrf>`→API 带 X-CSRF-Token + cookie），lg_type 参数区分 pe/pb
+- token=md5(today_iso) 下沉
+- 新增 legulegu 限流组（rps=0.5，无风控但保守）
 - market_pe_lg / market_pb_lg 切到服务端，不再直连
+- live-verified：上证 PE 333 条（08-06 pe=17.0）+ PB 5244 条（pb=4.23）
 
-**T8.3 — 百度 curl_cffi 指纹**
-- 已在 sgw 的 egress 实现，搬入服务端 egress.py；baidu_kline capability 标
-  egress_client=curl_cffi
-- （若 T7 已含 baidu_kline，则此项并入 T7）
+**T8.3 — 百度 curl_cffi 指纹** ✅（并入 T7）
+- baidu_kline capability 标 egress_client=curl_cffi，egress.py 按名选出网方式
+- T7 已验证可用（600519 返 2001 行）
 
-**T8.4 — chip cyq.js 执行**
-- 服务端 `asgk_server/sources/chip.py`：py_mini_racer 执行 cyq.js（从客户端
-  搬入），含 K线获取 + 百度降级链
+**T8.4 — chip cyq.js 执行** ✅
+- 服务端 `capabilities/chip.py`：py_mini_racer 执行 cyq.js（vendor 到
+  resources/cyq.js，服务端自包含），含 push2his K线获取 + 百度降级链
+- **关键修复**：百度降级用直接 curl_cffi egress（不经 eastmoney 熔断），并在
+  降级前清 ctx.failed——否则 push2his 网络失败会让 server 见 ctx.failed 返
+  502，无视百度已取到 K 线
+- MiniRacer 线程锁保护 CYQCalculator 并发（py_mini_racer 官方不保证线程安全）
+- 客户端 chip_distribution 切到服务端，回退本地 em_get + py_mini_racer
+- live-verified：000001 返 90 日筹码（08-06 benefit=0.88 avg=10.82）
 
-**T8.5 — cls 签名 + 东财 POST 签名**（若 T6/T7 未覆盖签名算法）
-- 服务端实现 md5(sha1) 签名 + 东财 POST body 构造
+**T8.5 — cls 签名 + 东财 POST 签名** ✅（T7 已覆盖）
+- cls_telegraph 的 md5(sha1) 签名已在 T7 下沉，live-verified
 
-**验收**（每个）：该函数经服务端返回真实数据 + fail-closed/降级正确 + 测试绿
+**验收**（每个）：该函数经服务端返回真实数据 + fail-closed/降级正确 + 测试绿 ✅
+（T8.1 bars/finance 真实数据；T8.2 PE/PB 真实数据；T8.4 chip 真实数据 +
+baidu 降级在 push2his 被封环境验证；测试 server 139 / client 211 全绿）
+
+**实现笔记**：
+- mootdx 客户端池：线程安全 lazy-init，首次建连探测 10 个 TCP server（~数秒）；
+  首次失败缓存异常避免每次请求重试探测。
+- legulegu CSRF：服务端持有 cookie jar，两步流闭环——这是能力代理相对透明代理
+  的核心收益（无状态代理无法保持会话）。
+- chip 百度降级：必须用直接 curl_cffi egress（不经 eastmoney 熔断），并在降级前
+  清 ctx.failed；否则 push2his 网络失败会让降级成功也返回 502。
+- py_mini_racer CYQ：线程锁保护 CYQCalculator 并发（累积筹码有内部状态）。
 
 **依赖**：T2（mootdx/legulegu 无依赖 T6/T7，可提前）
 
