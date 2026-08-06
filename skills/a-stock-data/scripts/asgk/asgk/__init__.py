@@ -37,6 +37,7 @@ from asgk.limitup import (
 from asgk.option import sina_option_codes, sina_option_tquote, sina_option_greeks
 from asgk.sentiment import cninfo_irm, ths_hot_list, em_hot_rank, em_hot_concept
 from asgk.valuation import forward_pe, pe_digestion, calc_peg, full_valuation
+from asgk.docs import announce_pdf, report_pdf
 
 __all__ = [
     # 底层
@@ -83,4 +84,6 @@ __all__ = [
     "cninfo_irm", "ths_hot_list", "em_hot_rank", "em_hot_concept",
     # 估值
     "forward_pe", "pe_digestion", "calc_peg", "full_valuation",
+    # 文档层
+    "announce_pdf", "report_pdf",
 ]

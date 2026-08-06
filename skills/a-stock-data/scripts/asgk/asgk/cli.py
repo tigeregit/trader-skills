@@ -116,10 +116,11 @@ def _bind_args(meta, args: argparse.Namespace) -> dict:
     sig = inspect.signature(func)
     kwargs = {}
     for pname, param in sig.parameters.items():
-        # argparse 属性名：位置参数原名，--flag 转 _。签名参数名用 _ 形式。
-        if not hasattr(args, pname):
-            continue
-        val = getattr(args, pname)
+        # argparse 属性名：--flag 转 _（flag_name），但位置参数保留注册名（含 -）。
+        # 位置参数注册时用 pname.replace("_","-")（anno_id → anno-id），故需两种取法。
+        val = getattr(args, pname, None)
+        if val is None:
+            val = getattr(args, pname.replace("_", "-"), None)
         if val is None:
             continue
         # list 型：sig 参数名是 codes，argparse 存为 list
@@ -196,13 +197,26 @@ def main(argv: list[str] | None = None) -> int:
     kwargs = _bind_args(meta, args)
     # 注入选源/格式化控制参数（装饰器会拦截）
     fmt = args.format
-    # CLI 默认格式：未指定 format 时按数据类型选 md（表格友好）
-    if fmt is None:
-        fmt = "md" if meta.data_type in ("table", "kv", "series") else "json"
-    kwargs["format"] = fmt
-    kwargs["output"] = args.output
-    if args.path:
+    output = args.output
+    # 文档型（bytes）：强制 file 交付 + 需 path；未指定 path 时用 doc_id 兜底命名
+    if meta.data_type == "document":
+        if output != "file":
+            print("文档型必须用 --output file --path PATH", file=sys.stderr)
+            return 1
+        if not args.path:
+            # 兜底：用必填参数第一个值作文件名
+            val = next(iter(kwargs.values()), "doc")
+            args.path = f"{val}.pdf"
         kwargs["path"] = args.path
+        kwargs["format"] = "binary"  # document 型的 fmt 占位（_apply_format 不校验）
+    else:
+        # CLI 默认格式：未指定 format 时按数据类型选 md（表格友好）
+        if fmt is None:
+            fmt = "md" if meta.data_type in ("table", "kv", "series") else "json"
+        kwargs["format"] = fmt
+        if args.path:
+            kwargs["path"] = args.path
+    kwargs["output"] = output
 
     try:
         result = meta.wrapped(**kwargs)
@@ -210,12 +224,14 @@ def main(argv: list[str] | None = None) -> int:
         print(f"错误: {e}", file=sys.stderr)
         return 1
 
-    # output=return 时 CLI 也打印（否则用户看不到）
-    if args.output == "return" and result is not None:
+    # output=return 时 CLI 也打印（文档型 file 模式已写盘，跳过）
+    if output == "return" and result is not None:
         if isinstance(result, bytes):
             sys.stdout.buffer.write(result)
         else:
             print(result)
+    elif output == "file" and result is not None:
+        print(f"已写入: {result}", file=sys.stderr)
     return 0
 
 

@@ -86,6 +86,39 @@ def _server_call(capability: str, params: dict, timeout: int = 15):
     return payload.get("data")
 
 
+def _server_call_binary(capability: str, params: dict, timeout: int = 120):
+    """文档型能力调用：POST /v1/<capability>，返回 (bytes, ext) 或 None。
+
+    与 _server_call 的差异：服务端文档能力返回 base64 编码的 bytes（JSON-RPC 无法
+    传 bytes），本函数解码拿回原始 bytes。timeout 默认 120s（PDF 下载比结构化慢）。
+
+    Returns:
+        (data_bytes, ext) 或 None（未配/失败/报错）。
+    """
+    import base64
+    if not _SERVER:
+        return None
+    try:
+        r = requests.post(
+            f"{_SERVER}/v1/{capability}", json=params, timeout=timeout,
+        )
+    except requests.RequestException:
+        return None
+    if r.status_code != 200:
+        return None
+    try:
+        payload = r.json()
+    except ValueError:
+        return None
+    if not payload.get("_binary"):
+        return None
+    try:
+        data = base64.b64decode(payload.get("data", ""))
+    except (ValueError, base64.binascii.Error):
+        return None
+    return data, payload.get("ext", "pdf")
+
+
 def em_get(url: str, params: dict | None = None, headers: dict | None = None,
            timeout: int = 15, tier: str | None = None, *,
            method: str = "GET", json: dict | None = None,

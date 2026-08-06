@@ -114,11 +114,16 @@ def _apply_format(result: Any, meta: SourceMeta,
     """对业务函数返回值过格式化层 + 交付层（§3.5）。
 
     data_type 未声明时按返回类型推断（dict→kv, list→table, str→text）。
+    document 型（原始 bytes）不走格式化层，直接交付（§3.7）。
     """
     from asgk._format import format_data, validate
     from asgk._output import deliver
 
     data_type = meta.data_type or _infer_data_type(result)
+    # 文档型：原始 bytes，不经格式化/校验，直接交付（§3.7）
+    if data_type == "document":
+        # fmt 标 "binary"（二进制写盘）；output=file 时 deliver 写 bytes
+        return deliver(result, output, path, "binary")
     validate(data_type, fmt)
     formatted = format_data(result, data_type, fmt)
     return deliver(formatted, output, path, fmt)
