@@ -109,26 +109,24 @@ backoff_seconds = [600, 1800, 3600, 21600, 43200, 86400]
 # 生产默认允许普通瞬态故障重试；真实 canary 用临时配置设为 1。
 max_attempts = 3
 
-# ── 五档缓存 TTL（T1 沿用 sgw；T1.5 改为六类数据型分档 §3.6c）──
-# 档位由能力注册表的 cache_policy 驱动（T1.5）；T1 阶段仍用五档。
+# ── 缓存（T1.5：六类数据型分档，TTL/落盘由 cache_policy.py 驱动）──
+# TTL 与落盘策略不再在此配置——按能力的 cache_policy 声明查 cache_policy.py 的映射表
+# （definitive=30天落盘 / quarterly=1天落盘 / daily_settled=盘中0盘后12h / ...，
+# §3.6c）。本处只保留交易时段判断（daily_settled 的盘中/盘后切换依赖）和磁盘目录。
 [cache]
-P_ttl = 2592000           # 30天：公告/分红/F10/互动易（发布即定稿）
-L_ttl = 86400             # 1天：季报快照/财报三表/股东户数（季度更新）
-S_ttl_session = 0         # 盘中(09:00-18:00)：no-cache
-S_ttl_afterclose = 43200  # 盘后(18:00-次日09:00)：12h
-R_ttl = 0                 # 实时：no-cache
-N_ttl = 0                 # 流式新闻：no-cache
 
 # 交易时段简化判断（MVP）：工作日 09:00-18:00 视为盘中
 [cache.session]
 intraday_start = "09:00"
 intraday_end = "18:00"
 
-# ── 磁盘持久化（沿用 sgw；T1.5 改为 JSON 文件 §3.6d）─────────
+# ── 磁盘持久化（T1.5：JSON 文件，§3.6d）──────────────────────
+# 是否启用磁盘持久层。哪些类型落盘由 cache_policy.py 的 should_persist 决定
+# （定稿/季度/文档型落盘；实时/流式/盘后定稿型不落盘），不由 tier 决定。
 [cache.persist]
 enabled = true
 dir = "cache"
-tiers = ["P", "L"]
+
 
 # ── 响应指纹日志（§3.4.7 离线修正，沿用 sgw）──────────────────
 [fingerprint]

@@ -1,14 +1,13 @@
-"""asgk_server.traffic — 流量内核（从 sgw/proxy.py 整块搬入，零改）。
+"""asgk_server.traffic — 流量内核（限流/熔断/singleflight，从 sgw 搬入）。
 
-四大流量基础设施，是能力代理服务端的出网安全内核：
+三大流量基础设施，是能力代理服务端的出网安全内核：
   - TokenBucket：按域名组最小间隔限流（全局串行）
-  - Cache / DiskCache：内存 + SQLite/WAL 磁盘持久层
   - SingleFlight：并发 miss 合并为一次出网
   - CircuitBreaker / CircuitStateStore / CircuitStateManager：来源级熔断 +
     状态持久化 + 异常期安全闩（最该复用，避免状态库损坏时继续打上游）
 
-本模块不含任何 HTTP/透明代理逻辑（make_handler/do_GET/do_POST 留在 sgw）。
-T1 阶段保持与 sgw 完全一致的语义；T1.5 将 Cache/DiskCache 改造为能力语义缓存。
+缓存（Cache/DiskCache）不在本模块——T1.5 改造为能力语义缓存 cache.py
+（结构化内存 + JSON 文件落盘，per-source）。熔断状态库仍用 SQLite（安全闩要 ACID）。
 """
 from __future__ import annotations
 
@@ -591,124 +590,3 @@ class TokenBucket:
         if total > 0:
             time.sleep(total)
         return total
-
-
-# ── 缓存：内存，按 key 存 (resp_bytes, headers, expire_ts, tier) ──
-class Cache:
-    def __init__(self):
-        self._store: dict[str, tuple[bytes, dict, float, str]] = {}
-        self._lock = threading.Lock()
-        self.hits = 0
-        self.misses = 0
-
-    def get(self, key: str) -> Optional[tuple[bytes, dict]]:
-        with self._lock:
-            entry = self._store.get(key)
-            if entry and entry[2] > time.time():
-                self.hits += 1
-                return entry[0], entry[1]
-            if entry:
-                del self._store[key]  # 过期
-            self.misses += 1
-            return None
-
-    def set(self, key: str, body: bytes, headers: dict, ttl: int, tier: str):
-        if ttl <= 0:
-            return
-        with self._lock:
-            self._store[key] = (body, headers, time.time() + ttl, tier)
-
-    def stats(self) -> dict:
-        with self._lock:
-            return {"size": len(self._store), "hits": self.hits, "misses": self.misses}
-
-
-# ── 磁盘缓存：SQLite + WAL，仅持久化 P/L 档 ────────────────────
-# T1.5 将改造为能力语义缓存（JSON 文件 + per-source）；本阶段保持 sgw 语义。
-class DiskCache:
-    """P/L 档缓存的磁盘持久层。
-
-    write-through：每次 set 同步落盘；get 读盘回填内存。重启后 load_all 回填。
-    WAL 模式读不阻塞写；写用一把锁串行化（P/L 写入 ≤1 req/s，无竞争压力）。
-    过期清理：启动 load_all 扫表删过期 + get 命中过期惰性删除，无后台线程。
-    """
-
-    SCHEMA = """
-    CREATE TABLE IF NOT EXISTS cache (
-        key     TEXT PRIMARY KEY,
-        body    BLOB,
-        headers TEXT,
-        expire  REAL,
-        tier    TEXT,
-        created REAL
-    )
-    """
-
-    def __init__(self, db_path: Path, tiers: set[str]):
-        self.db_path = db_path
-        self.tiers = tiers
-        db_path.parent.mkdir(parents=True, exist_ok=True)
-        self._conn = sqlite3.connect(str(db_path), check_same_thread=False)
-        self._conn.execute("PRAGMA journal_mode=WAL")
-        self._conn.execute("PRAGMA synchronous=NORMAL")
-        self._conn.executescript(self.SCHEMA)
-        self._conn.commit()
-        self._lock = threading.Lock()
-        self.hits = 0
-        self.misses = 0
-
-    def get(self, key: str) -> Optional[tuple[bytes, dict]]:
-        with self._lock:
-            row = self._conn.execute(
-                "SELECT body, headers, expire FROM cache WHERE key=?", (key,)
-            ).fetchone()
-        if not row:
-            self.misses += 1
-            return None
-        body, headers_json, expire = row
-        if expire <= time.time():
-            # 惰性删除过期项
-            with self._lock:
-                self._conn.execute("DELETE FROM cache WHERE key=?", (key,))
-                self._conn.commit()
-            self.misses += 1
-            return None
-        self.hits += 1
-        return body, json.loads(headers_json)
-
-    def set(self, key: str, body: bytes, headers: dict, ttl: int, tier: str):
-        if tier not in self.tiers:
-            return
-        with self._lock:
-            self._conn.execute(
-                "INSERT OR REPLACE INTO cache (key, body, headers, expire, tier, created) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (key, body, json.dumps(headers, ensure_ascii=False),
-                 time.time() + ttl, tier, time.time()),
-            )
-            self._conn.commit()
-
-    def load_all(self) -> dict[str, tuple[bytes, dict, float, str]]:
-        """启动时回填内存。过滤并删除过期项，返回未过期的 {key: (body, headers, expire, tier)}。"""
-        now = time.time()
-        with self._lock:
-            rows = self._conn.execute(
-                "SELECT key, body, headers, expire, tier FROM cache"
-            ).fetchall()
-            # 删除所有过期项
-            self._conn.execute("DELETE FROM cache WHERE expire <= ?", (now,))
-            self._conn.commit()
-        result = {}
-        for key, body, headers_json, expire, tier in rows:
-            if expire > now:
-                result[key] = (body, json.loads(headers_json), expire, tier)
-        return result
-
-    def stats(self) -> dict:
-        with self._lock:
-            size = self._conn.execute("SELECT COUNT(*) FROM cache").fetchone()[0]
-        return {"size": size, "hits": self.hits, "misses": self.misses}
-
-    def close(self):
-        with self._lock:
-            self._conn.close()

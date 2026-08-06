@@ -16,7 +16,6 @@ T1 阶段：服务端可启动、GET /v1/sources 返回空、mock 能力可注�
 from __future__ import annotations
 
 import argparse
-import hashlib
 import json
 import signal
 import threading
@@ -31,12 +30,12 @@ from urllib.parse import urlparse, parse_qs
 import requests
 
 from . import registry
+from .cache import JsonDiskCache, SemanticCache, semantic_key
+from .cache_policy import resolve_ttl, should_persist
 from .egress import egress_request
 from .traffic import (
-    Cache,
     CircuitBreaker,
     CircuitStateManager,
-    DiskCache,
     SingleFlight,
     TokenBucket,
 )
@@ -112,25 +111,26 @@ class CapabilityServer:
         for circuit in self.circuits.values():
             circuit._on_change = self._persist_circuit_states
 
-        # singleflight + 内存缓存 + 磁盘缓存（T1 沿用 sgw；T1.5 改造 cache）
+        # singleflight + 语义缓存（结构化内存 + JSON 文件落盘，§3.6）
+        # 取代 sgw 的字节 Cache + SQLite DiskCache。cache key = capability|source|语义键。
         self.singleflight = SingleFlight()
-        self.cache = Cache()
         self.group_reqs: dict[str, int] = {n: 0 for n in self.buckets}
         self.group_errs: dict[str, int] = {n: 0 for n in self.buckets}
-        self.disk_cache: Optional[DiskCache] = None
         self._disk_load_count = 0
         self._disk_load_ms = 0
+        disk_cache: Optional[JsonDiskCache] = None
         persist = config.get("cache", {}).get("persist", {})
         if persist.get("enabled", False):
             cache_dir = Path(self._cache_dir_override or persist.get("dir", "cache"))
             if not cache_dir.is_absolute():
                 cache_dir = HERE / cache_dir
-            tiers = set(persist.get("tiers", ["P", "L"]))
-            self.disk_cache = DiskCache(cache_dir / "asgk_cache.db", tiers)
+            disk_cache = JsonDiskCache(cache_dir)
+        self.cache = SemanticCache(disk_cache)
+        if disk_cache is not None:
             t0 = time.time()
-            for key, (body, headers, expire, tier) in self.disk_cache.load_all().items():
-                self.cache._store[key] = (body, headers, expire, tier)
-            self._disk_load_count = len(self.cache._store)
+            for key, (value, expire) in disk_cache.load_all().items():
+                self.cache.preload(key, value, expire)
+            self._disk_load_count = self.cache.memory.stats()["size"]
             self._disk_load_ms = round((time.time() - t0) * 1000, 1)
 
         # 指纹日志（沿用 sgw §3.4.7）
@@ -157,16 +157,13 @@ class CapabilityServer:
             if name in self.circuits:
                 self.circuits[name].restore(state, conservative=True)
 
-    # ── 档位 → TTL（T1 沿用 sgw 五档；T1.5 改为 cache_policy 分档）──
-    def ttl_for_tier(self, tier: str) -> int:
-        c = self.cfg["cache"]
-        if tier == "P":
-            return c["P_ttl"]
-        if tier == "L":
-            return c["L_ttl"]
-        if tier == "S":
-            return c["S_ttl_afterclose"] if not self._is_intraday() else c["S_ttl_session"]
-        return 0  # R / N / 未知 → no-cache
+    # ── cache_policy → TTL（§3.6c 六类数据型分档，取代五档 tier）──
+    def _ttl_for_policy(self, policy: str) -> int:
+        """把能力的 cache_policy 解析为具体 TTL（秒）。
+
+        daily_settled 随交易时段变（盘中0/盘后12h）；其余固定。未知 policy 保守 0。
+        """
+        return resolve_ttl(policy, is_intraday_fn=self._is_intraday)
 
     def _is_intraday(self) -> bool:
         """简化交易时段判断：工作日 09:00-18:00。MVP，P4 校准。"""
@@ -227,15 +224,16 @@ class CapabilityServer:
             return 503, {"error": str(e)}
 
         group = sm.group
-        tier = self._tier_for_cache_policy(meta.cache_policy)
-        ttl = self.ttl_for_tier(tier)
+        policy = meta.cache_policy
+        ttl = self._ttl_for_policy(policy)
+        persist = should_persist(policy)
 
-        # cache key：capability|source|semantic_key（T1.5 接入 _semantic_key）
-        cache_key = self._cache_key(capability_name, sm.name, params)
+        # cache key：capability|source|语义键（§3.6b/f，per-source 独立不跨源共享）
+        cache_key = semantic_key(capability_name, sm.name, params)
 
-        # 命中缓存（TTL>0 才查）
+        # 命中缓存（TTL>0 才查；realtime/streaming 的 TTL=0 不查）
         if ttl > 0:
-            cached = self._cache_get(cache_key)
+            cached = self.cache.get(cache_key)
             if cached is not None:
                 return 200, {"data": cached, "cache": "HIT-MEM", "source": sm.name}
         # singleflight 合并并发 miss（即使 TTL=0 也合并，避免实时端点冷 miss 风暴）
@@ -251,7 +249,7 @@ class CapabilityServer:
 
         # leader：执行 fetch，带流量内核保护（状态闩 → 熔断 → 限流 → 出网）
         try:
-            result = self._execute_fetch(meta, fetch, sm, group, params, tier, ttl, cache_key)
+            result = self._execute_fetch(meta, fetch, sm, group, params, ttl, persist, cache_key)
         except SourceBlocked as e:
             result = (503, {"error": str(e)})
         except Exception:
@@ -265,7 +263,7 @@ class CapabilityServer:
 
     def _execute_fetch(self, meta: registry.CapabilityMeta, fetch,
                        sm: registry.SourceMeta, group: str, params: dict,
-                       tier: str, ttl: int, cache_key: str) -> tuple[int, dict]:
+                       ttl: int, persist: bool, cache_key: str) -> tuple[int, dict]:
         """leader 路径：状态闩 → 熔断 → 限流 → 调 fetch → 反馈 → 写缓存。
 
         fetch 函数体内自行调用 egress_request 出网（服务端持有全部上游知识）。
@@ -304,59 +302,10 @@ class CapabilityServer:
         if ctx.failed:
             return 502, {"error": "upstream failed", "reason": ctx.last_status}
 
-        # 写缓存（TTL>0 才写）
+        # 写缓存（结构化数据；TTL>0 才写，persist 决定是否落盘，§3.6）
         if ttl > 0 and data is not None:
-            self._cache_set(cache_key, data, ttl, tier)
+            self.cache.set(cache_key, data, ttl, persist)
         return 200, {"data": data, "cache": "MISS"}
-
-    # ── cache 辅助（T1 沿用 sgw 字节语义；T1.5 改为结构化 JSON）──
-    def _tier_for_cache_policy(self, policy: str) -> str:
-        """cache_policy → 五档 tier 映射（T1 临时方案；T1.5 直查六类分档表）。"""
-        return {
-            "definitive": "P", "quarterly": "L", "daily_settled": "S",
-            "daily_volatile": "S", "realtime": "R", "streaming": "N",
-        }.get(policy, "R")
-
-    def _cache_key(self, capability: str, source: str, params: dict) -> str:
-        """capability|source|semantic_key（T1.5 接入 _semantic_key 排序去重）。"""
-        raw = json.dumps(params, sort_keys=True, ensure_ascii=False)
-        param_hash = hashlib.md5(raw.encode()).hexdigest()[:16]
-        return f"{capability}|{source}|{param_hash}"
-
-    def _cache_get(self, key: str):
-        cached = self.cache.get(key)
-        if cached is not None:
-            body, _headers = cached
-            try:
-                return json.loads(body)
-            except (ValueError, json.JSONDecodeError):
-                return None
-        if self.disk_cache is not None:
-            disk = self.disk_cache.get(key)
-            if disk is not None:
-                body, _headers = disk
-                try:
-                    data = json.loads(body)
-                except (ValueError, json.JSONDecodeError):
-                    return None
-                # 回填内存
-                ttl = self._ttl_for_key(key)
-                if ttl > 0:
-                    self.cache.set(key, body, {"Content-Type": "application/json"}, ttl, "P")
-                return data
-        return None
-
-    def _ttl_for_key(self, key: str) -> int:
-        """从 cache key 反推 tier（磁盘回填用，粗略）。"""
-        # key 形如 capability|source|hash；tier 由 cache_policy 决定，回填用 P 保守值
-        return self.cfg["cache"]["P_ttl"]
-
-    def _cache_set(self, key: str, data, ttl: int, tier: str) -> None:
-        body = json.dumps(data, ensure_ascii=False).encode()
-        headers = {"Content-Type": "application/json"}
-        self.cache.set(key, body, headers, ttl, tier)
-        if self.disk_cache is not None:
-            self.disk_cache.set(key, body, headers, ttl, tier)
 
     # ── 统计 ──
     def stats(self) -> dict:
@@ -368,7 +317,6 @@ class CapabilityServer:
             "circuits": {n: c.stats() for n, c in self.circuits.items()},
             "state_safety": self.state_manager.stats() if self.state_manager else None,
             "cache": self.cache.stats(),
-            "disk_cache": self.disk_cache.stats() if self.disk_cache else None,
             "disk_load_count": self._disk_load_count,
             "disk_load_ms": self._disk_load_ms,
             "intraday": self._is_intraday(),
@@ -378,8 +326,8 @@ class CapabilityServer:
         if self._closed:
             return
         self._closed = True
-        if self.disk_cache:
-            self.disk_cache.close()
+        if self.cache.disk:
+            self.cache.disk.close()
         if self.state_manager:
             self.state_manager.close()
 
@@ -533,8 +481,8 @@ def main():
     print(f"[asgk-server] groups: {list(server.buckets)}", flush=True)
     print(f"[asgk-server] capabilities: {list(registry.list_capabilities()) or '(none yet)'}",
           flush=True)
-    if server.disk_cache:
-        print(f"[asgk-server] disk cache: {server.disk_cache.db_path} "
+    if server.cache.disk:
+        print(f"[asgk-server] disk cache: {server.cache.disk.cache_dir} "
               f"(loaded {server._disk_load_count} entries in {server._disk_load_ms}ms)",
               flush=True)
     if server.state_manager:

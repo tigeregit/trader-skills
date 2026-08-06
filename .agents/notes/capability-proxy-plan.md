@@ -93,10 +93,13 @@ T1 是所有后续任务的地基；T1.5(cache refactor)是 T1 后最优先的�
   - 格式不进 key（同数据不同 format 命中同一缓存——此项在 T4 格式化落地后验证）
 
 **验收**：
-- 六类数据类型的 TTL/落盘行为符合 §3.6c 表格
-- per-source 缓存隔离正确（指定 source 不返回其他源的缓存）
-- mock 能力：定稿型落盘后重启仍命中；实时型 no-cache 但并发合并
-- 现有 sgw cache 测试迁移后全绿（适配新 key/存储语义）
+- ✅ 六类数据类型的 TTL/落盘行为符合 §3.6c 表格（test_cache.py TestCachePolicy）
+- ✅ per-source 缓存隔离正确（指定 source 不返回其他源的缓存，实测 tencent/sina 各自 MISS）
+- ✅ mock 能力：定稿型落盘后重启仍命中（实测 loaded 1 entry → HIT-MEM）；实时型 no-cache
+  但并发合并（test_server.py test_concurrent_miss_coalesced）
+- ✅ 缓存测试全绿（35 个新 cache 测试；sgw 101/asgk 138 无回归）
+
+**状态**：✅ 已完成（commit 待提交）
 
 **依赖**：T1
 

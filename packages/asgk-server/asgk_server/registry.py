@@ -16,6 +16,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Callable
 
+from .cache_policy import CACHE_POLICIES
+
 # 数据形态：驱动客户端格式校验与默认输出格式（§3.2 data_type）
 _DATA_TYPES = {"kv", "table", "series", "text", "doc"}
 
@@ -58,6 +60,11 @@ class CapabilityMeta:
             raise ValueError(
                 f"capability {self.name}: invalid data_type={self.data_type!r}, "
                 f"must be one of {sorted(_DATA_TYPES)}"
+            )
+        if self.cache_policy not in CACHE_POLICIES:
+            raise ValueError(
+                f"capability {self.name}: invalid cache_policy={self.cache_policy!r}, "
+                f"must be one of {sorted(CACHE_POLICIES)}"
             )
         if not self.sources:
             raise ValueError(f"capability {self.name}: must declare at least one source")
