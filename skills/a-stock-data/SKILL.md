@@ -90,9 +90,14 @@ if (Get-Command asgk -ErrorAction SilentlyContinue) { asgk quote realtime --sour
 | ETF期权/希腊字母 | `asgk deriv opt_greek OP10004257` | [option](references/option.md) |
 | 公告PDF原文 | `asgk deriv announce_pdf <anno_id> 600519 --output file --path a.pdf` | announce |
 | 研报PDF原文 | `asgk deriv report_pdf <info_code> --output file --path r.pdf` | [docs](references/docs.md) |
+| **time · 交易时序** | | |
+| 当前日期时间 | `asgk time now` | [time](references/time.md) |
+| 是否交易日 | `asgk time trade_day [DATE]` | time |
+| 当前是否交易时段 | `asgk time trade_session` | time |
+| 合并状态（时间+时段+交易日）| `asgk time status` | time |
 
 **查看某层详细字段/示例时，读对应 reference 文件（按需加载，不必全读）。**
-**用 `asgk --list` 看全部 64 个子命令的完整参数签名。**
+**用 `asgk --list` 看全部子命令的完整参数签名。**
 
 ## 使用方式
 

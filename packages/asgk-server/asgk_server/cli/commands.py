@@ -42,6 +42,7 @@ class ArgSpec:
     default: object = None
     is_list: bool = False
     type: type = str
+    positional: bool = False  # True=可选位置参数(nargs="?")，False且非required=--flag
 
 
 @dataclass
@@ -68,6 +69,7 @@ class CmdSpec:
     args: list[ArgSpec] = field(default_factory=list)
     local: bool = False
     local_fn: str = ""
+    orchestrator: str = ""  # 编排型命令标记（如 time_status：先调服务端再合并本地）
 
 
 # ── 位置参数的常用别名（简化声明）──
@@ -86,6 +88,12 @@ def _date(desc: str = "日期 YYYY-MM-DD") -> ArgSpec:
 def _opt(name: str, desc: str, default: object, *, type: type = str) -> ArgSpec:
     """可选 --flag 参数。"""
     return ArgSpec(name=name, desc=desc, required=False, default=default, type=type)
+
+
+def _opt_pos(name: str, desc: str, default: object = None, *, type: type = str) -> ArgSpec:
+    """可选位置参数（nargs="?"），如 trade_day 的 date（asgk time trade_day [DATE]）。"""
+    return ArgSpec(name=name, desc=desc, required=False, default=default,
+                   type=type, positional=True)
 
 
 def _num(name: str, desc: str, *, type: type = float) -> ArgSpec:
@@ -371,6 +379,20 @@ COMMANDS: list[CmdSpec] = [
             data_type="doc",
             fixed={"doc_type": "report_pdf"},
             args=[ArgSpec(name="info_code", desc="研报infoCode")]),
+
+    # ── 10. time 交易时序（4）──────────────────────────────────
+    CmdSpec("time", "now", "", "当前日期时间（含星期/是否周末，纯本地）",
+            data_type="kv", local=True, local_fn="time_now", args=[]),
+    CmdSpec("time", "trade_day", "calendar", "判定日期是否交易日（经服务端交易日历）",
+            data_type="kv",
+            fixed={"calendar_type": "trade_day"},
+            args=[_opt_pos("date", "日期 YYYY-MM-DD（空=今天）")]),
+    CmdSpec("time", "trade_session", "", "当前是否交易时段（含盘前/午休，纯本地）",
+            data_type="kv", local=True, local_fn="trade_session", args=[]),
+    CmdSpec("time", "status", "", "合并：当前时间+交易时段+是否交易日",
+            data_type="kv", local=True, local_fn="time_status", args=[],
+            # 特殊标记：status 需先调服务端拿 trade_day，再合并本地。见 __init__.py
+            orchestrator="time_status"),
 ]
 
 

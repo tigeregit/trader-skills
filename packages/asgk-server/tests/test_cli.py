@@ -29,12 +29,12 @@ from asgk_server.cli.commands import COMMANDS, by_category
 
 # ── 命令发现 ──────────────────────────────────────────────────
 class TestCommandDiscovery:
-    def test_nine_categories(self):
+    def test_categories(self):
         cats = sorted(by_category().keys())
-        # 9 大类（英文 token，sorted 字母序）
+        # 10 大类（英文 token，sorted 字母序）
         assert cats == ['base', 'deriv', 'event', 'flow', 'news',
-                        'quote', 'report', 'risk', 'signal']
-        assert len(cats) == 9
+                        'quote', 'report', 'risk', 'signal', 'time']
+        assert len(cats) == 10
 
     def test_command_count(self):
         total = sum(len(cmds) for cmds in by_category().values())
@@ -64,11 +64,11 @@ class TestCommandDiscovery:
                 assert cmd.local_fn, f"{cmd.name} 缺 local_fn"
 
     def test_local_commands(self):
-        """3 个纯计算命令不调服务端。"""
+        """纯本地计算命令不调服务端（估值3个 + 时间3个）。"""
         locals_ = [c for c in COMMANDS if c.local]
-        assert len(locals_) == 3
         names = {c.name for c in locals_}
-        assert names == {"fwd_pe", "digest", "peg"}
+        assert names == {"fwd_pe", "digest", "peg",
+                         "now", "trade_session", "status"}
 
 
 # ── 参数绑定 ──────────────────────────────────────────────────

@@ -66,8 +66,8 @@ def _build_cmd_parser(parent: argparse._SubParsersAction, cmd: CmdSpec) -> None:
     """为一个子命令构建 argparse（位置参数 + --flag）。"""
     p = parent.add_parser(cmd.name, help=cmd.help, description=cmd.help)
     for arg in cmd.args:
-        is_flag = not arg.required
-        # 位置参数保留原名（含下划线）；--flag 用连字符形式（argparse 自动转回下划线存属性）
+        is_flag = not arg.required and not arg.positional
+        # 位置参数（含可选位置参数）保留原名；--flag 用连字符形式
         cli_name = (arg.cli_name or arg.name).replace("_", "-") if is_flag else (arg.cli_name or arg.name)
         if arg.is_list:
             # list 型：收集多值位置参数（nargs="*" 让 --sources 可单独用）
@@ -88,9 +88,13 @@ def _build_cmd_parser(parent: argparse._SubParsersAction, cmd: CmdSpec) -> None:
             else:
                 p.add_argument(f"--{cli_name}", default=default, help=arg.desc)
         else:
-            # 必填位置参数：普通位置参数（保留原名；不带 nargs，避免多 ? 位置参数绑定混乱）。
+            # 位置参数（保留原名；不带 nargs，避免多 ? 位置参数绑定混乱）。
+            # 可选位置参数（positional=True）用 nargs="?" 让其可省略。
             # --sources 单独使用时，由 _run_command 提前拦截，不会走到必填校验。
             kwargs: dict = {"help": arg.desc}
+            if arg.positional:
+                kwargs["nargs"] = "?"
+                kwargs["default"] = arg.default
             if arg.type is not str:
                 kwargs["type"] = arg.type
             p.add_argument(cli_name, **kwargs)
@@ -204,6 +208,28 @@ def _run_command(cmd: CmdSpec, args: argparse.Namespace) -> int:
         print(f"已写入: {written}", file=sys.stderr)
         return 0
 
+    # ── 编排型命令（先调服务端拿部分数据，再合并本地计算）──
+    if cmd.orchestrator == "time_status":
+        from .local import time_status, time_now
+        # 先调服务端 calendar 拿今天的 trade_day 判定（失败则合并 None）
+        trade_day_result = None
+        today = time_now()["date"]
+        try:
+            trade_day_result = call("calendar",
+                                    {"calendar_type": "trade_day", "date": today})
+        except ServerError:
+            pass  # 服务端不可达，status 仍返回时间+时段，trade_day 标未判定
+        result = time_status(trade_day_result=trade_day_result)
+        # 格式化 + 交付（与下方 local 分支共用）
+        fmt = args.format or fmt_mod.default_format(cmd.data_type)
+        try:
+            formatted = fmt_mod.format_data(result, cmd.data_type, fmt)
+        except ValueError as e:
+            print(f"格式化错误: {e}", file=sys.stderr)
+            return 1
+        fmt_mod.deliver(formatted, args.output, args.path, fmt)
+        return 0
+
     # ── 纯本地计算 ──
     if cmd.local:
         fn = LOCAL_FNS.get(cmd.local_fn)
@@ -218,6 +244,12 @@ def _run_command(cmd: CmdSpec, args: argparse.Namespace) -> int:
     else:
         # ── 结构化能力：POST 服务端 ──
         params = {**cmd.fixed, **kwargs}
+        # calendar trade_day：date 缺省时填今天
+        if (cmd.capability == "calendar"
+                and params.get("calendar_type") == "trade_day"
+                and not params.get("date")):
+            from datetime import datetime
+            params["date"] = datetime.now().strftime("%Y-%m-%d")
         if args.source:
             params["source"] = args.source
         try:
