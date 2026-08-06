@@ -45,6 +45,7 @@ PROXIED_DOMAIN_SUFFIXES = (
     ".cls.cn",               # 财联社电报
     ".cninfo.com.cn",        # 巨潮公告/互动易
     ".legulegu.com",         # 理杏仁估值历史
+    ".baidu.com",            # 百度股市通(需 curl_cffi 指纹)
 )
 
 # 允许从客户端透传到上游的请求头白名单（hop-by-hop/敏感头一律不透传）。
@@ -112,6 +113,7 @@ class EndpointPolicy:
     cache_mode: str
     credential_params: frozenset[str]
     identity_ignored_params: frozenset[str]
+    egress_client: str  # "requests"(默认) / "curl_cffi"(带 Chrome TLS 指纹出网)
 
     @classmethod
     def from_config(cls, raw: dict) -> "EndpointPolicy":
@@ -129,6 +131,7 @@ class EndpointPolicy:
             credential_mode=raw["credential_mode"], cache_mode=raw["cache_mode"],
             credential_params=frozenset(raw.get("credential_params", [])),
             identity_ignored_params=frozenset(raw.get("identity_ignored_params", [])),
+            egress_client=raw.get("egress_client", "requests"),
         )
         policy.validate()
         return policy
@@ -1138,6 +1141,24 @@ class Gateway:
         self.singleflight.finish(cache_key, flight, result)
         return result
 
+    def _egress_request(self, method: str, policy: EndpointPolicy,
+                        url: str, **kwargs) -> "requests.Response":
+        """按 endpoint 的 egress_client 选出网客户端。
+
+        - requests(默认)：标准 requests，适用于绝大多数源。用 .get/.post
+          （非 .request）以保持与现有测试 mock 点(sgw.proxy.requests.get/post)一致。
+        - curl_cffi：带 Chrome TLS 指纹(impersonate=chrome)，用于有协议栈风控的源(百度)。
+          curl_cffi 的 RequestsError 继承 requests.RequestException，异常处理兼容。
+        """
+        kwargs.setdefault("timeout", 15)
+        if policy.egress_client == "curl_cffi":
+            from curl_cffi import requests as curl_requests
+            kwargs["impersonate"] = "chrome"
+            return curl_requests.request(method, url, **kwargs)
+        # requests 路径用具名方法（get/post），便于测试 mock 且语义清晰
+        fn = requests.get if method == "get" else requests.post
+        return fn(url, **kwargs)
+
     def _fetch_upstream(self, target_url: str, params: dict, fwd_headers: dict,
                         policy: EndpointPolicy, group: str, tier: str, ttl: int,
                         cache_key: str, *, method: str = "GET",
@@ -1168,12 +1189,14 @@ class Gateway:
                 if method == "POST" and body is not None:
                     if body_type == "form":
                         # form-encoded POST（巨潮公告/互动易等）
-                        r = requests.post(request_url, data=body, headers=fwd_headers, timeout=15)
+                        r = self._egress_request("post", policy, request_url,
+                                                 data=body, headers=fwd_headers)
                     else:
                         # JSON POST（东财人气榜/概念等）
-                        r = requests.post(request_url, json=body, headers=fwd_headers, timeout=15)
+                        r = self._egress_request("post", policy, request_url,
+                                                 json=body, headers=fwd_headers)
                 else:
-                    r = requests.get(request_url, headers=fwd_headers, timeout=15)
+                    r = self._egress_request("get", policy, request_url, headers=fwd_headers)
                 if r.status_code in (403, 429):
                     # 家庭 IP 不可更换：首次风控信号立即全来源熔断且不重试。
                     circuit.failure(immediate=True, status=r.status_code)

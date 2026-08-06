@@ -78,6 +78,13 @@ domains = ["legulegu.com"]
 rps = 0.2          # 极保守（5秒1次），仅单发验证过未测并发
 jitter = [0.5, 1.0]
 
+# ── 百度股市通（finance.pae.baidu.com，需 curl_cffi Chrome 指纹出网）──
+[[group]]
+name = "baidu"
+domains = ["finance.pae.baidu.com"]
+rps = 0.5          # 保守（2秒1次），有 TLS 指纹风控
+jitter = [0.3, 0.8]
+
 # ── 端点策略（准入 / IP 风险 / 响应作用域三轴正交）──────────
 # 未匹配端点一律 unknown 并拒绝，不能仅因 host 已归组就出网。
 # 当前 sgw 是公共数据网关，因此已批准端点均为 controlled + public + shared。
@@ -459,6 +466,18 @@ response_scope = "public"
 credential_mode = "caller"
 cache_mode = "shared"
 credential_params = ["token"]
+
+# ── 百度股市通K线（finance.pae.baidu.com，curl_cffi Chrome 指纹出网，R 档）──
+[[endpoint]]
+name = "baidu-stock-quotation"
+host = "finance.pae.baidu.com"
+path = "/selfselect/getstockquotation"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+egress_client = "curl_cffi"
 
 [[endpoint]]
 name = "szse-margin"

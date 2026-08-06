@@ -179,6 +179,10 @@ class TestGroupOfRegression:
         g = _make_gateway()
         assert g.group_of("legulegu.com") == "legulegu"
 
+    def test_baidu_routable(self):
+        g = _make_gateway()
+        assert g.group_of("finance.pae.baidu.com") == "baidu"
+
     def test_push2_unnumbered_routable(self):
         """AKP-BOARD 板块接口主用无编号 push2（已归组，回归确认）。"""
         g = _make_gateway()
