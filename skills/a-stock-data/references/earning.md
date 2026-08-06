@@ -13,12 +13,12 @@
 
 ```bash
 # 业绩预告（某报告期全市场；参数是报告期 YYYY-MM-DD，非股票代码）
-asgk 基本面 forecast 2024-09-30
+asgk base forecast 2024-09-30
 # 返回字段：name / predict_finance / predict_type
 #          predict_lower~predict_upper(元) / add_amp_lower~add_amp_upper(%)
 
 # 业绩快报（某报告期全市场；返回确定数值 EPS/营收/净利）
-asgk 基本面 express 2024-09-30
+asgk base express 2024-09-30
 ```
 
 ## 注意

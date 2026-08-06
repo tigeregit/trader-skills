@@ -13,14 +13,14 @@ POST 服务端 ``/v1/<capability>`` 取数，本地只做参数绑定 + 格式�
 
 示例：
 
-    asgk 行情 realtime 600519                  # 茅台实时行情（默认 md）
-    asgk 行情 realtime 600519 --format json    # JSON 格式
-    asgk 基本面 report 600519                  # 财报三表
-    asgk 资金 fundflow 600519 --format csv     # 120日资金流，CSV
-    asgk 衍生 announce_pdf 1225431263 600519 --output file --path anno.pdf
-    asgk 研报 peg 25 0.2                       # PEG 纯计算（不调服务端）
+    asgk quote realtime 600519                  # 茅台实时行情（默认 md）
+    asgk quote realtime 600519 --format json    # JSON 格式
+    asgk base report 600519                  # 财报三表
+    asgk flow fundflow 600519 --format csv     # 120日资金流，CSV
+    asgk deriv announce_pdf 1225431263 600519 --output file --path anno.pdf
+    asgk report peg 25 0.2                       # PEG 纯计算（不调服务端）
     asgk --list                                # 列出全部 9 大类 × 子命令
-    asgk 行情 --help                           # 查看该大类下子命令
+    asgk quote --help                           # 查看该大类下子命令
 
 服务端地址解析（见 cli/config.py）：环境变量 ASGK_SERVER > ~/.config/asgk/cli.toml
 > 包内默认（http://127.0.0.1:7701）。
@@ -50,7 +50,7 @@ def _build_parser() -> argparse.ArgumentParser:
     ap.add_argument("--list", action="store_true",
                     help="列出全部 9 大类 × 子命令")
     sub = ap.add_subparsers(dest="category", metavar="<大类>",
-                            help="9 大类：行情/基本面/研报/资金/信号/事件/风控/资讯/衍生")
+                            help="9 categories: quote/base/report/flow/signal/event/risk/news/deriv")
 
     # 为每个大类建一个子解析器，其下再嵌套子命令
     for cat, cmds in sorted(by_category().items()):

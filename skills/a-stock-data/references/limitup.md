@@ -17,11 +17,11 @@
 
 ```bash
 # 涨停池（参数=交易日 YYYY-MM-DD）
-asgk 风控 zt 2026-07-22
+asgk risk zt 2026-07-22
 # 返回字段：name / zt_stat / seal_fund(封板资金,元) / industry
 
 # 打板情绪温度计
-asgk 风控 sentiment 2026-07-22
+asgk risk sentiment 2026-07-22
 # 返回字段：zt_count / break_rate(炸板率%) / max_height(最高连板) / ladder({板数: 家数})
 ```
 

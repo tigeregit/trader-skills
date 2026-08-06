@@ -14,11 +14,11 @@
 
 ```bash
 # 个股新闻
-asgk 资讯 stock 600519 --page-size 5
+asgk news stock 600519 --page-size 5
 # 返回字段：time / source / title
 
 # 财联社电报（与全球资讯互为备份）
-asgk 资讯 telegraph --page-size 10
+asgk news telegraph --page-size 10
 ```
 
 ## 注意

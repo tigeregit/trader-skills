@@ -12,9 +12,9 @@
 
 ```bash
 # 概念板块成份股（板块名称或代码均可；--kind concept/industry）
-asgk 信号 board_c 融资融券 --kind concept   # 或 "BK0655"
+asgk signal board_c 融资融券 --kind concept   # 或 "BK0655"
 # 行业板块成份股
-asgk 信号 board_c 小金属 --kind industry   # 或 "BK1027"
+asgk signal board_c 小金属 --kind industry   # 或 "BK1027"
 ```
 
 ## 注意

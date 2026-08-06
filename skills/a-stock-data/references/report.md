@@ -14,15 +14,15 @@
 
 ```bash
 # 个股研报
-asgk 研报 list 600519 --max-pages 1 --format json
+asgk report list 600519 --max-pages 1 --format json
 # 返回 [{publishDate, orgSName, emRatingName, predictThisYearEps, infoCode, ...}]
 # infoCode 用于下载研报 PDF 原文（见 docs 层）
 
 # 行业研报（industry_code 用 * 拉一批，或从结果反查具体行业码）
-asgk 研报 industry --industry-code '*' --max-pages 1
+asgk report industry --industry-code '*' --max-pages 1
 
 # 一致预期EPS（估值用）
-asgk 研报 eps 600519 --format json
+asgk report eps 600519 --format json
 # [{'年度':2026, '预测机构数':46, '均值':68.75, ...}]
 # "均值" = 机构一致预期EPS，机构数<3 要谨慎
 ```

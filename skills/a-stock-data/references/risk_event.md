@@ -14,16 +14,16 @@
 
 ```bash
 # 高管增减持（全市场，无参数）
-asgk 事件 mgmt --format json
+asgk event mgmt --format json
 # 返回 [{name, person, position, change_shares, avg_price, ...}]
 # change_shares>0 增持，<0 减持
 
 # 股票回购（全市场）
-asgk 事件 repo --format json
+asgk event repo --format json
 # 返回 [{name, progress, plan_amt_lower, plan_amt_upper, done_amt, ...}]
 
 # 机构调研（指定起始日期之后）
-asgk 事件 research 2024-12-01 --format json
+asgk event research 2024-12-01 --format json
 # 返回 [{name, receive_date, receive_object, org_type, receive_place, ...}]
 ```
 

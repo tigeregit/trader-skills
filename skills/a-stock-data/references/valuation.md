@@ -15,13 +15,13 @@
 
 ```bash
 # 纯计算（不调服务端，本地直接算）
-asgk 研报 fwd_pe 100 5            # 远期PE = 股价/EPS，返回 {forward_pe: 20.0}
-asgk 研报 digest 60 0.3           # 60x消化到30x需几年，返回 {years: ...}
-asgk 研报 digest 60 0.3 --target-pe 25
-asgk 研报 peg 60 0.3              # PEG = PE/(CAGR*100)，返回 {peg: 2.0}
+asgk report fwd_pe 100 5            # 远期PE = 股价/EPS，返回 {forward_pe: 20.0}
+asgk report digest 60 0.3           # 60x消化到30x需几年，返回 {years: ...}
+asgk report digest 60 0.3 --target-pe 25
+asgk report peg 60 0.3              # PEG = PE/(CAGR*100)，返回 {peg: 2.0}
 
 # 单票完整估值（一步到位，经服务端串联行情+EPS）
-asgk 研报 valuation 600519 --format json
+asgk report valuation 600519 --format json
 # 返回 {name, price, pe_ttm, pb, mcap_yi, eps_cur, eps_next,
 #       pe_fwd, cagr_pct, peg, digest_years, analyst_count}
 ```

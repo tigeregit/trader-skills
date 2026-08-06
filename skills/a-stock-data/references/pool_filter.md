@@ -13,12 +13,12 @@
 
 ```bash
 # 股权质押（参数=交易日 YYYY-MM-DD；pledge_ratio 单位是百分点）
-asgk 风控 pledge 2024-09-06
+asgk risk pledge 2024-09-06
 # 字段：name / pledge_ratio(%,>50=高风险) / pledge_deal_num(笔数)
 #      pledge_market_cap(质押市值,万元)
 
 # 商誉（参数=报告期 YYYY-MM-DD；按商誉金额降序）
-asgk 风控 goodwill 2023-12-31
+asgk risk goodwill 2023-12-31
 # 字段：name / goodwill(元) / goodwill_to_equity(占净资产,小数) / net_profit(净利,元)
 ```
 

@@ -12,7 +12,7 @@
 
 ```bash
 # 巨潮公告检索（默认每页 30，这里取 10）
-asgk 资讯 announce 600519 --page-size 10
+asgk news announce 600519 --page-size 10
 # 返回字段：date / type / title / url（公告详情页/PDF链接）
 ```
 

@@ -15,15 +15,15 @@
 
 ```bash
 # 互动易（看公司怎么回应投资者）
-asgk 事件 irm 002594 --page-size 5 --format json
+asgk event irm 002594 --page-size 5 --format json
 # 返回 [{question, answer, answerer, ...}]，answer=None 表示未回复
 
 # 同花顺热榜（period: hour/day）
-asgk 资讯 hot_list --period hour
+asgk news hot_list --period hour
 # 返回 [{name, heat, ...}]，第一条即 TOP1
 
 # 个股概念命中
-asgk 资讯 concept 600519 --format json
+asgk news concept 600519 --format json
 # 返回 [{concept, ...}]，如 ['白酒', ...]
 ```
 

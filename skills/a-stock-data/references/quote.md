@@ -16,15 +16,15 @@
 
 ```bash
 # PE/PB/市值（最常用）
-asgk 行情 realtime 600519                 # 默认 md 表格
-asgk 行情 realtime 600519 --format json   # JSON（含 name, price, pe_ttm, pb, mcap_yi, ...）
-asgk 行情 realtime 600519 000858          # 多只同时查
+asgk quote realtime 600519                 # 默认 md 表格
+asgk quote realtime 600519 --format json   # JSON（含 name, price, pe_ttm, pb, mcap_yi, ...）
+asgk quote realtime 600519 000858          # 多只同时查
 
 # 带均线的日K（日K首选；mootdx_bars 空数据时服务端自动降级到百度）
-asgk 行情 kline 600519 --format json      # 返回 keys + rows
+asgk quote kline 600519 --format json      # 返回 keys + rows
 
 # rows 是与 keys 对应的 CSV 字符串；取最近一根：
-asgk 行情 kline 600519 --format csv | tail -1
+asgk quote kline 600519 --format csv | tail -1
 ```
 
 ## 注意

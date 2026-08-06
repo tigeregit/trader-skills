@@ -13,11 +13,11 @@
 
 ```bash
 # 上证 PE 历史（1999 年至今）
-asgk 基本面 pe_hist --market 上证 --format json
+asgk base pe_hist --market 上证 --format json
 # 返回 [{date, close, pe, ...}]，最后一条即最新
 
 # 创业板 PB 历史
-asgk 基本面 pb_hist --market 创业板 --format json
+asgk base pb_hist --market 创业板 --format json
 # 返回 [{date, close, pb, ...}]
 ```
 

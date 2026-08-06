@@ -18,8 +18,8 @@ CLI 是**纯 HTTP 客户端**，不依赖业务函数库，直接 POST 服务端
 
 ```bash
 asgk --list                       # 列出全部 9 大类 × 子命令
-asgk 行情 realtime 600519         # 茅台实时行情
-asgk 研报 peg 25 0.2              # PEG 纯计算（不调服务端）
+asgk quote realtime 600519         # 茅台实时行情
+asgk report peg 25 0.2              # PEG 纯计算（不调服务端）
 ```
 
 ## 它做什么

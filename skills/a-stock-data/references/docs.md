@@ -15,18 +15,18 @@
 
 ```bash
 # 1. 先拿公告列表（含 annoId，在 url 里）
-asgk 资讯 announce 600519 --page-size 3
+asgk news announce 600519 --page-size 3
 #    从返回的 url 字段提取 annoId= 后面那段
 
 # 2. 下载公告 PDF 原文
-asgk 衍生 announce_pdf 1225431263 600519 --output file --path anno.pdf
+asgk deriv announce_pdf 1225431263 600519 --output file --path anno.pdf
 #    输出文件以 %PDF- 开头
 
 # 1. 先拿研报列表（含 infoCode）
-asgk 研报 list 600519
+asgk report list 600519
 
 # 2. 下载研报 PDF 原文
-asgk 衍生 report_pdf AP202607231827290069 --output file --path report.pdf
+asgk deriv report_pdf AP202607231827290069 --output file --path report.pdf
 ```
 
 ## 注意

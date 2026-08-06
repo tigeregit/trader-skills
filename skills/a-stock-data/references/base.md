@@ -15,13 +15,13 @@
 
 ```bash
 # 个股基本面（行业/总市值等）
-asgk 基本面 info 600519
+asgk base info 600519
 
 # 财报三表（利润表/资产负债表/现金流量表）
-asgk 基本面 report 600519 --report-type lrb --num 4   # lrb=利润 / zcfzb=资产负债 / xjll=现金流
+asgk base report 600519 --report-type lrb --num 4   # lrb=利润 / zcfzb=资产负债 / xjll=现金流
 
 # mootdx 财务快照（季报快照 37 字段，含总股本 zongguben）
-asgk 基本面 finance 600519
+asgk base finance 600519
 ```
 
 ## 注意

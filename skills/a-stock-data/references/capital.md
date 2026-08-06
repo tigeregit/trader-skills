@@ -16,13 +16,13 @@
 
 ```bash
 # 融资融券明细（rzye=融资余额，单位元）
-asgk 资金 margin 600519 --page-size 5
+asgk flow margin 600519 --page-size 5
 
 # 股东户数变化（筹码集中度信号：户数持续减少 = 筹码集中 = 主力吸筹）
-asgk 资金 holders_n 600519 --page-size 3
+asgk flow holders_n 600519 --page-size 3
 
 # 120日资金流（main_net=主力净流入，单位元）
-asgk 资金 fundflow 600519
+asgk flow fundflow 600519
 ```
 
 ## 注意

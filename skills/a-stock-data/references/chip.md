@@ -12,13 +12,13 @@
 
 ```bash
 # 筹码分布（最近 90 日；纯数字代码，不带前缀）
-asgk 信号 chip 000001
+asgk signal chip 000001
 # 返回字段：date / benefit_part(获利比例,0-1) / avg_cost(元)
 #          pct90_low~pct90_high / pct90_concentration
 #          pct70_low~pct70_high / pct70_concentration
 
 # 前复权筹码（--adjust q=前复权 / h=后复权 / 空=不复权）
-asgk 信号 chip 600519 --adjust q
+asgk signal chip 600519 --adjust q
 ```
 
 ## 注意

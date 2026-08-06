@@ -31,9 +31,9 @@ from asgk_server.cli.commands import COMMANDS, by_category
 class TestCommandDiscovery:
     def test_nine_categories(self):
         cats = sorted(by_category().keys())
-        # 9 大类（sorted 按 Unicode 码点排序）
-        assert cats == ['事件', '信号', '基本面', '研报', '行情', '衍生',
-                        '资讯', '资金', '风控']
+        # 9 大类（英文 token，sorted 字母序）
+        assert cats == ['base', 'deriv', 'event', 'flow', 'news',
+                        'quote', 'report', 'risk', 'signal']
         assert len(cats) == 9
 
     def test_command_count(self):
@@ -42,13 +42,13 @@ class TestCommandDiscovery:
         assert total >= 60  # 64 个子命令
 
     def test_find_existing(self):
-        cmd = find("行情", "realtime")
+        cmd = find("quote", "realtime")
         assert cmd is not None
         assert cmd.capability == "quote"
         assert cmd.data_type == "kv"
 
     def test_find_missing_returns_none(self):
-        assert find("行情", "nonexistent") is None
+        assert find("quote", "nonexistent") is None
         assert find("不存在", "realtime") is None
 
     def test_all_commands_have_required_fields(self):
@@ -78,36 +78,36 @@ class TestArgBinding:
         return ap.parse_args(list(argv))
 
     def test_single_value_positional(self):
-        args = self._parse("行情", "realtime", "600519")
-        cmd = find("行情", "realtime")
+        args = self._parse("quote", "realtime", "600519")
+        cmd = find("quote", "realtime")
         kwargs = _bind_args(cmd, args)
         assert kwargs == {"codes": ["600519"]}
 
     def test_multi_value_positional(self):
-        args = self._parse("行情", "realtime", "600519", "000858")
-        cmd = find("行情", "realtime")
+        args = self._parse("quote", "realtime", "600519", "000858")
+        cmd = find("quote", "realtime")
         kwargs = _bind_args(cmd, args)
         assert kwargs == {"codes": ["600519", "000858"]}
 
     def test_optional_flag(self):
-        args = self._parse("基本面", "report", "600519", "--num", "3")
-        cmd = find("基本面", "report")
+        args = self._parse("base", "report", "600519", "--num", "3")
+        cmd = find("base", "report")
         kwargs = _bind_args(cmd, args)
         assert kwargs["code"] == "600519"
         assert kwargs["num"] == 3  # int 类型转换
 
     def test_numeric_type_conversion(self):
         """纯计算命令的数字参数被转为 float。"""
-        args = self._parse("研报", "peg", "25", "0.2")
-        cmd = find("研报", "peg")
+        args = self._parse("report", "peg", "25", "0.2")
+        cmd = find("report", "peg")
         kwargs = _bind_args(cmd, args)
         assert kwargs["pe"] == 25.0
         assert kwargs["cagr"] == 0.2
 
     def test_fixed_params_not_in_args(self):
         """CmdSpec.fixed 是固定参数，不暴露给 argparse。"""
-        args = self._parse("行情", "bars", "600519")
-        cmd = find("行情", "bars")
+        args = self._parse("quote", "bars", "600519")
+        cmd = find("quote", "bars")
         # bars 的 fixed={"mootdx_type":"bars"} 不应在 namespace 里
         assert not hasattr(args, "mootdx_type")
 
@@ -119,7 +119,7 @@ class TestStructuredCall:
             "asgk_server.cli.call",
             lambda cap, params, **kw: {"600519": {"name": "茅台", "price": 1500}},
         )
-        rc = main(["行情", "realtime", "600519"])
+        rc = main(["quote", "realtime", "600519"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "茅台" in out
@@ -130,7 +130,7 @@ class TestStructuredCall:
             "asgk_server.cli.call",
             lambda cap, params, **kw: [{"code": "600519"}],
         )
-        rc = main(["资讯", "telegraph", "--format", "json"])
+        rc = main(["news", "telegraph", "--format", "json"])
         assert rc == 0
         out = capsys.readouterr().out
         assert '"code": "600519"' in out
@@ -143,7 +143,7 @@ class TestStructuredCall:
             captured["params"] = params
             return []
         monkeypatch.setattr("asgk_server.cli.call", fake_call)
-        main(["行情", "bars", "600519", "--frequency", "5"])
+        main(["quote", "bars", "600519", "--frequency", "5"])
         assert captured["cap"] == "mootdx"
         assert captured["params"]["mootdx_type"] == "bars"  # fixed
         assert captured["params"]["code"] == "600519"        # 位置
@@ -156,7 +156,7 @@ class TestStructuredCall:
             lambda cap, params, **kw: (_ for _ in ()).throw(
                 ServerError("服务端返回 502")),
         )
-        rc = main(["行情", "realtime", "600519"])
+        rc = main(["quote", "realtime", "600519"])
         assert rc == 1
         err = capsys.readouterr().err
         assert "502" in err
@@ -172,13 +172,13 @@ class TestDocumentCall:
             lambda cap, params, **kw: (pdf_bytes, "pdf"),
         )
         out = tmp_path / "anno.pdf"
-        rc = main(["衍生", "announce_pdf", "123456", "600519",
+        rc = main(["deriv", "announce_pdf", "123456", "600519",
                    "--output", "file", "--path", str(out)])
         assert rc == 0
         assert out.read_bytes() == pdf_bytes
 
     def test_doc_requires_file_output(self, capsys, monkeypatch):
-        rc = main(["衍生", "announce_pdf", "123", "600519"])
+        rc = main(["deriv", "announce_pdf", "123", "600519"])
         assert rc == 1
         assert "file" in capsys.readouterr().err
 
@@ -186,19 +186,19 @@ class TestDocumentCall:
 # ── 纯本地计算 ────────────────────────────────────────────────
 class TestLocalCall:
     def test_peg(self, capsys):
-        rc = main(["研报", "peg", "25", "0.2"])
+        rc = main(["report", "peg", "25", "0.2"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "1.25" in out
 
     def test_fwd_pe(self, capsys):
-        rc = main(["研报", "fwd_pe", "1500", "60"])
+        rc = main(["report", "fwd_pe", "1500", "60"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "25" in out  # 1500/60=25
 
     def test_digest_with_target(self, capsys):
-        rc = main(["研报", "digest", "40", "0.15", "--target-pe", "25"])
+        rc = main(["report", "digest", "40", "0.15", "--target-pe", "25"])
         assert rc == 0
 
 
@@ -209,7 +209,7 @@ class TestSourcesFlag:
             "asgk_server.cli.query_sources",
             lambda **kw: ["tencent", "sina"],
         )
-        rc = main(["行情", "realtime", "--sources"])
+        rc = main(["quote", "realtime", "--sources"])
         assert rc == 0
         out = capsys.readouterr().out
         assert "tencent" in out
@@ -220,7 +220,7 @@ class TestSourcesFlag:
             captured.update(kw)
             return []
         monkeypatch.setattr("asgk_server.cli.query_sources", fake)
-        main(["行情", "realtime", "--sources"])
+        main(["quote", "realtime", "--sources"])
         assert captured.get("capability") == "quote"
 
 
@@ -230,11 +230,11 @@ class TestExitCodes:
         rc = main([])
         assert rc == 0
         out = capsys.readouterr().out
-        assert "行情" in out
+        assert "quote" in out
         assert "大类" in out
 
     def test_missing_required_arg(self, capsys):
-        rc = main(["行情", "realtime"])
+        rc = main(["quote", "realtime"])
         assert rc == 1
         err = capsys.readouterr().err
         assert "缺少必填参数" in err

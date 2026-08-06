@@ -15,15 +15,15 @@
 
 ```bash
 # 十大股东（单股，报告期；--date 是报告期）
-asgk 资金 top10 600519 2024-09-30
+asgk flow top10 600519 2024-09-30
 # 十大流通股东
-asgk 资金 top10_f 600519 2024-09-30
+asgk flow top10_f 600519 2024-09-30
 
 # 股东持股变化（全市场，报告期；数据量大，建议盘后批量）
-asgk 资金 holder_c 2024-09-30
+asgk flow holder_c 2024-09-30
 
 # 股东协同（--date 留空=最新报告期）
-asgk 资金 teamwork
+asgk flow teamwork
 ```
 
 ## 注意

@@ -19,18 +19,18 @@
 
 ```bash
 # 板块归属（题材归因）
-asgk 信号 block 600519 --format json
+asgk signal block 600519 --format json
 # 返回 {concept_tags: ['食品饮料','白酒Ⅲ','贵州板块',...]}
 
 # 全市场龙虎榜（盘后定稿）
-asgk 信号 dragon_d 2026-07-22 --format json
+asgk signal dragon_d 2026-07-22 --format json
 # 返回 {total_records, ...}
 
 # 个股龙虎榜（回看天数）
-asgk 信号 dragon 600519 2026-07-22 --look-back 30
+asgk signal dragon 600519 2026-07-22 --look-back 30
 
 # 行业排名（前N）
-asgk 信号 industry --top-n 5 --format json
+asgk signal industry --top-n 5 --format json
 # 返回 {top: [{name, ...}]}，涨幅前5行业
 ```
 

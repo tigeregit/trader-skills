@@ -14,12 +14,12 @@ ETF期权数据，新浪源直连（GBK，必带Referer）。
 
 ```bash
 # 50ETF 近月认购合约清单（--underlying: 510050/510300/588000/510500；--call true=认购 false=认沽）
-asgk 衍生 opt_codes --underlying 510050 --call true
+asgk deriv opt_codes --underlying 510050 --call true
 # 返回 {月份: [合约代码列表]}，取近月列表中间档≈平值
 
 # T型报价 + 希腊字母（contract=从上一步挑出的合约代码）
-asgk 衍生 opt_quote <合约代码>
-asgk 衍生 opt_greek <合约代码>
+asgk deriv opt_quote <合约代码>
+asgk deriv opt_greek <合约代码>
 # opt_quote 字段：name / strike / last / open_interest
 # opt_greek 字段：delta / iv(小数,0.17=17%)
 ```

@@ -11,7 +11,7 @@ CLI 侧无需关心——这里仅记录领域知识，供排查「为何某能�
 |------|-------------|-------------|
 | 龙虎榜 | 东财 datacenter | 沪深交易所官方(sse/szse) |
 | 资金流 | 东财 push2his | 新浪(日度) |
-| 融资融券 | 东财 datacenter | 深交所官方（`asgk 资金 margin_sz`） |
+| 融资融券 | 东财 datacenter | 深交所官方（`asgk flow margin_sz`） |
 | 公告 | 东财 | 巨潮 cninfo（asgk 默认使用巨潮） |
 | 实时价 | 东财 push2 | 腾讯 qt.gtimg.cn / mootdx TCP |
 | K线 | 东财/百度 | mootdx TCP / 腾讯 |
@@ -22,7 +22,7 @@ CLI 侧无需关心——这里仅记录领域知识，供排查「为何某能�
 
 1. 服务端 403/429 立即触发**来源级熔断**（cooldown 约 5 分钟），期间返回 502。
 2. 熔断期间服务端只读缓存、放行 canary 探测恢复。
-3. 数据不能等 → CLI 换用备用源子命令（如 `asgk 资金 margin_sz` 代替 `asgk 资金 margin`）。
+3. 数据不能等 → CLI 换用备用源子命令（如 `asgk flow margin_sz` 代替 `asgk flow margin`）。
 4. 临时封通常 30-60 分钟自动解除。
 
 ## 服务端层面的保护
@@ -36,5 +36,5 @@ asgk-server 对所有东财/同花顺请求：
 
 ## 已知端点问题
 
-- `asgk 行情 bars`（mootdx）：mootdx 0.11.7 返回空日 K 时，服务端自动降级到
-  `baidu_kline`（`asgk 行情 kline` 的源）；非日线频率不做非等价降级。
+- `asgk quote bars`（mootdx）：mootdx 0.11.7 返回空日 K 时，服务端自动降级到
+  `baidu_kline`（`asgk quote kline` 的源）；非日线频率不做非等价降级。
