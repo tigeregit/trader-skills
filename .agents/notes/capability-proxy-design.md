@@ -296,6 +296,105 @@ asgk f10 600519 --format md                # 文本型 → markdown
 > §3.3 的双入口正交——format/output 参数在 Python 函数和 CLI 两侧一致暴露，
 > 服务端完全不感知。纯计算函数（valuation 的 forward_pe 等）同样支持格式化。
 
+### 3.6 cache 机制 refactor（核心）
+
+当前 sgw 的 cache 是 **URL 级 + 存原始字节 + tier 一刀切 TTL**。新架构下这三
+点都要变。这是流量内核搬入服务端时**改动最大**的部分（其余限流/熔断/singleflight
+几乎零改）。
+
+#### a. 存什么：解析后的结构化数据，非原始字节
+
+```
+现状(sgw):   cache 存 r.content（上游原始字节，GBK文本/JSON）
+新架构:      cache 存 fetch_xxx() 的返回值（解析后的 dict/list）
+```
+
+理由：
+- 能力代理后，服务端职责是"取数+解析"，cache 应在解析**之后**——命中即返结构化
+  数据，客户端零解析开销（§3.5 格式化直接作用于结构化数据）。
+- 原始字节 cache 的问题是：每次命中客户端还要重新解析（GBK 解码、字段映射），
+  且不同 source 的原始字节格式不同（腾讯 GBK vs 新浪 GBK 字段顺序不同），无法
+  归一化。
+
+#### b. cache key：语义参数 + source，非 URL
+
+```
+现状:   "R|https://qt.gtimg.cn/q?q=sh600519"           # tier|canonical_url
+新架构: "quote|tencent|codes=600519"                    # capability|source|语义参数
+```
+
+- key 第一段是 **capability 名**（quote/kline/f10...），不是 URL。
+- 第二段是 **source**（tencent/sina/...）——**per-source 独立缓存，不跨源共享**。
+  理由：不同源的数据值不等价（腾讯 vs 新浪实时价有秒级差；东财 vs 同花顺 PE 口径
+  不同），跨源共享会脏读。
+- 第三段是**语义参数的规范化哈希**（codes/date/page_size 等，排序后哈希）。
+
+**per-source 缓存的命中逻辑**：
+- 不指定 source → 用 default_source，命中 default_source 的 cache
+- 指定 source → 查该 source 的 cache；无则取数（**不复用其他 source 的 cache**）；
+  若该 source 熔断，报错而非降级取其他源（显式指定 = 客户端明确要这个源）
+- 自动降级（不指定 source 时）→ 主源熔断，**降级源的 cache 独立于主源**，各自
+  缓存，互不污染
+
+#### c. 按数据类型差异化 cache 策略（不再 tier 一刀切）
+
+当前 5 档（P/L/S/R/N）只控 TTL。新架构按**数据更新特性**分 6 类，每类有独立
+的 TTL + 存储方式 + 缓存粒度：
+
+| 数据类型 | 例子 | 更新特性 | TTL | 存储方式 | 落盘 | 粒度 |
+|---------|------|---------|-----|---------|------|------|
+| **定稿型** | 公告/分红/F10/互动易 | 发布即不改 | 30天 | 结构化 | 是 | per-code |
+| **季度型** | 财报三表/股东户数/业绩预告 | 季度更新 | 1天 | 结构化 | 是 | per-code |
+| **日级型(盘后定稿)** | 龙虎榜/融资融券/大宗/板块 | 盘中变、盘后定稿 | 盘中0/盘后12h | 结构化 | 否 | per-code |
+| **日级型(随时变)** | 研报评级/质押/解禁 | 日内可能变 | 1h | 结构化 | 否 | per-code |
+| **实时型** | 行情/K线/盘口/资金流/涨停池 | 秒级变 | 0(no-cache) | — | 否 | — |
+| **流式型** | 新闻电报 | 持续追加 | 0(no-cache) | — | 否 | — |
+
+**vs 现状的改进**：
+1. **拆分 P 档**：原 P 档混了"公告(真定稿30天)"和"研报(评级会变)"。新分
+   "定稿型(30天)"和"日级型随时变(1h)"——研报评级 1h TTL，避免拿到过时评级。
+2. **拆分 S 档**：原 S 档都是"盘后定稿"。但质押/解禁/研报其实日内会更新，
+   归到"日级型随时变(1h)"更准确；龙虎榜/融资融券才是真"盘后定稿"。
+3. **实时型仍 no-cache**但保留 singleflight（同秒 1000 agent 取同一票合并为
+   一次出网 + 一次解析，结果广播给所有 follower）。
+
+> 能力注册表的 `cache_policy` 字段声明所属类型，驱动 TTL/存储/落盘：
+> ```python
+> @capability(name="announce", cache_policy="definitive", ...)   # 定稿型
+> @capability(name="report",   cache_policy="daily_volatile", ...)  # 日级随时变
+> @capability(name="quote",    cache_policy="realtime", ...)     # 实时型
+> ```
+
+#### d. 存储方式：内存 + 磁盘（沿用 sgw 双层，存的内容变了）
+
+- **内存 Cache**（搬 sgw）：存结构化数据（dict/list，JSON 序列化进 dict），
+  命中即返。原样复用 sgw 的 Cache 类（key/value/ttl/expire）。
+- **磁盘 DiskCache**（搬 sgw）：仅"定稿型"+"季度型"落盘（P/L 对应），重启
+  恢复。复用 sgw 的 DiskCache（SQLite+WAL），但存的 BLOB 从"上游字节"改为
+  "结构化数据的 JSON"。原样复用 write-through + load_all 回填 + 惰性过期删除。
+- **singleflight**（搬 sgw，零改）：所有类型（含 realtime 的 TTL=0）都走
+  singleflight 合并并发 miss。realtime 型虽不 cache，但同秒并发合并为一次
+  出网+解析，结果广播。这是 sgw 已有的设计（`proxy.py:1112` 注释"即使 TTL=0
+  也合并"），原样保留。
+
+#### e. 与客户端格式化层（§3.5）的关系
+
+- cache 在**格式化之前**：服务端 cache 存结构化数据，格式化在客户端。
+- 同一份数据（如 600519 的 quote）只 cache 一份结构化 dict，N 个 agent 各自
+  按需格式化（csv/json/md）——**格式不进 cache key，不制造缓存碎片**。
+- 这正是 §3.5 把格式化放客户端的核心收益：服务端 cache 命中率高，不被格式碎片化。
+
+#### f. cache key 规范化（取代 _canonical_url）
+
+现状用 `_canonical_url(url, params, header_key_parts, ignored_params)` 规范 URL。
+新架构改为 `_semantic_key(capability, source, params)`：
+- 输入是语义参数 dict（codes/date/page_size），非 URL
+- 排序 + 规范化（codes 列表排序，去重）后哈希
+- **不含** source（source 是 key 第二段，独立）
+- **不含** format/output（格式化在客户端，不进服务端 cache key）
+- ignored_params 概念保留（如东财的 ut 凭据参数不进 key 但仍发上游），
+  但作用域从"query param"改为"语义参数"
+
 ## 四、sgw 复用方案（代码级）
 
 ### 4.1 直接搬用（零改，约 70% 代码量）
@@ -303,18 +402,20 @@ asgk f10 600519 --format md                # 文本型 → markdown
 | 代码块 | proxy.py 位置 | 说明 |
 |--------|--------------|------|
 | `TokenBucket` | 707-740 | 限流，纯 acquire() 接口 |
-| `Cache` | 744-770 | 内存缓存 |
-| `DiskCache` | 774-860 | SQLite+WAL，P/L 持久化 |
-| `SingleFlight` | 166-189 | 并发 miss 合并 |
+| `Cache` | 744-770 | 内存缓存（**存的内容变：结构化数据非字节，见 §3.6**）|
+| `DiskCache` | 774-860 | SQLite+WAL（**存的内容变 + key 规范化改，见 §3.6**）|
+| `SingleFlight` | 166-189 | 并发 miss 合并（零改，含 realtime TTL=0 的合并）|
 | `CircuitBreaker` | 192-294 | 熔断 + canary 探针 |
 | `CircuitStateStore` | 297-396 | 熔断状态 SQLite 主库 |
 | `CircuitStateManager` | 398-683 | **安全闩，最该复用，绝不该重写** |
-| 五档 TTL + 盘中判断 + fallback | 981-1007 | 缓存分档 |
+| 五档 TTL + 盘中判断 + fallback | 981-1007 | 缓存分档（**拆为 6 类数据类型，见 §3.6c**）|
 | retry/backoff 骨架 | 1181-1229 | 指数退避 |
 | 指纹日志 | 1010-1042 | key 语义改，骨架搬 |
 
 这些代码已过真实风控源考验（家庭 IP 安全闩、跨重启熔断持久化、P/L 落盘恢复），
-重写代价高、风险大。搬入服务端作为「流量中间件层」。
+重写代价高、风险大。搬入服务端作为「流量中间件层」。**cache 部分（Cache/DiskCache/
+分档）是搬入时改动最大的**——存储内容从原始字节变结构化数据、key 从 URL 变语义
+参数、分档从 5 档细化到 6 类数据类型，详见 §3.6。
 
 ### 4.2 改造搬用
 

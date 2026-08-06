@@ -12,15 +12,14 @@
 ## 依赖图
 
 ```
-T1(骨架+流量内核) ──┬─→ T2(quote试点) ──→ T6~T10(各梯队迁移)
-                    ├─→ T3(datacenter族)─→ T6~T10
-                    └─→ T4(客户端格式化) ──→ T5(CLI)
-T6~T10 各梯队迁移完成后 ──→ T11(废弃sgw)
-                          └─→ T12(文档收尾)
+T1(骨架+流量内核) ──┬─→ T1.5(cache refactor) ──┬─→ T2(quote试点) ──→ T6~T10
+                    │                          ├─→ T3(datacenter族)
+                    └─→ T4(客户端格式化) ──────┴─→ T5(CLI)
+T6~T10 各梯队迁移完成后 ──→ T11(废弃sgw) ──→ T12(文档收尾)
 ```
 
-T1 是所有后续任务的地基；T4/T5 与 T2/T3 并行；T6~T10 按难度梯队串行（共享
-客户端改造模式，先验证再铺开）；T11/T12 最后。
+T1 是所有后续任务的地基；T1.5(cache refactor)是 T1 后最优先的（cache 改动最大，
+独立验证）；T4/T5 与 T2/T3 并行；T6~T10 按难度梯队串行；T11/T12 最后。
 
 ---
 
@@ -32,29 +31,68 @@ T1 是所有后续任务的地基；T4/T5 与 T2/T3 并行；T6~T10 按难度梯
 **改动**：
 - 新建 `packages/asgk-server/pyproject.toml`（uv workspace 成员）
 - 新建 `packages/asgk-server/asgk_server/__init__.py`
-- 新建 `packages/asgk-server/asgk_server/traffic.py`：从 sgw/proxy.py **整块搬入**
-  TokenBucket / Cache / DiskCache / SingleFlight / CircuitBreaker /
-  CircuitStateStore / CircuitStateManager（零改，含安全闩）
+- 新建 `packages/asgk-server/asgk_server/traffic.py`：从 sgw/proxy.py 搬入流量内核：
+  - **零改搬入**：TokenBucket / SingleFlight / CircuitBreaker / CircuitStateStore /
+    CircuitStateManager（含安全闩）/ retry 骨架
+  - **cache 部分见 T1.5 单独改造**（Cache/DiskCache 存储内容+key+分档都要改，
+    不在本任务做，本任务先占位用最简内存 cache）
 - 新建 `packages/asgk-server/asgk_server/registry.py`：`@capability` 装饰器 +
   CapabilityMeta（name/domain/sources/default_source/fallback/data_type/
-  supported_formats）+ 注册表
+  supported_formats/cache_policy）+ 注册表
 - 新建 `packages/asgk-server/asgk_server/egress.py`：从 sgw 搬入 `_egress_request`
   （requests/curl_cffi 双客户端）
 - 新建 `packages/asgk-server/asgk_server/server.py`：HTTP JSON RPC 入口
  （ThreadingHTTPServer，`POST /v1/<capability>` + `GET /v1/sources`），路由到
-  注册的能力；流量内核中间件（限流→熔断→出网→缓存）
+  注册的能力；流量内核中间件（限流→熔断→出网→缓存占位）
 - 新建 `packages/asgk-server/asgk_server/config.toml`：从 sgw/config.toml 搬入
-  限流组（group 段原样）+ cache TTL；**去掉**端点策略（endpoint 段，改由能力
-  注册表驱动）+ 去掉 fallback/proxied 逻辑
+  限流组（group 段原样）；**去掉**端点策略（endpoint 段，改由能力注册表驱动）
 - 新建 `packages/asgk-server/tests/test_traffic.py` + `test_registry.py` +
-  `test_server.py`（mock 上游，验限流/缓存/熔断/能力注册/RPC）
+  `test_server.py`（mock 上游，验限流/熔断/能力注册/RPC）
 
 **验收**：
 - 服务端能启动（`asgk-server --port 7701`），`GET /v1/sources` 返回空列表
-- 流量内核测试全绿（从 sgw 测试迁移并适配）
+- 流量内核测试全绿（限流/熔断/singleflight 从 sgw 测试迁移并适配）
 - 注册一个 mock 能力（非真实数据源），`POST /v1/mock_cap` 返回预期结构
 
 **依赖**：无（地基）
+
+---
+
+## T1.5 — cache 机制 refactor（存储内容 + key + 分档）
+
+**目标**：把 sgw 的 Cache/DiskCache 改造为能力代理的 cache（§3.6 全部内容）。
+这是流量内核搬入时**改动最大**的部分，独立 commit + 独立验收。
+
+**改动**：
+- `asgk_server/cache.py`（新建，从 sgw Cache/DiskCache 改造）：
+  - **存储内容**：从 `r.content`（原始字节）改为 fetch 返回的结构化数据
+    （dict/list，JSON 序列化存入）
+  - **cache key**：从 `tier|canonical_url` 改为 `capability|source|semantic_key`
+    （§3.6b/f）。新增 `_semantic_key(capability, source, params)` 取代
+    `_canonical_url`：语义参数排序+去重+哈希，不含 source/format/output
+  - **per-source 独立**：同 capability 不同 source 各自缓存，不跨源共享（§3.6b）
+  - DiskCache 的 BLOB 从"上游字节"改为"结构化 JSON"
+- `asgk_server/registry.py`：CapabilityMeta 加 `cache_policy` 字段
+  （definitive/quarterly/daily_settled/daily_volatile/realtime/streaming，
+  §3.6c 六类）
+- `asgk_server/cache_policy.py`（新建）：六类数据类型 → TTL/存储/落盘/粒度映射表
+  （§3.6c 表格），取代 sgw 的五档 TTL 一刀切
+- `asgk_server/server.py`：接入改造后的 cache（命中返结构化数据；TTL=0 仍走
+  singleflight 合并）
+- 测试 `test_cache.py`：
+  - per-source 缓存隔离（tencent/sina 同参数各一份，不互窜）
+  - 六类分档 TTL 正确（定稿30天/季度1天/实时0...）
+  - 磁盘持久化（定稿+季度落盘，重启恢复；实时/流式不落盘）
+  - singleflight 对 realtime(TTL=0) 仍合并并发
+  - 格式不进 key（同数据不同 format 命中同一缓存——此项在 T4 格式化落地后验证）
+
+**验收**：
+- 六类数据类型的 TTL/落盘行为符合 §3.6c 表格
+- per-source 缓存隔离正确（指定 source 不返回其他源的缓存）
+- mock 能力：定稿型落盘后重启仍命中；实时型 no-cache 但并发合并
+- 现有 sgw cache 测试迁移后全绿（适配新 key/存储语义）
+
+**依赖**：T1
 
 ---
 
@@ -272,7 +310,8 @@ asgk-contract.md 第六节承诺。
 
 | 任务 | commit 数 | 说明 |
 |------|----------|------|
-| T1 骨架 | 1 | 服务端 + 流量内核 |
+| T1 骨架 | 1 | 服务端 + 流量内核（cache 占位） |
+| T1.5 cache refactor | 1 | 存结构化数据 + 语义key + per-source + 六类分档 |
 | T2 quote 试点 | 1 | 端到端验证 |
 | T3 datacenter 族 | 1 | 13 能力整体（共享适配器） |
 | T4 格式化层 | 1 | _format + _output |
@@ -282,7 +321,7 @@ asgk-contract.md 第六节承诺。
 | T8 硬骨头 | 5 | mootdx池/legulegu/百度/chip/签名 |
 | T11 废弃 sgw | 1 | 部署切换 |
 | T12 文档 | 1 | 收尾 |
-| **合计** | **~36** | |
+| **合计** | **~37** | |
 
 > T6/T7 的"每能力 1 commit"可视实施时合并同模块的（如 limitup 4 个池函数
 > 共用一个适配器，可 1 commit）。实际 commit 数预计 25~36。
