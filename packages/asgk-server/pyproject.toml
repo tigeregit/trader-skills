@@ -1,0 +1,25 @@
+[project]
+name = "asgk-server"
+version = "0.1.0"
+description = "能力代理服务端：吞噬 sgw 流量内核，按数据域暴露语义能力"
+requires-python = ">=3.11"
+dependencies = [
+    "requests>=2.31",
+    "curl_cffi>=0.7",
+]
+
+[project.scripts]
+asgk-server = "asgk_server.server:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["asgk_server"]
+
+[tool.hatch.build]
+# config.toml 随包安装（在 asgk_server/ 内，会被 packages 自动包含）

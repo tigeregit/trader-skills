@@ -4,8 +4,32 @@ requires-python = ">=3.11"
 
 [manifest]
 members = [
+    "asgk-server",
     "sgw",
 ]
+
+[[package]]
+name = "asgk-server"
+version = "0.1.0"
+source = { editable = "asgk-server" }
+dependencies = [
+    { name = "curl-cffi" },
+    { name = "requests" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "curl-cffi", specifier = ">=0.7" },
+    { name = "requests", specifier = ">=2.31" },
+]
+
+[package.metadata.requires-dev]
+dev = [{ name = "pytest", specifier = ">=8" }]
 
 [[package]]
 name = "certifi"

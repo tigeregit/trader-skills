@@ -50,9 +50,11 @@ T1 是所有后续任务的地基；T1.5(cache refactor)是 T1 后最优先的�
   `test_server.py`（mock 上游，验限流/熔断/能力注册/RPC）
 
 **验收**：
-- 服务端能启动（`asgk-server --port 7701`），`GET /v1/sources` 返回空列表
-- 流量内核测试全绿（限流/熔断/singleflight 从 sgw 测试迁移并适配）
-- 注册一个 mock 能力（非真实数据源），`POST /v1/mock_cap` 返回预期结构
+- ✅ 服务端能启动（`asgk-server --port 7701`），`GET /v1/sources` 返回空列表
+- ✅ 流量内核测试全绿（限流/熔断/singleflight 从 sgw 测试迁移并适配，47 passed）
+- ✅ 注册一个 mock 能力（非真实数据源），`POST /v1/mock_cap` 返回预期结构
+
+**状态**：✅ 已完成（commit 待提交）
 
 **依赖**：无（地基）
 

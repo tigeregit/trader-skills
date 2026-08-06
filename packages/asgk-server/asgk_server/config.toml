@@ -1,0 +1,137 @@
+# asgk-server 配置：限流组 / 缓存 TTL / 熔断 / 状态持久化。
+# 设计依据：.agents/notes/capability-proxy-design.md（§3.6 cache / §4 sgw 复用）
+
+# 端点策略（endpoint 段）已删除——能力代理不再以 URL 做准入，改由能力注册表
+# （registry.py 的 @capability 元数据）驱动选源/限流组/容灾。限流组本身的 rps
+# 取值沿用 sgw 调研结论（社区保守水位 × 1.5，data-source-risk-control.md）。
+
+[server]
+host = "127.0.0.1"
+port = 7701
+
+# ── 按域名组限流（沿用 sgw §3.3 调研结论）─────────────────────
+# 每组独立令牌桶：rps=每秒请求数，jitter=随机抖动区间(秒)
+# 全局串行：服务端是唯一的出网出口，令牌桶在服务端进程内
+# rps 取值规则：社区保守安全水位 × 1.5（data-source-risk-control.md 调研）。
+#   保守值 = 社区资料中"稳定运行"的推荐频率（非封禁阈值）；×1.5 在吞吐与
+#   安全间取衡，仍远低于各源封禁线（普遍 ≥5 req/s）。
+[[group]]
+name = "eastmoney"
+domains = [
+    "push2.eastmoney.com", "push2his.eastmoney.com", "push2ex.eastmoney.com",
+    "data.eastmoney.com", "datacenter-web.eastmoney.com", "datacenter.eastmoney.com",
+    "emweb.securities.eastmoney.com",
+    "reportapi.eastmoney.com", "emappdata.eastmoney.com", "kuaixun.eastmoney.com",
+    "quote.eastmoney.com", "so.eastmoney.com",
+    "search-api-web.eastmoney.com", "np-weblist.eastmoney.com",
+]
+rps = 1.5          # 保守1.0(EM_MIN_INTERVAL客户端逆向值) ×1.5
+jitter = [0.1, 0.5]
+
+# 同花顺组：10jqka.com.cn 与 hexin.cn 同属同花顺系、共用 hexin-v 风控体系，
+# 一处被封会连累全系成片失联，故共用同一令牌桶串行限流。
+[[group]]
+name = "10jqka"
+domains = [
+    "basic.10jqka.com.cn", "data.10jqka.com.cn",
+    "zx.10jqka.com.cn", "dq.10jqka.com.cn",
+    "data.hexin.cn",
+]
+rps = 0.75         # 保守0.5(data.10jqka约5页封,社区2-3s间隔) ×1.5
+jitter = [0.1, 0.4]
+
+# ── 交易所源（独立组，与东财不同风控面）──────────────────────
+[[group]]
+name = "exchange"
+domains = [
+    "www.szse.cn", "query.sse.com.cn",
+]
+rps = 0.15         # 保守0.1(§7验证3次间隔10s) ×1.5
+jitter = [0.5, 1.0]
+
+# ── 腾讯实时行情（qt.gtimg.cn，GBK 文本）──────────────────────
+[[group]]
+name = "tencent"
+domains = ["qt.gtimg.cn"]
+rps = 1.5          # 保守1.0(社区低频策略间隔0.5-1秒) ×1.5
+jitter = [0.1, 0.5]
+
+# ── 新浪（行情 hq.sinajs.cn / 财报 quotes.sina.cn / 期权 stock.finance.sina.com.cn）──
+[[group]]
+name = "sina"
+domains = ["hq.sinajs.cn", "quotes.sina.cn", "stock.finance.sina.com.cn"]
+rps = 0.375        # 保守0.25(akshare#5762 sleep(4)才稳定) ×1.5
+jitter = [0.1, 0.5]
+
+# ── 财联社电报（cls.cn，N 档流式 no-cache）──────────────────────
+[[group]]
+name = "cls"
+domains = ["www.cls.cn"]
+rps = 0.15         # 保守0.1(社区间隔≥10-30s) ×1.5
+jitter = [0.1, 0.5]
+
+# ── 巨潮资讯（cninfo.com.cn，公告+互动易，深交所官方）──────────
+[[group]]
+name = "cninfo"
+domains = ["www.cninfo.com.cn", "irm.cninfo.com.cn"]
+rps = 0.5          # 保守0.33(社区间隔≥0.5~3秒) ×1.5
+jitter = [0.5, 1.0]
+
+# ── 百度股市通（finance.pae.baidu.com，需 curl_cffi Chrome 指纹出网）──
+[[group]]
+name = "baidu"
+domains = ["finance.pae.baidu.com"]
+rps = 3.0          # 保守2.0(社区"数QPS~数十QPS相对安全"下限) ×1.5
+jitter = [0.3, 0.8]
+
+# ── 通达信（mootdx TCP 7709，服务端内嵌 TCP 客户端）──────────
+# 无 IP 风控但仍纳入限流组（统一管理 + 避免单点连接耗尽）。
+[[group]]
+name = "mootdx"
+domains = []   # TCP 非 HTTP，无域名；按 group 名匹配
+rps = 2.0      # 保守值（mootdx 社区实践高频轮询稳定）
+jitter = [0.1, 0.3]
+
+[circuit]
+# 家庭 IP 无法快速更换：403/429 在代码中立即熔断；以下控制普通故障。
+cooldown_seconds = 300
+failure_threshold = 3
+probe_lease_seconds = 120
+
+[state]
+# 熔断状态独立持久化；不依赖 P/L 缓存是否启用。
+enabled = true
+dir = "state"
+# 状态库异常后只探测存储，不访问上游；24h 为上限。
+backoff_seconds = [600, 1800, 3600, 21600, 43200, 86400]
+
+[retry]
+# 生产默认允许普通瞬态故障重试；真实 canary 用临时配置设为 1。
+max_attempts = 3
+
+# ── 五档缓存 TTL（T1 沿用 sgw；T1.5 改为六类数据型分档 §3.6c）──
+# 档位由能力注册表的 cache_policy 驱动（T1.5）；T1 阶段仍用五档。
+[cache]
+P_ttl = 2592000           # 30天：公告/分红/F10/互动易（发布即定稿）
+L_ttl = 86400             # 1天：季报快照/财报三表/股东户数（季度更新）
+S_ttl_session = 0         # 盘中(09:00-18:00)：no-cache
+S_ttl_afterclose = 43200  # 盘后(18:00-次日09:00)：12h
+R_ttl = 0                 # 实时：no-cache
+N_ttl = 0                 # 流式新闻：no-cache
+
+# 交易时段简化判断（MVP）：工作日 09:00-18:00 视为盘中
+[cache.session]
+intraday_start = "09:00"
+intraday_end = "18:00"
+
+# ── 磁盘持久化（沿用 sgw；T1.5 改为 JSON 文件 §3.6d）─────────
+[cache.persist]
+enabled = true
+dir = "cache"
+tiers = ["P", "L"]
+
+# ── 响应指纹日志（§3.4.7 离线修正，沿用 sgw）──────────────────
+[fingerprint]
+enabled = true
+log_dir = "logs"
+strip_fields = ["req_trace", "servertime", "server_time", "request_id", "trace_id"]
