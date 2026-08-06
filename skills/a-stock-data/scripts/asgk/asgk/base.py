@@ -1,13 +1,11 @@
 """asgk.base — 基础数据层（财务快照/F10/个股信息/财报三表）。
 
 实现约定：
-  - mootdx 财务快照/F10：TCP 7709 直连，tier=L/P
+  - mootdx 财务快照/F10：TCP 7709 直连，tier=L/P（暂未迁移）
   - 东财个股信息：经网关(push2)，tier=S
-  - 新浪财报三表：直连(sina.cn)，tier=L
+  - 新浪财报三表：经网关(sina 组)，tier=L
 """
 from __future__ import annotations
-
-import requests
 
 from asgk._contract import source
 from asgk.client import tdx_client
@@ -73,7 +71,7 @@ def eastmoney_stock_info(code: str) -> dict:
     }
 
 
-@source(tier="L", via="direct")
+@source(tier="L", via="gateway")
 def sina_financial_report(code: str, report_type: str = "lrb", num: int = 8) -> list[dict]:
     """新浪财报三表。
 
@@ -84,13 +82,15 @@ def sina_financial_report(code: str, report_type: str = "lrb", num: int = 8) -> 
     Returns:
         按报告期倒序的记录列表，每期一条 dict：
         {"报告期": "2026-03-31", "<科目>": "<值>", "<科目>_同比": <同比>, ...}
+    Note:
+        经网关（sina 限流组），tier=L。
     """
     prefix = "sh" if code.startswith("6") else "sz"
-    r = requests.get(
+    r = em_get(
         "https://quotes.sina.cn/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022",
         params={"paperCode": f"{prefix}{code}", "source": report_type,
                 "type": "0", "page": "1", "num": str(num)},
-        headers={"User-Agent": UA}, timeout=15,
+        headers={"User-Agent": UA}, timeout=15, tier="L",
     )
     # 新浪结构: result.data.report_list 是「按报告期(如 '20260331')为键」的 dict
     report_list = r.json().get("result", {}).get("data", {}).get("report_list", {}) or {}
