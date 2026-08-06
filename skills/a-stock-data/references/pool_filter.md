@@ -11,21 +11,15 @@
 
 ## 调用示例
 
-```python
-from asgk import pledge_ratio, goodwill
+```bash
+# 股权质押（参数=交易日 YYYY-MM-DD；pledge_ratio 单位是百分点）
+asgk risk pledge 2024-09-06
+# 字段：name / pledge_ratio(%,>50=高风险) / pledge_deal_num(笔数)
+#      pledge_market_cap(质押市值,万元)
 
-# 股权质押（某交易日全市场）
-pr = pledge_ratio("20240906")  # date=YYYYMMDD 交易日
-high = [p for p in pr if (p["pledge_ratio"] or 0) > 50]
-print(f"质押比例>50%的高风险股:{len(high)}家")
-for p in high[:3]:
-    print(f"  {p['name']} 质押率{p['pledge_ratio']:.2f}% 质押{p['pledge_deal_num']}笔 市值{p['pledge_market_cap']/1e4:.2f}亿")
-
-# 商誉（某报告期全市场，按商誉金额降序）
-gw = goodwill("20231231")  # date=YYYYMMDD 报告期
-print(f"有商誉公司:{len(gw)}家")
-for g in gw[:3]:
-    print(f"  {g['name']} 商誉{g['goodwill']/1e8:.2f}亿 占净资产{g['goodwill_to_equity']*100:.1f}% 净利{g['net_profit']/1e8:.2f}亿")
+# 商誉（参数=报告期 YYYY-MM-DD；按商誉金额降序）
+asgk risk goodwill 2023-12-31
+# 字段：name / goodwill(元) / goodwill_to_equity(占净资产,小数) / net_profit(净利,元)
 ```
 
 ## 注意

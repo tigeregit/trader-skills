@@ -1,5 +1,21 @@
 # Gateway 设计方案（含 skill CLI 接入）
 
+> **⚠️ 本方案的「透明代理」架构已被「能力代理」取代。**
+>
+> 本文档设计的 sgw 是**透明代理**（转发 `?u=URL`，不懂数据语义，客户端持有全部
+> 上游知识）。该方案已被 [capability-proxy-design.md](capability-proxy-design.md)
+> 取代：能力代理服务端（`packages/asgk-server`）持有全部上游知识，客户端只发语义
+> 请求。sgw 已 DEPRECATED（见 `packages/sgw/README.md`），保留作旧路径回退。
+>
+> **本文档的以下内容仍然有效**（已被能力代理原样继承）：
+> - 「不可降级约束」（家庭 IP 安全高于实时性，403/429 立即熔断）
+> - 流量内核设计（令牌桶 / 熔断 / 缓存分档 / singleflight / 状态闩安全闩）——
+>   这部分**原样搬入** asgk-server，限流/熔断行为完全一致
+> - 端点准入与凭据隔离原则
+>
+> **已被取代的部分**：透明代理的 `?u=URL` 转发、端点政策（EndpointPolicy）的 URL
+> 对账、CLI 接入（已由 asgk 客户端 `@source(cli=...)` 自动发现实现）。
+
 本文件是流量网关 + skill 接入的正式设计文档。
 
 > **不可降级约束**：100～1000 个 agent 共用一个无法快速更换的家庭 IP。

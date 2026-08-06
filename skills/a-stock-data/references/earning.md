@@ -11,20 +11,14 @@
 
 ## 调用示例
 
-```python
-from asgk import earning_forecast, earning_express
+```bash
+# 业绩预告（某报告期全市场；参数是报告期 YYYY-MM-DD，非股票代码）
+asgk base forecast 2024-09-30
+# 返回字段：name / predict_finance / predict_type
+#          predict_lower~predict_upper(元) / add_amp_lower~add_amp_upper(%)
 
-# 业绩预告（某报告期全市场，返回所有发布预告的公司）
-fc = earning_forecast("20240930")  # date=YYYYMMDD 报告期
-print(f"发布预告:{len(fc)}家")
-for s in fc[:3]:
-    print(f"  {s['name']} {s['predict_finance']} {s['predict_type']}")
-    print(f"    {s['predict_lower']}~{s['predict_upper']}元 变动{s['add_amp_lower']}%~{s['add_amp_upper']}%")
-
-# 业绩快报（某报告期全市场，已出快报的公司）
-kb = earning_express("20240930")
-for s in kb[:3]:
-    print(f"  {s['name']} EPS{s['eps']} 净利{s['net_profit']/1e8:.2f}亿 同比{s['profit_yoy']}%")
+# 业绩快报（某报告期全市场；返回确定数值 EPS/营收/净利）
+asgk base express 2024-09-30
 ```
 
 ## 注意

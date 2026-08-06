@@ -10,23 +10,20 @@
 
 ## 调用示例
 
-```python
-from asgk import chip_distribution
+```bash
+# 筹码分布（最近 90 日；纯数字代码，不带前缀）
+asgk signal chip 000001
+# 返回字段：date / benefit_part(获利比例,0-1) / avg_cost(元)
+#          pct90_low~pct90_high / pct90_concentration
+#          pct70_low~pct70_high / pct70_concentration
 
-# 筹码分布（最近 90 日）
-chip = chip_distribution("000001")  # 纯数字代码，不带前缀
-latest = chip[-1]
-print(f"{latest['date']} 获利比例{latest['benefit_part']:.1%} 平均成本{latest['avg_cost']:.2f}")
-print(f"  90%成本{latest['pct90_low']:.2f}~{latest['pct90_high']:.2f} 集中度{latest['pct90_concentration']:.2%}")
-print(f"  70%成本{latest['pct70_low']:.2f}~{latest['pct70_high']:.2f} 集中度{latest['pct70_concentration']:.2%}")
-
-# 前复权筹码
-chip_qfq = chip_distribution("600519", adjust="qfq")
+# 前复权筹码（--adjust q=前复权 / h=后复权 / 空=不复权）
+asgk signal chip 600519 --adjust q
 ```
 
 ## 注意
 - `symbol` 是**纯数字代码**（如 "000001"），不带市场前缀；市场由首字符 6 判定（6 开头=沪，否则=深）。
-- `adjust` 复权：`""` 不复权 / `"qfq"` 前复权 / `"hfq"` 后复权。
+- `adjust` 复权：空=不复权 / `q`=前复权 / `h`=后复权。
 - `benefit_part` 获利比例是**小数**（0.5 = 50%）。
 - `avg_cost`/`pct90_low`/`pct90_high` 等成本单位是**元**。
 - `pctXX_concentration` 集中度是小数（数值越小筹码越集中）。

@@ -10,13 +10,10 @@
 
 ## 调用示例
 
-```python
-from asgk import cninfo_announcements
-
-anns = cninfo_announcements("600519", page_size=10)
-for a in anns[:5]:
-    print(f"{a['date']} {a['type']} {a['title'][:40]}")
-    print(f"  {a['url']}")  # 公告详情页/PDF链接
+```bash
+# 巨潮公告检索（默认每页 30，这里取 10）
+asgk news announce 600519 --page-size 10
+# 返回字段：date / type / title / url（公告详情页/PDF链接）
 ```
 
 ## 注意

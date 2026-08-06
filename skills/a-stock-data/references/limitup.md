@@ -15,19 +15,14 @@
 
 ## 调用示例
 
-```python
-from asgk import em_zt_pool, limit_up_sentiment
-
-# 涨停池
-zt = em_zt_pool("20260722")  # date=YYYYMMDD
-print(f"涨停{len(zt)}只")
-for s in zt[:3]:
-    print(f"  {s['name']} {s['zt_stat']} 封板{s['seal_fund']/1e8:.2f}亿 {s['industry']}")
+```bash
+# 涨停池（参数=交易日 YYYY-MM-DD）
+asgk risk zt 2026-07-22
+# 返回字段：name / zt_stat / seal_fund(封板资金,元) / industry
 
 # 打板情绪温度计
-s = limit_up_sentiment("20260722")
-print(f"涨停{s['zt_count']} 炸板率{s['break_rate']}% 最高{s['max_height']}连板")
-print(f"连板梯队: {s['ladder']}")  # {板数: 家数}
+asgk risk sentiment 2026-07-22
+# 返回字段：zt_count / break_rate(炸板率%) / max_height(最高连板) / ladder({板数: 家数})
 ```
 
 ## 注意

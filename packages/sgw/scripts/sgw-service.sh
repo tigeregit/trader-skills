@@ -126,7 +126,9 @@ install_service() {
     validate_config
     resolve_uv
     [[ "$SGW_WORK_DIR" == /* ]] || die "SGW_WORK_DIR must be an absolute path"
-    "$UV_BIN" tool install --force "$PROJECT_DIR"
+    # --no-cache：绕过 uv wheel 缓存。版本号未变时 --force 仍可能复用旧 wheel，
+    # 导致改动不生效（实测踩坑）；双保护 = --no-cache + pyproject 版本号 bump。
+    "$UV_BIN" tool install --force --no-cache "$PROJECT_DIR"
     tool_bin_dir=$("$UV_BIN" tool dir --bin)
     proxy_bin="$tool_bin_dir/sgw-proxy"
     [[ -x "$proxy_bin" ]] || die "uv installed sgw but sgw-proxy was not found at $proxy_bin"

@@ -1,45 +1,75 @@
-# 共享流量网关接入
+# 能力代理服务端接入
 
-asgk 对东财、同花顺等有 IP 风控的数据源实行失败关闭：这些请求只能通过部署方
-提供的共享 HTTP 网关访问。腾讯、百度、新浪、巨潮和 mootdx 等直连源不经过网关。
+asgk CLI 不直连任何数据源——所有取数经**能力代理服务端**（asgk-server）出网。
+服务端持有全部上游知识（URL/编码/字段映射/签名/协议），做全局限流+缓存+熔断；
+CLI 只发语义请求（如「要 600519 实时行情」），零上游知识。
 
-## 独立性边界
+## 架构
 
-- 本 skill 自带并安装 asgk 客户端库，不依赖仓库中的其他源码或设计文档。
-- 共享网关是部署环境中的外部运行服务，与互联网数据源、代理或 API 服务属于
-  同一类运行前置条件；本 skill 不负责安装或启动它。
-- 部署方应为同一出口 IP 下的所有 agent 提供同一个 `ASGK_GW` 地址，避免每个
-  agent 各自直连风控源。
-
-## 客户端配置
-
-推荐直接设置环境变量：
-
-```bash
-export ASGK_GW=http://127.0.0.1:7700
+```
+asgk CLI (×1000)                      外网
+   │  POST /v1/<capability>            │
+   └─► localhost:7701 (asgk-server) ──►  eastmoney / tencent / sina / cninfo / ...
+            │  全局令牌桶限流(按源分组)
+            │  结构化缓存(六类数据型 + 文档型 LRU)
+            │  同请求合并(singleflight)
+            │  403/429 立即熔断 + 安全闩
+            │  持有全部上游知识(URL/编码/字段映射/签名/协议)
 ```
 
-也可在任意文件中写入 `ASGK_GW=...`，再将 `ASGK_ENV` 设为该文件的绝对路径。
-asgk 的读取优先级为：进程环境变量 `ASGK_GW` > `ASGK_ENV` 指定文件 > 当前工作
-目录及其最多三级父目录中的 `.env`。
+## CLI 如何找到服务端
 
-未配置 `ASGK_GW` 时，所有经 `em_get()` 发出的风控源请求立即抛出异常，不会尝试
-直连。网关返回的 HTTP 错误也应作为真实失败处理。
+优先级（从高到低）：
 
-## HTTP 协议
+1. 环境变量 `export ASGK_SERVER=http://127.0.0.1:7701`（最高，systemd/container envfile 用这个）
+2. `~/.config/asgk/cli.toml`（service 脚本 `install` 时自动生成）
+3. 包内默认 `cli.toml.default`（url = http://127.0.0.1:7701）
 
-asgk 发送 GET 请求到 `ASGK_GW`，并使用以下约定：
+未配置或服务端不可达时，CLI 直接报错。
 
-- 查询参数 `u`：原始上游完整 URL。
-- 其他查询参数：原样转发给上游。
-- 请求头 `X-Cache-Tier`：由业务函数声明缓存档位。
-- 响应：保留上游状态码、正文和必要响应头，使调用侧可按普通
-  `requests.Response` 处理。
+## 安装
 
-网关应只放行经过审核的公共数据 host/path。未知端点、私有响应、凭据绑定响应和
-策略冲突都必须拒绝，不能仅因为域名已知就允许出网。
+```bash
+# 推荐：随服务端一起装（CLI 自动配置好指向服务端）
+./packages/asgk-server/scripts/asgk-server-service.sh install
 
-## 缓存档位
+# 或只装 CLI（服务端已在别处部署）
+uv tool install packages/asgk-server
+```
+
+装出两个 bin：`asgk-server`（服务）+ `asgk`（CLI）。
+
+## 服务端能力接口
+
+`POST /v1/<capability>`，body 是参数 JSON。21 个具名能力：
+
+| 能力 | 域 | 说明 |
+|------|-----|------|
+| `quote` | 行情 | 腾讯实时行情 |
+| `baidu_kline` | 行情 | 百度带 MA 日 K |
+| `mootdx` | 行情 | 通达信 TCP（bars/quotes/transaction/finance/f10） |
+| `stock_info` | 基础 | 东财个股基本面 |
+| `concept_blocks` | 信号 | 个股板块/概念归属 |
+| `datacenter` | 数据中心 | 东财数据中心（15 函数共用） |
+| `limitup_pool` | 打板 | 涨停/炸板/跌停/昨涨停四池 |
+| `fund_flow` | 资金 | 资金流（分钟 + 120 日） |
+| `holders` | 股东 | 十大股东 + 十大流通股东 |
+| `reports` | 研报 | 东财研报 + 行业研报 |
+| `clist` | 信号 | 行业排名 + 板块成分 |
+| `news` | 新闻 | 个股新闻 + 全球资讯 |
+| `em_hot` | 舆情 | 人气榜 + 热门概念 |
+| `ths_signal` | 信号 | 同花顺热榜 + 热点原因 + 北向 |
+| `sina_option` | 期权 | ETF 期权 codes/tquote/greeks |
+| `sina_finance` | 财报 | 新浪财报三表 |
+| `cninfo` | 公告 | 巨潮公告 + 互动易 |
+| `cls_telegraph` | 新闻 | 财联社电报 |
+| `legulegu` | 估值 | 全市场 PE/PB 历史 |
+| `chip` | 筹码 | 筹码分布 |
+| `docs` | 文档 | 公告/研报 PDF 原文下载 |
+
+CLI 的 9 大类 × 子命令是这 21 能力的细粒度映射（见 `asgk --list`）。
+
+## 缓存档位（服务端侧）
 
 | 档位 | 默认策略 | 典型数据 |
 |------|----------|----------|
@@ -49,18 +79,15 @@ asgk 发送 GET 请求到 `ASGK_GW`，并使用以下约定：
 | R | 不做跨时刻缓存 | 行情、K 线、资金流等实时数据 |
 | N | 不缓存 | 新闻、电报等流式数据 |
 
-部署方可以调整具体 TTL，但必须保持实时性从 P/L/S 到 R/N 逐步增强的语义。没有
-合法 `X-Cache-Tier` 时应采用不缓存的保守策略。
+缓存档位由服务端能力声明（`@capability(cache_policy=...)`），CLI 侧无需关心。
 
-## 并发与故障保护
+## 并发与故障保护（服务端侧）
 
-共享网关至少应提供：
+asgk-server 提供：
 
 - 按来源组的全局限流和随机抖动；东财建议不超过 1 req/s。
 - 相同请求的 single-flight 合并，避免并发缓存未命中形成流量尖峰。
 - 403/429 触发来源级熔断；冷却期只读缓存，恢复时只放行一个 canary。
-- 公共缓存身份剔除 Cookie、CSRF、Referer 和声明为动态的 query 字段。
-- 日志不得记录敏感请求头、凭据或用户私有响应。
+- 403/429 立即熔断（家庭 IP 无法快速更换）。
 
-真实风控源不得用于并发压测。并发、熔断、缓存身份和恢复流程应使用 mock 或
-replay 上游验证。
+主源被封的降级策略见 [failover](failover.md)。

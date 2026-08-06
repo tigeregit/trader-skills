@@ -1,0 +1,57 @@
+name: tests
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  # 能力代理服务端测试（新架构主契约）：能力注册 + 流量内核 + 缓存 + 各能力。
+  asgk-server:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.10.6"
+
+      - name: Run asgk-server tests
+        run: uv run --project packages/asgk-server pytest packages/asgk-server/tests -q
+
+  # asgk 客户端测试：业务函数 + 格式化层 + CLI + 路由回退。
+  asgk-client:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.10.6"
+
+      - name: Run asgk client tests
+        run: uv run --project skills/a-stock-data/scripts pytest asgk -q
+
+  # sgw 端点对账（旧路径回退契约，sgw 已 DEPRECATED，保留至迁移完成删除）。
+  sgw-inventory:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.10.6"
+
+      - name: Verify classified gateway endpoints
+        run: >-
+          uv run --frozen --project packages/sgw pytest
+          packages/sgw/tests/test_endpoint_inventory.py -q

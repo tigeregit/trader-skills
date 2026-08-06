@@ -13,24 +13,18 @@
 
 ## 调用示例
 
-```python
-from asgk import eastmoney_stock_info, sina_financial_report, mootdx_finance
-
-# 个股基本面
-info = eastmoney_stock_info("600519")
-print(f"{info['name']} 行业:{info['industry']} 总市值:{info['mcap']/1e8:.0f}亿")
+```bash
+# 个股基本面（行业/总市值等）
+asgk base info 600519
 
 # 财报三表（利润表/资产负债表/现金流量表）
-lrb = sina_financial_report("600519", "lrb", num=4)  # "lrb"/"fzb"/"llb"
-for item in lrb:
-    print(f"{item['报告期']} 净利润:{item.get('净利润','')}")
+asgk base report 600519 --report-type lrb --num 4   # lrb=利润 / zcfzb=资产负债 / xjll=现金流
 
-# mootdx 财务快照
-fin = mootdx_finance("600519")
-print(f"总股本:{fin.get('zongguben')}")
+# mootdx 财务快照（季报快照 37 字段，含总股本 zongguben）
+asgk base finance 600519
 ```
 
 ## 注意
 - mootdx 需国内网络（TCP 7709）。
-- `sina_financial_report` 的 report_type：`lrb`=利润表，`fzb`=资产负债表，`llb`=现金流量表。
+- `sina_financial_report` 的 report_type：`lrb`=利润表，`zcfzb`=资产负债表，`xjll`=现金流量表。
 - F10 的 "股东研究" 类目含大量历史数据（16000+ chars），可截断节省 token。

@@ -12,27 +12,19 @@
 
 ## 调用示例
 
-```python
-from asgk import mgmt_trade, repurchase, institute_research
-
+```bash
 # 高管增减持（全市场，无参数）
-trades = mgmt_trade()
-print(f"今日变动{len(trades)}条")
-for t in trades[:3]:
-    sign = "增持" if t["change_shares"] > 0 else "减持"
-    print(f"  {t['name']} {t['person']}({t['position']}) {sign}{abs(t['change_shares'])}股 均价{t['avg_price']}")
+asgk event mgmt --format json
+# 返回 [{name, person, position, change_shares, avg_price, ...}]
+# change_shares>0 增持，<0 减持
 
 # 股票回购（全市场）
-reps = repurchase()
-ongoing = [r for r in reps if r["progress"] == "实施中"]
-print(f"实施中回购{len(ongoing)}家")
-for r in ongoing[:3]:
-    print(f"  {r['name']} 计划{r['plan_amt_lower']/1e8:.1f}~{r['plan_amt_upper']/1e8:.1f}亿 已回购{r['done_amt'] or 0}")
+asgk event repo --format json
+# 返回 [{name, progress, plan_amt_lower, plan_amt_upper, done_amt, ...}]
 
-# 机构调研（指定日期之后）
-research = institute_research("20241201")
-for r in research[:3]:
-    print(f"  {r['name']} {r['receive_date']} {r['receive_object']}({r['org_type']}) @ {r['receive_place']}")
+# 机构调研（指定起始日期之后）
+asgk event research 2024-12-01 --format json
+# 返回 [{name, receive_date, receive_object, org_type, receive_place, ...}]
 ```
 
 ## 注意

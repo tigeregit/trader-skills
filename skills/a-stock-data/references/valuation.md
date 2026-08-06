@@ -13,19 +13,17 @@
 
 ## 调用示例
 
-```python
-from asgk import forward_pe, calc_peg, full_valuation
+```bash
+# 纯计算（不调服务端，本地直接算）
+asgk report fwd_pe 100 5            # 远期PE = 股价/EPS，返回 {forward_pe: 20.0}
+asgk report digest 60 0.3           # 60x消化到30x需几年，返回 {years: ...}
+asgk report digest 60 0.3 --target-pe 25
+asgk report peg 60 0.3              # PEG = PE/(CAGR*100)，返回 {peg: 2.0}
 
-# 纯计算
-print(forward_pe(100, 5))         # 20.0
-print(pe_digestion(60, 0.3))      # ~2.6年（60x消化到30x）
-print(calc_peg(60, 0.3))          # 2.0
-
-# 单票完整估值（一步到位）
-v = full_valuation("600519")
-print(v)
-# {name, price, pe_ttm, pb, mcap_yi, eps_cur, eps_next,
-#  pe_fwd, cagr_pct, peg, digest_years, analyst_count}
+# 单票完整估值（一步到位，经服务端串联行情+EPS）
+asgk report valuation 600519 --format json
+# 返回 {name, price, pe_ttm, pb, mcap_yi, eps_cur, eps_next,
+#       pe_fwd, cagr_pct, peg, digest_years, analyst_count}
 ```
 
 ## 投资框架速查

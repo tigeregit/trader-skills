@@ -127,7 +127,7 @@ class TestGroupOfRegression:
 
     def test_non_proxied_domain_rejected(self):
         g = _make_gateway()
-        assert g.group_of("legulegu.com") is None
+        assert g.group_of("random.example.com") is None
 
     # ── exchange 组（非后缀源，第二层 exact-host 归组）──
     def test_szse_routable_via_exchange_group(self):
@@ -154,6 +154,30 @@ class TestGroupOfRegression:
         """AKP-EARN-001/002 业绩用的 host（datacenter.eastmoney.com）。"""
         g = _make_gateway()
         assert g.group_of("datacenter.eastmoney.com") == "eastmoney"
+
+    # ── 腾讯/新浪/财联归组（风控核实后经网关）──
+    def test_tencent_routable(self):
+        g = _make_gateway()
+        assert g.group_of("qt.gtimg.cn") == "tencent"
+
+    def test_sina_routable(self):
+        g = _make_gateway()
+        assert g.group_of("hq.sinajs.cn") == "sina"
+        assert g.group_of("quotes.sina.cn") == "sina"
+        assert g.group_of("stock.finance.sina.com.cn") == "sina"
+
+    def test_cls_routable(self):
+        g = _make_gateway()
+        assert g.group_of("www.cls.cn") == "cls"
+
+    def test_cninfo_routable(self):
+        g = _make_gateway()
+        assert g.group_of("www.cninfo.com.cn") == "cninfo"
+        assert g.group_of("irm.cninfo.com.cn") == "cninfo"
+
+    def test_baidu_routable(self):
+        g = _make_gateway()
+        assert g.group_of("finance.pae.baidu.com") == "baidu"
 
     def test_push2_unnumbered_routable(self):
         """AKP-BOARD 板块接口主用无编号 push2（已归组，回归确认）。"""

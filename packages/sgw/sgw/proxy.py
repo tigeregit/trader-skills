@@ -35,8 +35,17 @@ import requests
 HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = HERE / "config.toml"
 
-# 东财/同花顺等风控源走网关；其余(腾讯/百度/新浪/mootdx-TCP)直连不经网关
-PROXIED_DOMAIN_SUFFIXES = (".eastmoney.com", ".10jqka.com.cn")
+# 风控源走网关。腾讯/新浪/财联经资料核实均有 IP 风控(data-source-risk-control.md)，
+# .hexin.cn 与 .10jqka.com.cn 同属同花顺系、共用 hexin-v 风控，故一并经网关。
+# 注：百度(.baidu.com)需网关支持 curl_cffi 指纹出网，单列处理；mootdx 走 TCP 单列。
+PROXIED_DOMAIN_SUFFIXES = (
+    ".eastmoney.com", ".10jqka.com.cn", ".hexin.cn",
+    ".gtimg.cn",             # 腾讯 qt.gtimg.cn 实时行情
+    ".sina.cn", ".sinajs.cn",  # 新浪行情/财报/期权
+    ".cls.cn",               # 财联社电报
+    ".cninfo.com.cn",        # 巨潮公告/互动易
+    ".baidu.com",            # 百度股市通(需 curl_cffi 指纹)
+)
 
 # 允许从客户端透传到上游的请求头白名单（hop-by-hop/敏感头一律不透传）。
 # 覆盖深交所 Referer、同花顺 hexin-v(Cookie)、乐咕 CSRF、东财 Accept 等需求。
@@ -103,6 +112,7 @@ class EndpointPolicy:
     cache_mode: str
     credential_params: frozenset[str]
     identity_ignored_params: frozenset[str]
+    egress_client: str  # "requests"(默认) / "curl_cffi"(带 Chrome TLS 指纹出网)
 
     @classmethod
     def from_config(cls, raw: dict) -> "EndpointPolicy":
@@ -120,6 +130,7 @@ class EndpointPolicy:
             credential_mode=raw["credential_mode"], cache_mode=raw["cache_mode"],
             credential_params=frozenset(raw.get("credential_params", [])),
             identity_ignored_params=frozenset(raw.get("identity_ignored_params", [])),
+            egress_client=raw.get("egress_client", "requests"),
         )
         policy.validate()
         return policy
@@ -1032,7 +1043,9 @@ class Gateway:
 
     # ── 核心请求处理 ──
     def handle(self, target_url: str, params: dict, tier_header: Optional[str],
-               client_headers: dict | None = None) -> tuple[int, bytes, dict]:
+               client_headers: dict | None = None, *,
+               method: str = "GET", body: dict | None = None,
+               body_type: str = "json") -> tuple[int, bytes, dict]:
         parsed = urlparse(target_url)
         host = parsed.hostname or ""
         if parsed.scheme not in ("http", "https") or parsed.username or parsed.password:
@@ -1085,6 +1098,13 @@ class Gateway:
         # 必须含 params，否则不同股票/日期/页码会串缓存
         ignored_params = set(policy.credential_params | policy.identity_ignored_params)
         cache_key = f"{tier}|{_canonical_url(target_url, params, header_key_parts, ignored_params)}"
+        # POST body 必须进入 key：否则不同 body（不同 top/不同股票）会串缓存。
+        # 用稳定的 json 排序哈希，避免 body 字段顺序差异制造缓存碎片。
+        if method == "POST" and body:
+            body_hash = hashlib.md5(
+                json.dumps(body, sort_keys=True, ensure_ascii=False).encode()
+            ).hexdigest()
+            cache_key = f"{cache_key}|body={body_hash}"
         cached = self.cache.get(cache_key) if ttl > 0 else None
         if cached:
             body, headers = cached
@@ -1112,16 +1132,37 @@ class Gateway:
         result: tuple[int, bytes, dict]
         try:
             result = self._fetch_upstream(
-                target_url, params, fwd_headers, policy, group, tier, ttl, cache_key
+                target_url, params, fwd_headers, policy, group, tier, ttl, cache_key,
+                method=method, body=body, body_type=body_type,
             )
         except Exception:
             result = (502, b'{"error":"gateway internal upstream failure"}', {"X-Cache-Tier": tier})
         self.singleflight.finish(cache_key, flight, result)
         return result
 
+    def _egress_request(self, method: str, policy: EndpointPolicy,
+                        url: str, **kwargs) -> "requests.Response":
+        """按 endpoint 的 egress_client 选出网客户端。
+
+        - requests(默认)：标准 requests，适用于绝大多数源。用 .get/.post
+          （非 .request）以保持与现有测试 mock 点(sgw.proxy.requests.get/post)一致。
+        - curl_cffi：带 Chrome TLS 指纹(impersonate=chrome)，用于有协议栈风控的源(百度)。
+          curl_cffi 的 RequestsError 继承 requests.RequestException，异常处理兼容。
+        """
+        kwargs.setdefault("timeout", 15)
+        if policy.egress_client == "curl_cffi":
+            from curl_cffi import requests as curl_requests
+            kwargs["impersonate"] = "chrome"
+            return curl_requests.request(method, url, **kwargs)
+        # requests 路径用具名方法（get/post），便于测试 mock 且语义清晰
+        fn = requests.get if method == "get" else requests.post
+        return fn(url, **kwargs)
+
     def _fetch_upstream(self, target_url: str, params: dict, fwd_headers: dict,
                         policy: EndpointPolicy, group: str, tier: str, ttl: int,
-                        cache_key: str) -> tuple[int, bytes, dict]:
+                        cache_key: str, *, method: str = "GET",
+                        body: dict | None = None,
+                        body_type: str = "json") -> tuple[int, bytes, dict]:
         if self.state_manager is not None:
             allowed, recovered_states = self.state_manager.before_egress()
             if recovered_states:
@@ -1144,7 +1185,17 @@ class Gateway:
                 return 503, b'{"error":"source circuit open; cache only"}', {"X-Cache-Tier": tier}
             self.group_reqs[group] += 1
             try:
-                r = requests.get(request_url, headers=fwd_headers, timeout=15)
+                if method == "POST" and body is not None:
+                    if body_type == "form":
+                        # form-encoded POST（巨潮公告/互动易等）
+                        r = self._egress_request("post", policy, request_url,
+                                                 data=body, headers=fwd_headers)
+                    else:
+                        # JSON POST（东财人气榜/概念等）
+                        r = self._egress_request("post", policy, request_url,
+                                                 json=body, headers=fwd_headers)
+                else:
+                    r = self._egress_request("get", policy, request_url, headers=fwd_headers)
                 if r.status_code in (403, 429):
                     # 家庭 IP 不可更换：首次风控信号立即全来源熔断且不重试。
                     circuit.failure(immediate=True, status=r.status_code)
@@ -1159,6 +1210,7 @@ class Gateway:
                     continue
                 # 成功
                 circuit.success()
+                # cache 只存 Content-Type（不含 Set-Cookie，避免会话 cookie 跨 agent 泄漏）
                 resp_headers = {"Content-Type": r.headers.get("Content-Type", "application/json")}
                 if ttl > 0:
                     self.cache.set(cache_key, r.content, resp_headers, ttl, tier)
@@ -1246,6 +1298,60 @@ def make_handler(gateway: Gateway):
             self.send_header("Content-Length", str(len(body)))
             self.end_headers()
             self.wfile.write(body)
+
+        def do_POST(self):
+            parsed = urlparse(self.path)
+            qs = parse_qs(parsed.query)
+
+            # POST 透明代理：u=原始URL，query 参数仍走 ?k=v，body 在请求体
+            target_url = qs.get("u", [None])[0]
+            if not target_url:
+                self.send_response(400)
+                self.send_header("Content-Type", "application/json")
+                self.end_headers()
+                self.wfile.write(b'{"error":"missing ?u=<url>"}')
+                return
+            params = {k: v[0] for k, v in qs.items() if k != "u"}
+            tier = self.headers.get("X-Cache-Tier")
+            client_headers = {k: v for k, v in self.headers.items()}
+            length = int(self.headers.get("Content-Length") or 0)
+            raw = self.rfile.read(length) if length > 0 else b""
+            ctype = (self.headers.get("Content-Type") or "").lower()
+
+            if "application/x-www-form-urlencoded" in ctype:
+                # form-encoded POST（巨潮公告/互动易等）：parse_qs 解析成 dict
+                post_body = {k: v[-1] for k, v in parse_qs(raw.decode("utf-8")).items()} if raw else {}
+                status, resp_body, headers = gateway.handle(
+                    target_url, params, tier, client_headers,
+                    method="POST", body=post_body, body_type="form",
+                )
+            else:
+                # JSON POST（东财人气榜/概念等）
+                try:
+                    post_body = json.loads(raw) if raw else None
+                except (ValueError, json.JSONDecodeError):
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"POST body must be valid JSON"}')
+                    return
+                if post_body is not None and not isinstance(post_body, dict):
+                    self.send_response(400)
+                    self.send_header("Content-Type", "application/json")
+                    self.end_headers()
+                    self.wfile.write(b'{"error":"POST body must be a JSON object"}')
+                    return
+                status, resp_body, headers = gateway.handle(
+                    target_url, params, tier, client_headers,
+                    method="POST", body=post_body, body_type="json",
+                )
+
+            self.send_response(status)
+            for k, v in headers.items():
+                self.send_header(k, v)
+            self.send_header("Content-Length", str(len(resp_body)))
+            self.end_headers()
+            self.wfile.write(resp_body)
 
     return Handler
 

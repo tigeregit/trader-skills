@@ -1,0 +1,12 @@
+# asgk CLI 默认配置（随包安装）。
+#
+# 服务端地址解析优先级（见 cli/config.py resolve_server）：
+#   1. 环境变量 ASGK_SERVER（最高）
+#   2. ~/.config/asgk/cli.toml（service 脚本 install 时自动生成）
+#   3. 本文件（包内默认）
+#
+# 自定义：复制本文件到 ~/.config/asgk/cli.toml 后改 url。
+# 或直接 export ASGK_SERVER=http://your-host:port 覆盖一切。
+
+[server]
+url = "http://127.0.0.1:7701"

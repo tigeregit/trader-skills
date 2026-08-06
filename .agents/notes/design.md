@@ -1,5 +1,15 @@
 # a-stock-data 转化设计
 
+> **架构已演进**：本文描述的「三轴重构」（拆分加载 / 流量网关 / 代码沉淀）是 P0-P4
+> 阶段的方案，基于 **sgw 透明网关**。该方案已被 **能力代理**（`packages/asgk-server`）
+> 取代——服务端持有全部上游知识，客户端零上游知识。新架构的权威设计见
+> [capability-proxy-design.md](capability-proxy-design.md)，迁移计划见
+> [capability-proxy-plan.md](capability-proxy-plan.md)。
+>
+> 本文档保留作历史背景；其中关于「流量网关」（sgw）的方案描述已被
+> `gateway-design.md` 细化，而 `gateway-design.md` 本身也已被能力代理取代
+> （sgw DEPRECATED）。
+
 将 `ref/a-stock-data`（上游 A 股数据工具包）转化为符合本项目部署场景的 skill。
 
 - 上游形态：单文件 `SKILL.md`（127KB / 2815 行），10 层 43 端点 15 数据源。

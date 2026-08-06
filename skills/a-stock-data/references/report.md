@@ -12,17 +12,18 @@
 
 ## 调用示例
 
-```python
-from asgk import eastmoney_reports, ths_eps_forecast
-
+```bash
 # 个股研报
-reports = eastmoney_reports("600519", max_pages=1)
-for r in reports[:3]:
-    print(f"{r['publishDate'][:10]} {r['orgSName']} {r['emRatingName']} EPS预测:{r.get('predictThisYearEps')}")
+asgk report list 600519 --max-pages 1 --format json
+# 返回 [{publishDate, orgSName, emRatingName, predictThisYearEps, infoCode, ...}]
+# infoCode 用于下载研报 PDF 原文（见 docs 层）
+
+# 行业研报（industry_code 用 * 拉一批，或从结果反查具体行业码）
+asgk report industry --industry-code '*' --max-pages 1
 
 # 一致预期EPS（估值用）
-eps = ths_eps_forecast("600519")
-# [{'年度':2026, '预测机构数':46, '均值':68.75, ...}, ...]
+asgk report eps 600519 --format json
+# [{'年度':2026, '预测机构数':46, '均值':68.75, ...}]
 # "均值" = 机构一致预期EPS，机构数<3 要谨慎
 ```
 
@@ -32,4 +33,4 @@ title / publishDate / orgSName(机构) / infoCode(拼PDF) / predictThisYearEps /
 ## 注意
 - 研报是**事件定稿型**（P档30天缓存），发布即不变。
 - 行业码无公开码表，用 `industry_code="*"` 拉一批从结果反查。
-- 前置：`export ASGK_GW=http://localhost:7700` 让请求走网关。
+- 前置：CLI 需能连上 asgk-server（见 [gateway](gateway.md) 配置）。

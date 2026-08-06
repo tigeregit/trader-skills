@@ -11,22 +11,14 @@
 
 ## 调用示例
 
-```python
-from asgk import market_pe_lg, market_pb_lg
-
-# 上证 PE 历史
-pe = market_pe_lg("上证")  # 1999 年至今
-print(f"上证PE历史{len(pe)}条")
-latest = pe[-1]
-print(f"  {latest['date']} 指数{latest['close']} PE{latest['pe']}")
-# 当前 PE 处于历史分位？
-pe_vals = [p['pe'] for p in pe if p['pe']]
-pct = sum(1 for v in pe_vals if v < latest['pe']) / len(pe_vals)
-print(f"  当前 PE 历史分位: {pct:.0%}")
+```bash
+# 上证 PE 历史（1999 年至今）
+asgk base pe_hist --market 上证 --format json
+# 返回 [{date, close, pe, ...}]，最后一条即最新
 
 # 创业板 PB 历史
-pb = market_pb_lg("创业板")
-print(f"创业板PB{len(pb)}条，最新{pb[-1]['pb']}")
+asgk base pb_hist --market 创业板 --format json
+# 返回 [{date, close, pb, ...}]
 ```
 
 ## 注意

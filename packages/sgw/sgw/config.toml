@@ -8,6 +8,9 @@ port = 7700
 # ── 按域名组限流（§3.3）──────────────────────────────────────
 # 每组独立令牌桶：rps=每秒请求数，jitter=随机抖动区间(秒)
 # 全局串行：所有 agent 进程共享这一个网关出口，令牌桶在网关进程内
+# rps 取值规则：社区保守安全水位 × 1.5（data-source-risk-control.md 调研）。
+#   保守值 = 社区资料中"稳定运行"的推荐频率（非封禁阈值）；×1.5 在吞吐与
+#   安全间取衡，仍远低于各源封禁线（普遍 ≥5 req/s）。
 [[group]]
 name = "eastmoney"
 domains = [
@@ -18,16 +21,19 @@ domains = [
     "quote.eastmoney.com", "so.eastmoney.com",
     "search-api-web.eastmoney.com", "np-weblist.eastmoney.com",
 ]
-rps = 1.0          # 对齐上游 EM_MIN_INTERVAL=1.0
+rps = 1.5          # 保守1.0(EM_MIN_INTERVAL客户端逆向值) ×1.5
 jitter = [0.1, 0.5]
 
+# 同花顺组：10jqka.com.cn 与 hexin.cn 同属同花顺系、共用 hexin-v 风控体系，
+# 一处被封会连累全系成片失联，故共用同一令牌桶串行限流。
 [[group]]
 name = "10jqka"
 domains = [
     "basic.10jqka.com.cn", "data.10jqka.com.cn",
     "zx.10jqka.com.cn", "dq.10jqka.com.cn",
+    "data.hexin.cn",
 ]
-rps = 1.5
+rps = 0.75         # 保守0.5(data.10jqka约5页封,社区2-3s间隔) ×1.5
 jitter = [0.1, 0.4]
 
 # ── 交易所源（独立组，与东财不同风控面）──────────────────────
@@ -37,8 +43,43 @@ name = "exchange"
 domains = [
     "www.szse.cn", "query.sse.com.cn",
 ]
-rps = 0.5          # 交易所更保守（2秒1次）
+rps = 0.15         # 保守0.1(§7验证3次间隔10s) ×1.5
 jitter = [0.5, 1.0]
+
+# ── 腾讯实时行情（qt.gtimg.cn，GBK 文本）──────────────────────
+[[group]]
+name = "tencent"
+domains = ["qt.gtimg.cn"]
+rps = 1.5          # 保守1.0(社区低频策略间隔0.5-1秒) ×1.5
+jitter = [0.1, 0.5]
+
+# ── 新浪（行情 hq.sinajs.cn / 财报 quotes.sina.cn / 期权 stock.finance.sina.com.cn）──
+[[group]]
+name = "sina"
+domains = ["hq.sinajs.cn", "quotes.sina.cn", "stock.finance.sina.com.cn"]
+rps = 0.375        # 保守0.25(akshare#5762 sleep(4)才稳定) ×1.5
+jitter = [0.1, 0.5]
+
+# ── 财联社电报（cls.cn，N 档流式 no-cache）──────────────────────
+[[group]]
+name = "cls"
+domains = ["www.cls.cn"]
+rps = 0.15         # 保守0.1(社区间隔≥10-30s) ×1.5
+jitter = [0.1, 0.5]
+
+# ── 巨潮资讯（cninfo.com.cn，公告+互动易，深交所官方）──────────
+[[group]]
+name = "cninfo"
+domains = ["www.cninfo.com.cn", "irm.cninfo.com.cn"]
+rps = 0.5          # 保守0.33(社区间隔≥0.5~3秒) ×1.5
+jitter = [0.5, 1.0]
+
+# ── 百度股市通（finance.pae.baidu.com，需 curl_cffi Chrome 指纹出网）──
+[[group]]
+name = "baidu"
+domains = ["finance.pae.baidu.com"]
+rps = 3.0          # 保守2.0(社区"数QPS~数十QPS相对安全"下限) ×1.5
+jitter = [0.3, 0.8]
 
 # ── 端点策略（准入 / IP 风险 / 响应作用域三轴正交）──────────
 # 未匹配端点一律 unknown 并拒绝，不能仅因 host 已归组就出网。
@@ -157,6 +198,27 @@ credential_mode = "none"
 cache_mode = "shared"
 identity_ignored_params = ["req_trace"]
 
+# 人气榜/个股热门概念（POST+JSON，body 进 cache key，见 proxy.handle）
+[[endpoint]]
+name = "eastmoney-hot-rank"
+host = "emappdata.eastmoney.com"
+path = "/stockrank/getAllCurrentList"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "eastmoney-hot-concept"
+host = "emappdata.eastmoney.com"
+path = "/stockrank/getHotStockRankList"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
 [[endpoint]]
 name = "eastmoney-top10-holders"
 host = "emweb.securities.eastmoney.com"
@@ -260,6 +322,123 @@ ip_risk = "controlled"
 response_scope = "public"
 credential_mode = "none"
 cache_mode = "shared"
+
+# 北向资金实时流向（data.hexin.cn，同花顺系，与 10jqka 共用风控）
+[[endpoint]]
+name = "hexin-hsgt-daychart"
+host = "data.hexin.cn"
+path = "/market/hsgtApi/method/dayChart/"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 腾讯实时行情（qt.gtimg.cn，GBK 文本，R 档）──────────────────
+[[endpoint]]
+name = "tencent-quote"
+host = "qt.gtimg.cn"
+path = "/q"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 新浪行情/财报/期权（GBK/JSON，Referer 经白名单透传）──────────
+[[endpoint]]
+name = "sina-hq-list"
+host = "hq.sinajs.cn"
+path = "/list"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "sina-financial-report"
+host = "quotes.sina.cn"
+path = "/cn/api/openapi.php/CompanyFinanceService.getFinanceReport2022"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "sina-option-codes"
+host = "stock.finance.sina.com.cn"
+path = "/futures/api/openapi.php/StockOptionService.getStockName"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 财联社电报（cls.cn，N 档 no-cache，签名由调用方算好放 query）──
+[[endpoint]]
+name = "cls-telegraph"
+host = "www.cls.cn"
+path = "/v1/roll/get_roll_list"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 巨潮公告/互动易（cninfo.com.cn，POST form，P 档）──────────
+[[endpoint]]
+name = "cninfo-announcement-query"
+host = "www.cninfo.com.cn"
+path = "/new/hisAnnouncement/query"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "cninfo-szse-stock-list"
+host = "www.cninfo.com.cn"
+path = "/new/data/szse_stock.json"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "cninfo-irm-keyboard"
+host = "irm.cninfo.com.cn"
+path = "/newircs/index/queryKeyboardInfo"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+[[endpoint]]
+name = "cninfo-irm-question"
+host = "irm.cninfo.com.cn"
+path = "/newircs/company/question"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+
+# ── 百度股市通K线（finance.pae.baidu.com，curl_cffi Chrome 指纹出网，R 档）──
+[[endpoint]]
+name = "baidu-stock-quotation"
+host = "finance.pae.baidu.com"
+path = "/selfselect/getstockquotation"
+review_status = "approved"
+ip_risk = "controlled"
+response_scope = "public"
+credential_mode = "none"
+cache_mode = "shared"
+egress_client = "curl_cffi"
 
 [[endpoint]]
 name = "szse-margin"

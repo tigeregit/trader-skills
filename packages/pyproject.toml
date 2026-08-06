@@ -2,4 +2,4 @@
 # 每个包独立部署（如 sgw 网关服务所有 skill 的风控源）。
 # 未来可加更多共享包（如 trader 交易库）。
 [tool.uv.workspace]
-members = ["sgw"]
+members = ["sgw", "asgk-server"]

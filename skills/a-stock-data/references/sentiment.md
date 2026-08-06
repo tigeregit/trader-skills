@@ -13,25 +13,21 @@
 
 ## 调用示例
 
-```python
-from asgk import cninfo_irm, ths_hot_list, em_hot_concept
-
+```bash
 # 互动易（看公司怎么回应投资者）
-irm = cninfo_irm("002594", page_size=5)
-for q in irm:
-    if q["answer"]:
-        print(f"Q: {q['question'][:30]} A[{q['answerer']}]: {q['answer'][:50]}")
+asgk event irm 002594 --page-size 5 --format json
+# 返回 [{question, answer, answerer, ...}]，answer=None 表示未回复
 
-# 同花顺热榜
-hot = ths_hot_list(period="hour")  # "hour"/"day"
-print(f"TOP1: {hot[0]['name']} 热度{hot[0]['heat']}")
+# 同花顺热榜（period: hour/day）
+asgk news hot_list --period hour
+# 返回 [{name, heat, ...}]，第一条即 TOP1
 
 # 个股概念命中
-hc = em_hot_concept("600519")
-print([c["concept"] for c in hc[:3]])  # ['白酒', ...]
+asgk news concept 600519 --format json
+# 返回 [{concept, ...}]，如 ['白酒', ...]
 ```
 
 ## 注意
 - 互动易最新提问常未回复（answer=None），回复率因公司而异。
-- `em_hot_rank`/`em_hot_concept` 是 POST+JSON（em_get 只支持GET，故直连）。
+- `em_hot_rank`/`em_hot_concept` 是 POST+JSON 请求（服务端 egress 处理）。
 - 同花顺热榜 `period`：`hour`=小时榜，`day`=日榜。

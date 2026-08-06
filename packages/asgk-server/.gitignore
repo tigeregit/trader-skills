@@ -1,0 +1,13 @@
+# 运行时产物（状态/缓存/日志，由 systemd 或 --state-dir 等指定目录）
+/asgk_server/state/
+/asgk_server/cache/
+/asgk_server/logs/
+
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+.pytest_cache/
+
+# uv
+.venv/
