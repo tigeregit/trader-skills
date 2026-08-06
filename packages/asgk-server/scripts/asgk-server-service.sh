@@ -27,26 +27,33 @@ SERVER_FP_DIR="${SERVER_FP_DIR:-$SERVER_WORK_DIR/fingerprints}"
 SERVER_CACHE_DIR="${SERVER_CACHE_DIR:-$SERVER_WORK_DIR/cache}"
 SERVER_STATE_DIR="${SERVER_STATE_DIR:-$SERVER_WORK_DIR/state}"
 
+# 后台模式（无 systemd 时使用）的状态文件
+BG_PID_FILE="$SERVICE_HOME/bg.pid"
+BG_LOG_FILE="$SERVICE_HOME/server.log"
+BG_LOCK_FILE="$SERVICE_HOME/bg.lock"
+
 usage() {
     cat <<'EOF'
 Usage: asgk-server-service.sh <command>
 
 Commands:
-  install    Install asgk-server globally with uv tool (installs BOTH asgk-server
-             and asgk CLI binaries), write ~/.config/asgk/cli.toml, enable the unit
-  run        Start the systemd user service
-  stop       Stop the systemd user service
-  restart    Restart the systemd user service
-  status     Show service status
-  uninstall  Remove the unit and uv tool; keep the service work directory
+  install      Install asgk-server + asgk CLI (uv tool), write cli.toml, start server.
+               Auto-detects backend: systemd user service (Linux) or background mode.
+  start        Start the server (auto-dispatch to systemd or background mode)
+  stop         Stop the server
+  restart      Restart the server
+  status       Show server status
+  logs         Tail server logs (background mode: tail bg log; systemd: journalctl)
+  uninstall    Remove the unit/uv tool/background process; keep the work directory
 
-Optional environment variables used by install:
+Backend selection (auto on install, can override with ASGK_BACKEND env):
+  ASGK_BACKEND=systemd   use systemd user service (default when available)
+  ASGK_BACKEND=background  use nohup background process (macOS/WSL/containers)
+
+Optional environment variables:
   UV_BIN, SERVER_WORK_DIR
   SERVER_HOST, SERVER_PORT, SERVER_FP_DIR, SERVER_CACHE_DIR, SERVER_STATE_DIR
-
-Manual management after install:
-  systemctl --user start|stop|restart|status asgk-server.service
-  journalctl --user-unit asgk-server.service -f
+  ASGK_BACKEND  force backend selection (systemd|background)
 
 After install, two binaries are available in ~/.local/bin/:
   asgk-server   the capability proxy server (this service)
@@ -157,18 +164,170 @@ install_service() {
     cli_bin="$tool_bin_dir/asgk"
     [[ -x "$server_bin" ]] || die "uv installed asgk-server but binary not found at $server_bin"
     [[ -x "$cli_bin" ]] || die "uv installed asgk-server but asgk CLI binary not found at $cli_bin"
-    write_unit "$server_bin"
+
+    detect_backend
     write_cli_config
-    systemctl --user daemon-reload
-    systemctl --user enable "$UNIT_NAME"
-    printf 'Installed and enabled %s.\n' "$UNIT_NAME"
+    mkdir -p "$SERVER_WORK_DIR" "$SERVER_FP_DIR" "$SERVER_CACHE_DIR" "$SERVER_STATE_DIR"
+
+    if [[ "$ASGK_BACKEND" == "systemd" ]]; then
+        write_unit "$server_bin"
+        systemctl --user daemon-reload
+        systemctl --user enable "$UNIT_NAME"
+        systemctl --user start "$UNIT_NAME"
+        printf 'Installed and started %s (systemd backend).\n' "$UNIT_NAME"
+    else
+        start_bg "$server_bin"
+        printf 'Installed and started server (background backend).\n'
+    fi
     printf 'Service work directory: %s\n' "$SERVER_WORK_DIR"
+    printf 'Backend: %s\n' "$ASGK_BACKEND"
     printf 'Binaries installed:\n  %s   (server)\n  %s   (CLI)\n' "$server_bin" "$cli_bin"
     printf 'CLI config written: %s\n' "$CLI_CONFIG_PATH"
-    printf 'Start it with: %s run\n' "$0"
-    printf 'Manual command: systemctl --user start %s\n' "$UNIT_NAME"
     printf '\nThe asgk CLI auto-finds this server via %s.\n' "$CLI_CONFIG_PATH"
     printf 'Or override per-shell: export ASGK_SERVER=http://%s:%s\n' "$SERVER_HOST" "$SERVER_PORT"
+}
+
+# ── 后端检测：systemd 优先，否则 background ──────────────────
+detect_backend() {
+    if [[ -n "${ASGK_BACKEND:-}" ]]; then
+        [[ "$ASGK_BACKEND" == "systemd" || "$ASGK_BACKEND" == "background" ]] ||
+            die "ASGK_BACKEND must be 'systemd' or 'background', got: $ASGK_BACKEND"
+        return
+    fi
+    if [[ "$(uname -s)" == "Linux" ]] && command -v systemctl >/dev/null 2>&1 \
+       && systemctl --user show-environment >/dev/null 2>&1; then
+        ASGK_BACKEND="systemd"
+    else
+        ASGK_BACKEND="background"
+    fi
+}
+
+# ── 后台模式（nohup + 单例锁，无 systemd 时使用）──────────────
+#
+# 单例保障（防止多开）：
+#   1. BG_PID_FILE 记录上次启动的 PID；启动前检查该 PID 是否仍存活。
+#   2. flock BG_LOCK_FILE 作为互斥锁，串行化 start-bg（防并发启动竞态）。
+#   3. 端口探活：即使 PID 文件丢失，启动前也探测端口是否已被占用。
+# 三重保护确保「同一台机器上只有一个 server 实例」。
+
+_bg_pid_alive() {
+    # 检查 BG_PID_FILE 里的 PID 是否存活且是 asgk-server 进程
+    [[ -f "$BG_PID_FILE" ]] || return 1
+    local pid
+    pid=$(cat "$BG_PID_FILE" 2>/dev/null) || return 1
+    [[ -n "$pid" ]] || return 1
+    kill -0 "$pid" 2>/dev/null || return 1
+    # 确认是 asgk-server 进程（防 PID 复用）
+    local cmdline
+    cmdline=$(cat "/proc/$pid/cmdline" 2>/dev/null | tr '\0' ' ') || true
+    [[ "$cmdline" == *asgk-server* ]] || return 1
+    echo "$pid"
+}
+
+_port_in_use() {
+    # 探测 SERVER_PORT 是否已被监听（ss/nc/lsof 任一可用）
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltn 2>/dev/null | grep -q ":${SERVER_PORT}\b"
+    elif command -v nc >/dev/null 2>&1; then
+        nc -z 127.0.0.1 "$SERVER_PORT" 2>/dev/null
+    elif command -v lsof >/dev/null 2>&1; then
+        lsof -iTCP:"$SERVER_PORT" -sTCP:LISTEN -P -n 2>/dev/null | grep -q LISTEN
+    else
+        return 1  # 无探测工具，假设未占用
+    fi
+}
+
+start_bg() {
+    # $1 = server_bin 路径。单例启动（flock 串行化 + PID/端口双重检查）。
+    #
+    # 单例保障：用 flock 对 BG_LOCK_FILE 加排他锁（非阻塞 -n，拿不到就失败），
+    # 保证同一时刻只有一个 start_bg 在执行检查+启动的临界区。锁在 fd 关闭时释放
+    # （函数末尾 exec 9>&- 显式关闭）。
+    local server_bin="$1"
+    mkdir -p "$SERVICE_HOME"
+    exec 9>"$BG_LOCK_FILE"
+    # -n 非阻塞：拿不到锁说明另一个 start 在进行，直接退出
+    if ! flock -n 9; then
+        exec 9>&-
+        die "无法获取锁 $BG_LOCK_FILE（另一个 install/start 在进行？）"
+    fi
+
+    # 1. PID 文件检查（已有运行实例 → 跳过）
+    if pid=$(_bg_pid_alive); then
+        printf 'asgk-server 已在运行（PID %s），跳过启动。\n' "$pid" >&2
+        exec 9>&-
+        return 0
+    fi
+    # 2. 端口检查（PID 文件可能丢失，但端口被占说明已在跑）
+    if _port_in_use; then
+        printf '端口 %s 已被占用，asgk-server 可能已在运行（无 PID 文件）。\n' "$SERVER_PORT" >&2
+        printf '如确认无运行实例：rm %s 后重试。\n' "$BG_PID_FILE" >&2
+        exec 9>&-
+        return 0
+    fi
+
+    # 启动（setsid nohup 脱离终端，stdout/stderr → 日志，9>&- 防止 server 继承锁 fd）
+    # 关键：若不关 fd 9，server 子进程会继承锁文件描述符，导致锁永不释放，
+    # 后续 start_bg 永远拿不到锁（误报"另一个 start 在进行"）。
+    setsid nohup "$server_bin" \
+        --host "$SERVER_HOST" --port "$SERVER_PORT" \
+        --cache-dir "$SERVER_CACHE_DIR" --state-dir "$SERVER_STATE_DIR" \
+        --fp-dir "$SERVER_FP_DIR" \
+        >>"$BG_LOG_FILE" 2>&1 9>&- &
+    local new_pid=$!
+    echo "$new_pid" > "$BG_PID_FILE"
+    printf 'asgk-server 后台启动（PID %s），日志 %s\n' "$new_pid" "$BG_LOG_FILE" >&2
+
+    # 轮询探活（最多 15s）
+    local i rc=1
+    for i in $(seq 1 15); do
+        if ! kill -0 "$new_pid" 2>/dev/null; then
+            printf 'asgk-server 进程意外退出，日志末尾：\n' >&2
+            tail -20 "$BG_LOG_FILE" >&2 || true
+            rm -f "$BG_PID_FILE"
+            exec 9>&-
+            return 1
+        fi
+        if _port_in_use; then
+            printf 'asgk-server 就绪（等待 %ss）\n' "$i" >&2
+            rc=0
+            break
+        fi
+        sleep 1
+    done
+    exec 9>&-  # 释放锁
+    if [[ $rc -ne 0 ]]; then
+        printf 'asgk-server 15s 内未就绪，查日志：%s\n' "$BG_LOG_FILE" >&2
+    fi
+    return $rc
+}
+
+stop_bg() {
+    if pid=$(_bg_pid_alive); then
+        kill -TERM "$pid" 2>/dev/null || true
+        # 等 graceful 退出（最多 5s）
+        local i
+        for i in $(seq 1 5); do
+            kill -0 "$pid" 2>/dev/null || break
+            sleep 1
+        done
+        kill -0 "$pid" 2>/dev/null && { kill -KILL "$pid" 2>/dev/null || true; }
+        printf 'asgk-server 已停止（PID %s）\n' "$pid"
+    else
+        printf 'asgk-server 未运行（无存活 PID）\n'
+    fi
+    rm -f "$BG_PID_FILE"
+}
+
+status_bg() {
+    if pid=$(_bg_pid_alive); then
+        printf 'asgk-server 正在运行（PID %s，端口 %s）\n' "$pid" "$SERVER_PORT"
+        printf '日志：%s\n' "$BG_LOG_FILE"
+        return 0
+    else
+        printf 'asgk-server 未运行\n'
+        return 3
+    fi
 }
 
 write_cli_config() {
@@ -193,12 +352,16 @@ EOF
 
 uninstall_service() {
     resolve_uv
-    if [[ -f "$UNIT_PATH" ]]; then
+    detect_backend
+    # 停掉运行中的实例（按 backend）
+    if [[ "$ASGK_BACKEND" == "systemd" ]] && [[ -f "$UNIT_PATH" ]]; then
         systemctl --user disable --now "$UNIT_NAME" >/dev/null 2>&1 || true
         rm -f "$UNIT_PATH"
         systemctl --user daemon-reload
         systemctl --user reset-failed "$UNIT_NAME" >/dev/null 2>&1 || true
     fi
+    # 后台模式：杀进程（即使 backend=systemd，也兜底杀残留后台进程）
+    stop_bg 2>/dev/null || true
     if "$UV_BIN" tool list | grep -q '^asgk-server '; then
         "$UV_BIN" tool uninstall asgk-server
     fi
@@ -208,7 +371,89 @@ uninstall_service() {
         printf 'CLI config remains (may have been hand-edited): %s\n' "$config_path"
         printf 'Remove manually if no longer needed: rm %s\n' "$config_path"
     fi
-    printf 'Uninstalled %s and its uv tool (both asgk-server + asgk binaries); service work directory was preserved.\n' "$UNIT_NAME"
+    printf 'Uninstalled asgk-server + asgk binaries; work directory preserved: %s\n' "$SERVICE_HOME"
+}
+
+# ── 统一命令派发（按已安装的 backend 自动路由）─────────────────
+_dispatch_backend() {
+    # 1. 环境变量强制（最高优先级）
+    if [[ -n "${ASGK_BACKEND:-}" ]]; then
+        echo "$ASGK_BACKEND"
+        return
+    fi
+    # 2. 有 systemd unit 文件 → systemd；否则看 PID 文件
+    if [[ -f "$UNIT_PATH" ]]; then
+        echo "systemd"
+    elif [[ -f "$BG_PID_FILE" ]]; then
+        echo "background"
+    else
+        detect_backend
+        echo "$ASGK_BACKEND"
+    fi
+}
+
+command_name="${1:-}"
+# ── 命令处理函数（包成函数避免 case 内 local 语法错误）─────────
+cmd_start() {
+    local backend bin
+    backend=$(_dispatch_backend)
+    if [[ "$backend" == "systemd" ]]; then
+        require_systemd_user
+        systemctl --user start "$UNIT_NAME"
+        systemctl --user is-active "$UNIT_NAME"
+    else
+        resolve_uv
+        bin="$("$UV_BIN" tool dir --bin)/asgk-server"
+        start_bg "$bin"
+    fi
+}
+
+cmd_stop() {
+    local backend
+    backend=$(_dispatch_backend)
+    if [[ "$backend" == "systemd" ]]; then
+        require_systemd_user
+        systemctl --user stop "$UNIT_NAME"
+    else
+        stop_bg
+    fi
+}
+
+cmd_restart() {
+    local backend bin
+    backend=$(_dispatch_backend)
+    if [[ "$backend" == "systemd" ]]; then
+        require_systemd_user
+        systemctl --user restart "$UNIT_NAME"
+        systemctl --user is-active "$UNIT_NAME"
+    else
+        stop_bg 2>/dev/null || true
+        resolve_uv
+        bin="$("$UV_BIN" tool dir --bin)/asgk-server"
+        start_bg "$bin"
+    fi
+}
+
+cmd_status() {
+    local backend
+    backend=$(_dispatch_backend)
+    if [[ "$backend" == "systemd" ]]; then
+        require_systemd_user
+        systemctl --user status "$UNIT_NAME" --no-pager
+    else
+        status_bg
+    fi
+}
+
+cmd_logs() {
+    local backend
+    backend=$(_dispatch_backend)
+    if [[ "$backend" == "systemd" ]]; then
+        require_systemd_user
+        journalctl --user-unit "$UNIT_NAME" -f --no-pager
+    else
+        tail -f "$BG_LOG_FILE"
+    fi
 }
 
 command_name="${1:-}"
@@ -217,29 +462,24 @@ case "$command_name" in
         usage
         ;;
     install)
-        require_systemd_user
         install_service
         ;;
-    run)
-        require_systemd_user
-        systemctl --user start "$UNIT_NAME"
-        systemctl --user is-active "$UNIT_NAME"
+    start|run)
+        cmd_start
         ;;
     stop)
-        require_systemd_user
-        systemctl --user stop "$UNIT_NAME"
+        cmd_stop
         ;;
     restart)
-        require_systemd_user
-        systemctl --user restart "$UNIT_NAME"
-        systemctl --user is-active "$UNIT_NAME"
+        cmd_restart
         ;;
     status)
-        require_systemd_user
-        systemctl --user status "$UNIT_NAME" --no-pager
+        cmd_status
+        ;;
+    logs)
+        cmd_logs
         ;;
     uninstall)
-        require_systemd_user
         uninstall_service
         ;;
     *)

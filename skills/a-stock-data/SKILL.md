@@ -9,29 +9,20 @@ description: 当任务需要获取A股真实数据时使用——行情(K线/五
 服务端持有全部上游知识（URL/编码/字段映射/签名/协议），做全局限流+缓存+熔断；
 CLI 只发语义请求（如「要 600519 实时行情」），零上游知识。
 
-## 前置：安装 CLI
+## 前置：安装
 
-CLI 随 `asgk-server` 包安装（一个包装出 `asgk-server` + `asgk` 两个二进制）：
+skill 只含文档，取数靠 `asgk` CLI + `asgk-server` 服务端（同一包装两个 bin）。
+安装、启动服务、systemd/background 后端选择、单例防多开机制等详见
+[安装与启动](references/install.md)。
+
+最简流程（clone 全仓后）：
 
 ```bash
-# 方式1：随服务端一起装（推荐，CLI 自动配置好指向服务端）
 ./packages/asgk-server/scripts/asgk-server-service.sh install
-# install 会自动生成 ~/.config/asgk/cli.toml 指向本地服务端
-
-# 方式2：只装 CLI（服务端已在别处部署）
-uv tool install packages/asgk-server
-
-# 验证
-asgk --list          # 列出全部 9 大类 × 子命令
-asgk quote realtime 600519   # 茅台实时行情
+# 装出 asgk-server + asgk 两个 bin，自动启动服务（systemd 或后台），配置好 CLI
+asgk --list                  # 验证：列出 9 大类 × 子命令
+asgk quote realtime 600519   # 验证：茅台实时行情
 ```
-
-### CLI 如何找到服务端
-
-优先级（从高到低）：
-1. 环境变量 `export ASGK_SERVER=http://127.0.0.1:7701`（最高）
-2. `~/.config/asgk/cli.toml`（service 脚本 install 时自动生成）
-3. 包内默认 `http://127.0.0.1:7701`
 
 ## 快速决策：要什么数据？
 
@@ -126,9 +117,9 @@ asgk report digest 40 0.15 --target-pe 25    # PE消化到25x需几年
 - **限流分组**：按源分组（eastmoney ≤1 req/s、tencent、sina、cls、cninfo、baidu、
   mootdx、legulegu），跨进程全局生效——无论多少 agent 并发，外网出口收敛。
 - 服务端是部署环境为 100~1000 agent 共享的外部运行服务，不从本 skill 内启动。
-  部署见 `packages/asgk-server/README.md`。
+  安装/启动/systemd/background 后端见 [install](references/install.md)。
 - 主源被封的降级策略见 [failover](references/failover.md)。
-- 服务端地址配置见 [gateway](references/gateway.md)。
+- 服务端能力接口与地址配置见 [gateway](references/gateway.md)。
 
 ## 已知限制
 
