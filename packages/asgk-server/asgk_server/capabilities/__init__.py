@@ -8,6 +8,7 @@
 - limitup_pool：东财涨停四池（zt/zb/dt/yzt，pool_type 参数区分）
 """
 from . import datacenter  # noqa: F401  导入即注册 datacenter 能力
+from . import fund_flow  # noqa: F401  导入即注册 fund_flow 能力
 from . import limitup_pool  # noqa: F401  导入即注册 limitup_pool 能力
 from . import push2  # noqa: F401  导入即注册 stock_info / concept_blocks 能力
 from . import quote  # noqa: F401  导入即注册 quote 能力

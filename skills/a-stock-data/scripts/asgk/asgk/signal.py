@@ -111,7 +111,17 @@ def eastmoney_fund_flow_minute(code: str) -> list[dict]:
 
     Returns:
         [{time, main_net, small_net, mid_net, large_net, super_net}, ...]（单位：元）
+
+    取数路径（§3.4）：优先调 fund_flow 能力（period=minute），回退旧路径。
     """
+    data = _server_call("fund_flow", {"code": code, "period": "minute"})
+    if data is not None:
+        return data
+    return _eastmoney_fund_flow_minute_legacy(code)
+
+
+def _eastmoney_fund_flow_minute_legacy(code: str) -> list[dict]:
+    """回退路径：经 sgw 网关取 push2 fflow/kline，本地 klines CSV 解析。"""
     secid = f"1.{code}" if code.startswith("6") else f"0.{code}"
     params = {"secid": secid, "klt": 1, "fields1": "f1,f2,f3,f7",
               "fields2": "f51,f52,f53,f54,f55,f56,f57"}

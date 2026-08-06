@@ -263,12 +263,14 @@ emquery（§3.4 em_get 枢纽）方案但回退——它是改良版透明代理
   被拒连（push2.eastmoney.com/api/qt/stock/get 风控，同 host 的 slist/get 可达），
   非代码问题，回退路径正确。
 
+- ✅ **fund_flow**（1 能力覆盖 2 函数：eastmoney_fund_flow_minute + stock_fund_flow_120d）：
+  两函数共享 push2/push2his fflow 端点系 + klines CSV 解析，用 period 参数区分
+  （minute→push2/kline, daily120→push2his/daykline）。CSV split + 字段索引 +
+  dash_zero("-"当0) 下沉服务端。实测 stock_fund_flow_120d 返回 120 条真实日级资金流。
+
 **待做**（按共享机制分组，每组一个 commit）：
-- fund_flow（push2his fflow：minute + daykline 两函数共享）
-- industry_comparison（push2 clist/get）
-- top10_holders（emweb PageSDGD/PageSDLTGD 两函数共享）
-- fund_flow（push2his fflow：minute + daykline 两函数共享 fflow 端点系）
 - industry_comparison（push2 clist/get，f 字段表 + fs 参数）
+- top10_holders（emweb PageSDGD/PageSDLTGD 两函数共享）
 - top10_holders（emweb PageSDGD/PageSDLTGD 两函数共享）
 - board_constituents（push2 clist/get + 名称→代码解析）
 - news（search-api JSONP + np-weblist）

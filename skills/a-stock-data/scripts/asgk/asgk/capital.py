@@ -10,7 +10,7 @@ from __future__ import annotations
 from asgk._contract import source
 from asgk._datacenter import datacenter as _datacenter
 from asgk._xlsx import parse_xlsx
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -111,7 +111,17 @@ def stock_fund_flow_120d(code: str) -> list[dict]:
 
     Returns:
         [{date, main_net(主力净流入,元), small_net, mid_net, large_net, super_net}, ...]
+
+    取数路径（§3.4）：优先调 fund_flow 能力（period=daily120），回退旧路径。
     """
+    data = _server_call("fund_flow", {"code": code, "period": "daily120"})
+    if data is not None:
+        return data
+    return _stock_fund_flow_120d_legacy(code)
+
+
+def _stock_fund_flow_120d_legacy(code: str) -> list[dict]:
+    """回退路径：经 sgw 网关取 push2his fflow/daykline，本地 klines CSV 解析。"""
     market_code = 1 if code.startswith("6") else 0
     params = {
         "secid": f"{market_code}.{code}",
