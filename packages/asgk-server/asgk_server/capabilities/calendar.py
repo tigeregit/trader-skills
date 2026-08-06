@@ -122,10 +122,19 @@ def fetch_calendar(ctx: FetchContext, calendar_type: str,
                 return {"date": date, "is_trade_day": False,
                         "note": "周末", "latest_known": latest}
             if date == today and latest and date > latest:
-                # 今天是工作日但K线尚未产生（盘前/盘中）→ 工作日兜底
+                # 今天是工作日，但日历里还没有今天的记录（K线今日尚未产生）。
+                # 按工作日兜底判定为交易日，标注 tentative 表明未确认。
+                now = dt.datetime.now()
+                t = now.strftime("%H:%M")
+                if t < "09:25":
+                    why = "今日尚未开盘"
+                elif t < "15:00":
+                    why = "今日交易中，收盘后确认"
+                else:
+                    why = "今日已收盘，数据待更新"
                 return {"date": date, "is_trade_day": True,
                         "tentative": True,
-                        "note": "今日尚未收盘，按工作日判定（节假日待确认）",
+                        "note": f"按工作日判定为交易日（{why}，节假日以交易所公告为准）",
                         "latest_known": latest}
             # 过去的工作日但不在交易日历 → 节假日
             return {"date": date, "is_trade_day": False,
