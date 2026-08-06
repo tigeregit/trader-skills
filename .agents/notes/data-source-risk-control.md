@@ -93,21 +93,35 @@ CSDN/知乎/腾讯云实战文、curl_cffi 官方 FAQ、反爬攻略）交叉核
 
 - `hsgt_realtime`（data.hexin.cn）：改经网关，归入 10jqka 限流组。commit 见 git log。
 
-### 待评估（按风险排序，未改）
+### 已迁移经网关（2026-08-06，11 个函数）
 
-1. **mootdx 5个函数**：TCP 协议本身无 WAF，但有连接数/频率风控。需评估「单 IP
-   多服务器 bestip 轮换 + 连接池上限」是否够，还是也要进网关。
-2. **巨潮 cninfo 2个函数**：公告查询需 mcode AES 签名，互动易需登录态，
-   agent 直连连基本鉴权都过不了，更别说并发。
-3. **腾讯/百度/新浪 10个函数**：HTTP WAF 风控明确，安全水位低。
-4. **财联社/理杏仁 3个函数**：软风控/签名，并发数据不足。
+经资料核实风控后，以下源已全部改经 sgw 网关（限流组 + cache），盘中实测通过：
+- **腾讯**（tencent 组）：tencent_quote、full_valuation
+- **新浪**（sina 组）：sina_financial_report、sina_option_codes/tquote/greeks
+- **财联社**（cls 组）：cls_telegraph
+- **巨潮**（cninfo 组）：cninfo_announcements、cninfo_irm（form-POST 能力）
+- **百度**（baidu 组）：baidu_kline_with_ma（网关 curl_cffi 指纹出网）
+- **同花顺 hexin**（10jqka 组）：hsgt_realtime（data.hexin.cn 归入同花顺组）
+
+网关为此新增两项能力：form-encoded POST 转发、curl_cffi Chrome 指纹出网。
+
+### 仍直连（按风险排序，待处理）
+
+1. **mootdx 5个函数**（bars/quotes/transaction/f10/finance）：走 TCP 二进制协议
+   （端口 7709），非 HTTP。现有 HTTP 网关无法透明代理，需网关内嵌 mootdx 客户端
+   （协议转换支路）——改动大且要处理线程安全/长连接保活。暂不动。
+2. **legulegu 2个函数**（market_pe_lg/pb_lg）：CSRF 两步流（取 session cookie +
+   带 cookie 调 API）要求两次请求共享同一会话，当前无状态网关无法保证 cookie 跨
+   请求配对（caller 模式透传 Set-Cookie 不够：第二次请求的 cookie 与第一次页面
+   请求的 session 不匹配）。需网关 session 模式（持有 cookie）才能支持，工作量大。
+   legulegu 风控为软风控（🟡中），暂保留直连，待网关支持 session 模式后迁移。
 
 ### 与 AGENTS.md §2 的关系
 
-`AGENTS.md §2` 当前写「不封 IP 的源可直连：通达信/腾讯/百度等」。本复核表明
-**这些源并非不封 IP**。该前提在低频单 agent 场景成立，在 100~1000 并发目标场景
-下不成立。是否修订 §2 的分流原则，取决于实际部署的并发量级——若确实要上
-100~1000 agent，需重新设计（可能要把所有源都纳入网关，或加 IP 代理池）。
+`AGENTS.md §2` 原写「不封 IP 的源可直连：通达信/腾讯/百度等」。本复核已证明
+这些源均有 IP 风控。经 2026-08-06 迁移后，**除 mootdx(TCP) 和 legulegu(需session)
+外，其余原直连源已全部经网关**。§2 的「直连」前提现已大幅收窄，剩余两项各有
+明确的技术障碍（TCP 协议 / 会话状态），非简单配置可解决。
 
 ## 六、复核方法与局限
 
@@ -118,3 +132,5 @@ CSDN/知乎/腾讯云实战文、curl_cffi 官方 FAQ、反爬攻略）交叉核
   非官方 SLA；各源未公开官方 QPS 阈值。结论「高频会封」方向可靠，具体倍数仅供量级参考。
 - **未做真机压测**：本项目原则是不对真实数据源做并发压测（`gateway-design.md`
   顶部约束）。本结论基于二手资料，若要确证某源并发阈值，需在授权下做小步加压。
+- **迁移验证**：2026-08-06 盘中对每个迁移源做了单发实测（真实数据 + /__stats
+  计数确认走网关 + 未配网关 fail-closed），但未做并发压测。
