@@ -293,6 +293,8 @@ class CapabilityServer:
             source_meta=sm,
             max_attempts=self.max_attempts,
         )
+        # 计数（统计用）：每次实际尝试出网递增该组请求数（修 T1 遗留：group_reqs 从未递增）
+        self.group_reqs[group] = self.group_reqs.get(group, 0) + 1
         try:
             data = fetch(ctx=ctx, **params)
         except requests.RequestException:
