@@ -12,7 +12,7 @@ from __future__ import annotations
 import re
 
 from asgk._contract import source
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 _UT = "bd1d9ddb04089700cf9c27f6f7426281"
@@ -90,7 +90,18 @@ def board_constituents(symbol: str, kind: str = "concept") -> list[dict]:
         [{code, name, price(最新价), pct(涨跌幅,%), vol(成交量),
           amount(成交额,元), amplitude(振幅,%), turnover(换手率,%),
           high, low, open}, ...]
+
+    取数路径（§3.4）：优先调 clist 能力（query_type=board_constituents），回退旧路径。
     """
+    data = _server_call("clist", {"query_type": "board_constituents",
+                                  "symbol": symbol, "kind": kind})
+    if data is not None:
+        return data
+    return _board_constituents_legacy(symbol, kind)
+
+
+def _board_constituents_legacy(symbol: str, kind: str = "concept") -> list[dict]:
+    """回退路径：经 sgw 网关取 push2 clist（名称→代码 + 成份股分页）。"""
     board_code = _resolve_board_code(symbol, kind)
     params = {"po": "1", "np": "1", "ut": _UT, "fltt": "2", "invt": "2",
               "fid": "f12", "fs": f"b:{board_code} f:!50", "fields": _FIELDS}

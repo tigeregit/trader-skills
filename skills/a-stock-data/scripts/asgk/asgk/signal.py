@@ -234,7 +234,17 @@ def industry_comparison(top_n: int = 20) -> dict:
 
     Returns:
         {top: [...], bottom: [...], total: int}（盘中R实时/盘后S定稿）
+
+    取数路径（§3.4）：优先调 clist 能力（query_type=industry_rank），回退旧路径。
     """
+    data = _server_call("clist", {"query_type": "industry_rank", "top_n": top_n})
+    if data is not None:
+        return data
+    return _industry_comparison_legacy(top_n)
+
+
+def _industry_comparison_legacy(top_n: int = 20) -> dict:
+    """回退路径：经 sgw 网关取 push2 clist，本地 diff 解析。"""
     params = {"pn": "1", "pz": "100", "po": "1", "np": "1", "fltt": "2", "invt": "2",
               "fid": "f3", "fs": "m:90+t:2",
               "fields": "f2,f3,f4,f12,f13,f14,f104,f105,f128,f136,f140,f141,f207"}

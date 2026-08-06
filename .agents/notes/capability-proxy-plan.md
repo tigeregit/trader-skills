@@ -275,13 +275,14 @@ emquery（§3.4 em_get 枢纽）方案但回退——它是改良版透明代理
   实测 reports 100 条研报 / holders 10 条股东（茅台集团 54.4%）/ em_hot_rank 5 条人气榜。
 
 **待做**（按共享机制分组，每组一个 commit）：
-- industry_comparison（push2 clist/get，f 字段表 + fs 参数）
-- board_constituents（push2 clist/get + 名称→代码解析）
-- news（search-api JSONP + np-weblist）
-- reports（reportapi report/list 分页）
-- 其余独立函数
+- ✅ **clist（2 函数）+ news（2 函数）收尾**：
+  - clist：industry_comparison + board_constituents（push2 clist/get，query_type 区分；
+    board 含名称→代码两步解析 + 名称归一化匹配 + 分页，全部下沉）
+  - news：eastmoney_stock_news + eastmoney_global_news（JSONP 剥壳 + req_trace 剔除 +
+    HTML 标签清洗下沉，news_type 区分）。实测 global_news 返回真实资讯。
+  - T6 完成：12 能力 / 18 函数全部下沉，客户端零上游知识。
 
-**验收**（每个 commit）：该函数经服务端返回真实数据 + 客户端零 URL + 测试绿
+**验收**（每个 commit）：该函数经服务端返回真实数据 + 客户端零 URL + 测试绿 ✅
 
 **依赖**：T2（模式验证）
 

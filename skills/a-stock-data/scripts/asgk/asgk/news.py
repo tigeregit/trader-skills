@@ -14,7 +14,7 @@ import uuid
 from datetime import datetime
 
 from asgk._contract import source
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/117.0.0.0 Safari/537.36"
 
@@ -30,7 +30,18 @@ def eastmoney_stock_news(code: str, page_size: int = 20) -> list[dict]:
         [{title, content(纯文本截断200字), time, source, url}, ...]
     Note:
         部分大陆住宅 IP 间歇只返回 passportWeb 无文章列表（东财风控），空时返回 []。
+
+    取数路径（§3.4）：优先调 news 能力（news_type=stock），回退旧路径。
     """
+    data = _server_call("news", {"news_type": "stock", "code": code,
+                                 "page_size": page_size})
+    if data is not None:
+        return data
+    return _eastmoney_stock_news_legacy(code, page_size)
+
+
+def _eastmoney_stock_news_legacy(code: str, page_size: int = 20) -> list[dict]:
+    """回退路径：经 sgw 网关取 search-api JSONP，本地剥壳 + 标签清洗。"""
     inner_params = json.dumps({
         "uid": "", "keyword": code, "type": ["cmsArticleWebOld"],
         "client": "web", "clientType": "web", "clientVersion": "curr",
@@ -98,7 +109,17 @@ def eastmoney_global_news(page_size: int = 50) -> list[dict]:
     Note:
         @source(strip=["req_trace"])：req_trace 每次是 uuid4，指纹哈希时需剔除
         （否则每次响应哈希都不同，误判为高频变化）。
+
+    取数路径（§3.4）：优先调 news 能力（news_type=global），回退旧路径。
     """
+    data = _server_call("news", {"news_type": "global", "page_size": page_size})
+    if data is not None:
+        return data
+    return _eastmoney_global_news_legacy(page_size)
+
+
+def _eastmoney_global_news_legacy(page_size: int = 50) -> list[dict]:
+    """回退路径：经 sgw 网关取 np-weblist，本地解析。"""
     from datetime import datetime
     # sortEnd 必须传日期（空串会报 Required parameter 错误），默认当天取最新
     today = datetime.now().strftime("%Y-%m-%d")
