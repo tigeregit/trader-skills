@@ -2,10 +2,14 @@
 
 龙虎榜/解禁/融资融券/大宗交易/股东户数/分红/业绩/股东/事件 等端点共用同一
 datacenter 接口，仅 reportName / filter / sort 不同。经网关（datacenter-web.eastmoney.com）。
+
+取数路径（§3.4 渐进迁移）：
+  1. 优先调能力代理服务端 POST /v1/datacenter（服务端持有 URL/参数/分页逻辑）
+  2. 服务端未配/不可达/报错 → 回退旧 em_get 网关路径（查询+分页在此）
 """
 from __future__ import annotations
 
-from asgk.em_proxy import em_get
+from asgk.em_proxy import _server_call, em_get
 
 DATACENTER_URL = "https://datacenter-web.eastmoney.com/api/data/v1/get"
 
@@ -30,6 +34,18 @@ def datacenter(report_name: str, filter_str: str = "", page_size: int = 50,
     Returns:
         record 列表（原样返回 datacenter 的 data 数组），空则 []
     """
+    # 1. 能力代理服务端（推荐路径）
+    # 注：服务端能力的选源控制参数叫 source（数据源），东财端点的 source 字段
+    # （WEB/HSF10）在服务端能力签名里改名 dc_source 避开冲突。
+    data = _server_call("datacenter", {
+        "report_name": report_name, "filter_str": filter_str,
+        "page_size": page_size, "sort_columns": sort_columns,
+        "sort_types": sort_types, "all_pages": all_pages, "max_pages": max_pages,
+        "dc_source": source, "extra_params": extra_params,
+    })
+    if data is not None:
+        return data
+    # 2. 回退：旧 sgw 网关路径
     if not all_pages:
         return _query_page(report_name, filter_str, page_size,
                            sort_columns, sort_types, tier, 1, source, extra_params)

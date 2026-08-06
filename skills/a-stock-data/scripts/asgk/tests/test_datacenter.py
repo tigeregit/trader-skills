@@ -158,3 +158,55 @@ class TestExtraParams:
         # 两页都应带 token
         for call in m.call_args_list:
             assert call.kwargs["params"]["token"] == "x"
+
+
+# ── 能力代理服务端路由（§3.4 渐进迁移）────────────────────────
+from asgk import em_proxy  # noqa: E402
+
+
+class TestServerRouting:
+    """datacenter 优先走能力代理服务端，回退旧 em_get 网关路径。"""
+
+    def test_server_path_used_when_configured(self, monkeypatch):
+        """配了 ASGK_SERVER → 走服务端，返回服务端数据，不调 em_get。"""
+        monkeypatch.setattr(em_proxy, "_SERVER", "http://srv:7701")
+        server_data = [{"SECURITY_CODE": "600519", "RZYE": 100}]
+        with patch("asgk._datacenter._server_call", return_value=server_data) as sc, \
+             patch("asgk._datacenter.em_get") as gw:
+            result = datacenter("RPT_TEST", filter_str='(SCODE="600519")')
+        assert result == server_data
+        sc.assert_called_once()
+        # 服务端调用参数：source 重命名为 dc_source
+        call_params = sc.call_args.args[1]
+        assert call_params["report_name"] == "RPT_TEST"
+        assert call_params["filter_str"] == '(SCODE="600519")'
+        assert call_params["dc_source"] == "WEB"  # 端点 source → dc_source
+        gw.assert_not_called()  # 服务端命中，不走旧网关
+
+    def test_fallback_when_server_unset(self, monkeypatch):
+        """未配 ASGK_SERVER → _server_call 返回 None → 回退旧 em_get 路径。"""
+        monkeypatch.setattr(em_proxy, "_SERVER", None)
+        with patch("asgk._datacenter.em_get",
+                   return_value=_resp([{"a": 1}], pages=1)) as gw:
+            result = datacenter("RPT_TEST")
+        assert result == [{"a": 1}]
+        gw.assert_called_once()
+
+    def test_fallback_when_server_fails(self, monkeypatch):
+        """配了服务端但失败 → 回退旧路径。"""
+        monkeypatch.setattr(em_proxy, "_SERVER", "http://srv:7701")
+        with patch("asgk._datacenter._server_call", return_value=None) as sc, \
+             patch("asgk._datacenter.em_get",
+                   return_value=_resp([{"a": 1}], pages=1)) as gw:
+            datacenter("RPT_TEST")
+        sc.assert_called_once()
+        gw.assert_called_once()
+
+    def test_source_param_mapped_to_dc_source(self, monkeypatch):
+        """客户端 source 参数（WEB/HSF10）映射到服务端的 dc_source（避开选源冲突）。"""
+        monkeypatch.setattr(em_proxy, "_SERVER", "http://srv:7701")
+        with patch("asgk._datacenter._server_call", return_value=[]) as sc:
+            datacenter("RPT_TEST", source="HSF10")
+        call_params = sc.call_args.args[1]
+        assert call_params["dc_source"] == "HSF10"
+        assert "source" not in call_params  # 不与选源控制参数冲突

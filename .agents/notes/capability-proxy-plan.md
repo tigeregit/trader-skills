@@ -155,7 +155,20 @@ earning_forecast / earning_express / mgmt_trade / repurchase /
 institute_research / pledge_ratio / holder_change / holder_teamwork /
 dragon_tiger_board / lockup_expiry / daily_dragon_tiger
 
-**验收**：13 个函数经服务端返回真实数据；全套测试绿
+**验收**：
+- ✅ datacenter 能力经服务端返回真实数据（实测 margin_trading('600519') 融资余额 175亿）
+- ✅ 全套测试绿（server 93 / sgw 101 / client 146）
+
+**状态**：✅ 已完成（commit 待提交）
+
+**实施备注**（设计调整）：
+- **不做 13 个独立能力**，改为**一个 datacenter 能力**供 15 个业务函数共用。
+  原因：15 个函数的查询机制完全相同（同 URL/参数构造/分页），只 reportName/filter/sort
+  不同——这些是参数不是知识。字段映射（_s/日期切片/进度码表）是纯计算，按 §6.3 留客户端。
+  一能力共用消除冗余，迁移成本真正归零（只改 _datacenter.py 一处）。
+- **source 参数重命名 dc_source**：能力的选源控制参数叫 source（数据源 eastmoney），
+  东财端点的 source 字段（WEB/HSF10）同名冲突。服务端能力签名用 dc_source，客户端
+  _datacenter.py 透明映射（source=WEB → dc_source=WEB）。
 
 **依赖**：T1（可与 T2 并行，但建议 T2 先验证模式）
 
