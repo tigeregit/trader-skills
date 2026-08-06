@@ -1,6 +1,23 @@
 # sgw — A股数据共享流量网关
 
-单进程 HTTP 代理，供单 IP 下 100~1000 个 agent 并发共享。解决风控源（东财/同花顺）在高并发下的封 IP 问题。
+> **⚠️ DEPRECATED — 已被 `packages/asgk-server` 取代。**
+>
+> asgk-server 是「能力代理」服务端，吞噬了 sgw 的全部流量内核（令牌桶限流 /
+> 熔断 / 缓存 / singleflight），并暴露语义能力接口（`POST /v1/<capability>`）。
+> 相对 sgw 的「透明代理」（转发 `?u=URL`，不懂数据语义），asgk-server 持有全部
+> 上游知识（URL/编码/字段映射/协议/签名），客户端只发语义请求，零上游知识。
+>
+> - **新部署一律用 asgk-server**：`packages/asgk-server/scripts/asgk-server-service.sh`
+> - 客户端配置：`export ASGK_SERVER=http://127.0.0.1:7701`（取代 `ASGK_GW`）
+> - sgw 的流量内核已**原样搬入** asgk-server（TokenBucket / CircuitBreaker /
+>   CircuitStateManager 安全闩 / SingleFlight），限流/熔断行为完全一致
+> - 本包保留作为**旧路径回退**（asgk 客户端在服务端未部署/不可达时回退到
+>   `em_get` 经 sgw），后续随迁移完成删除
+>
+> 详见 `.agents/notes/capability-proxy-design.md`（架构）与
+> `.agents/notes/capability-proxy-plan.md`（迁移计划）。
+
+单进程 HTTP 代理，供单 IP 下 100~~1000 个 agent 并发共享。解决风控源（东财/同花顺）在高并发下的封 IP 问题。
 
 ## 它做什么
 
