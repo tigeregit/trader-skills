@@ -1,8 +1,26 @@
-# asgk-server — A股能力代理服务端
+# asgk-server — A股能力代理服务端 + asgk CLI
 
 单进程 HTTP 服务，供单 IP 下 100~1000 个 agent 并发共享。取代已 DEPRECATED 的
 `packages/sgw`（透明代理）：吞噬 sgw 全部流量内核（令牌桶限流 / 熔断 / 缓存 /
 singleflight），并暴露**语义能力接口**（`POST /v1/<capability>`）。
+
+## 包内容（一个包装两个 bin）
+
+`uv tool install asgk-server` 装出两个二进制：
+
+| bin | 作用 | 入口 |
+|-----|------|------|
+| `asgk-server` | 能力代理服务端（本服务） | `asgk_server.server:main` |
+| `asgk` | 数据获取 CLI（9 大类 × 子命令） | `asgk_server.cli:main` |
+
+CLI 是**纯 HTTP 客户端**，不依赖业务函数库，直接 POST 服务端 `/v1/<capability>`。
+服务端地址解析：`ASGK_SERVER` 环境变量 > `~/.config/asgk/cli.toml` > 包内默认（7701）。
+
+```bash
+asgk --list                       # 列出全部 9 大类 × 子命令
+asgk 行情 realtime 600519         # 茅台实时行情
+asgk 研报 peg 25 0.2              # PEG 纯计算（不调服务端）
+```
 
 ## 它做什么
 

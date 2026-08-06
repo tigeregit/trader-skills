@@ -1,7 +1,7 @@
 [project]
 name = "asgk-server"
-version = "1.0.0"
-description = "能力代理服务端：吞噬 sgw 流量内核，按数据域暴露语义能力"
+version = "1.1.0"
+description = "能力代理服务端 + asgk CLI：吞噬 sgw 流量内核，按数据域暴露语义能力"
 requires-python = ">=3.11"
 dependencies = [
     "requests>=2.31",
@@ -10,8 +10,14 @@ dependencies = [
     "lxml>=5.0",
 ]
 
+# CLI 的 --format xlsx 路径需要 pandas/openpyxl，按需安装（延迟 import）。
+# 用法：uv tool install "asgk-server[xlsx]"
+[project.optional-dependencies]
+xlsx = ["pandas>=2.0", "openpyxl>=3.1"]
+
 [project.scripts]
 asgk-server = "asgk_server.server:main"
+asgk = "asgk_server.cli:main"
 
 [dependency-groups]
 dev = ["pytest>=8"]
@@ -24,4 +30,4 @@ build-backend = "hatchling.build"
 packages = ["asgk_server"]
 
 [tool.hatch.build]
-# config.toml 随包安装（在 asgk_server/ 内，会被 packages 自动包含）
+# config.toml + cli/cli.toml.default 随包安装（在 asgk_server/ 内，会被 packages 自动包含）
