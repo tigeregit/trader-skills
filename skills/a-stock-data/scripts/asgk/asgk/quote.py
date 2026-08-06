@@ -3,16 +3,12 @@
 实现约定：
   - mootdx（K线/五档/逐笔）：TCP 7709 直连，不经网关（暂未迁移）
   - 腾讯（PE/PB/市值/换手）：经网关（tencent 组）
-  - 百度（带MA的K线）：HTTP 直连（待网关支持 curl_cffi 后迁移）
+  - 百度（带MA的K线）：经网关（baidu 组，网关用 curl_cffi 指纹出网）
   - tier：日K=R(含今日实时根), 分钟K/五档/逐笔=R, 腾讯行情=R
 """
 from __future__ import annotations
 
 import json
-import urllib.request
-
-import requests
-from curl_cffi import requests as curl_requests
 
 from asgk._contract import source
 from asgk.client import tdx_client
@@ -161,7 +157,7 @@ def tencent_quote(codes: list[str]) -> dict[str, dict]:
 
 
 # ── 百度带MA的K线 ───────────────────────────────────────────────
-@source(tier="R", via="direct")
+@source(tier="R", via="gateway")
 def baidu_kline_with_ma(code: str, start_time: str = "") -> dict:
     """百度股市通K线（自带 ma5/ma10/ma20 均价，无需本地算）。
 
@@ -173,73 +169,54 @@ def baidu_kline_with_ma(code: str, start_time: str = "") -> dict:
         ``rows`` 中每项是 CSV 字符串，与 ``keys`` 按下标一一对应。
 
     Note:
-        百度会按客户端协议栈画像区分请求。实测 Python ``urllib``
-        即使使用完整 Chrome headers，仍会在 HTTP 200 中返回
-        ``{"ResultCode":"403","Result":[]}``；同 IP、同参数的 curl 协议栈可用。
-        本函数因此使用 ``curl_cffi`` 的 Chrome 协议栈画像。
+        经网关（baidu 组），网关用 curl_cffi 的 Chrome 协议栈画像出网
+        （endpoint 标 egress_client=curl_cffi）。百度会按协议栈画像区分请求，
+        普通 urllib/requests 即使带完整 Chrome headers 仍返回 ResultCode=403，
+        故网关对该端点用 curl_cffi 指纹出网。
     """
     params = {"all": "1", "isIndex": "false", "isBk": "false", "isBlock": "false",
               "isFutures": "false", "isStock": "true", "newFormat": "1",
               "group": "quotation_kline_ab", "finClientType": "pc",
               "code": code, "start_time": start_time, "ktype": "1"}
-    d = _baidu_get(params)
-    return _parse_baidu_kline(d, code)
-
-
-def _baidu_get(params: dict) -> dict:
-    """使用可复现的 Chrome 协议栈画像请求百度股市通接口。"""
-    url = "https://finance.pae.baidu.com/selfselect/getstockquotation"
     headers = {
         "Accept": "application/vnd.finance-web.v1+json",
         "Origin": "https://gushitong.baidu.com",
         "Referer": "https://gushitong.baidu.com/",
     }
-    try:
-        response = curl_requests.get(
-            url,
-            params=params,
-            headers=headers,
-            impersonate="chrome",
-            timeout=10,
-        )
-    except curl_requests.RequestsError as exc:
-        # 不把异常原文带回调用方，避免未来查询参数含敏感信息时泄漏 URL。
-        raise RuntimeError(f"百度 K 线请求失败：{type(exc).__name__}") from exc
-
-    try:
-        data = response.json()
-    except (ValueError, json.JSONDecodeError) as exc:
-        raise RuntimeError(
-            f"百度 K 线返回非 JSON 响应（HTTP {response.status_code}）"
-        ) from exc
-    if not isinstance(data, dict):
-        raise RuntimeError(
-            f"百度 K 线返回异常结构（HTTP {response.status_code}）"
-        )
-    data["_asgk_http_status"] = response.status_code
-    return data
+    r = em_get("https://finance.pae.baidu.com/selfselect/getstockquotation",
+               params=params, headers=headers, timeout=10, tier="R")
+    return _parse_baidu_kline(r, code)
 
 
-def _parse_baidu_kline(d: dict, code: str) -> dict:
+def _parse_baidu_kline(response, code: str) -> dict:
     """解析百度股市通 K 线返回，对风控/异常结构给出清晰错误。
 
     百度 observed 返回形态：
       - 正常: {"ResultCode":"0", "Result":{"newMarketData":{"keys":[英文...], "headers":[中文...], "marketData":"..."}}}
         （keys 与 headers 同长度，前者英文字段名后者中文；本函数取 keys）
-      - 风控: {"ResultCode":"403", "Result":[]}  ← 客户端协议栈画像被拒绝
+      - 风控: {"ResultCode":"403", "Result":[]}  ← 协议栈画像被拒绝
       - 其它非 0 ResultCode 也按错误处理。
     """
+    http_status = response.status_code
+    try:
+        d = response.json()
+    except (ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(
+            f"百度 K 线返回非 JSON 响应（HTTP {http_status}）"
+        ) from exc
+    if not isinstance(d, dict):
+        raise RuntimeError(f"百度 K 线返回异常结构（HTTP {http_status}）")
+
     code_str = str(d.get("ResultCode", ""))
     result = d.get("Result")
-    http_status = d.get("_asgk_http_status")
 
     # 风控/异常：HTTP 非 200、ResultCode != "0"，或 Result 非 dict。
-    if http_status not in (None, 200) or code_str != "0" or not isinstance(result, dict):
-        transport = f"HTTP {http_status}" if http_status is not None else "HTTP 状态未知"
+    if http_status != 200 or code_str != "0" or not isinstance(result, dict):
+        transport = f"HTTP {http_status}"
         if code_str == "403":
             hint = f"百度拒绝访问（{transport}，业务码 ResultCode=403）"
-            advice = "检查 curl_cffi Chrome profile 是否可用，并做单次低频验证"
-        elif http_status not in (None, 200):
+            advice = "检查网关 curl_cffi Chrome profile 是否可用，并做单次低频验证"
+        elif http_status != 200:
             hint = f"百度返回 HTTP {http_status}（业务码 ResultCode={code_str or '缺失'}）"
             advice = "检查网络和上游状态，不要并发重试"
         elif not code_str:

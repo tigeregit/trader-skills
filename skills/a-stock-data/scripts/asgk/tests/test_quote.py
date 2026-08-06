@@ -1,4 +1,8 @@
-"""百度 K 线传输层与错误诊断回归测试。"""
+"""百度 K 线经网关取数与错误诊断回归测试。
+
+百度源经网关(baidu 组，网关用 curl_cffi 指纹出网)，asgk 端只调 em_get。
+指纹由网关负责，本测试验证 em_get 调用参数与 _parse_baidu_kline 错误诊断。
+"""
 from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
@@ -27,40 +31,42 @@ def _ok_payload() -> dict:
     }
 
 
-def test_baidu_uses_chrome_transport_profile():
-    with patch("asgk.quote.curl_requests.get", return_value=_response(_ok_payload())) as get:
+def test_baidu_routes_through_gateway():
+    """baidu_kline_with_ma 经 em_get 调用，指纹由网关负责(不在 asgk 设 impersonate)。"""
+    with patch("asgk.quote.em_get", return_value=_response(_ok_payload())) as get:
         result = baidu_kline_with_ma("600519")
 
     assert result["keys"] == ["time", "close", "ma5avgprice"]
     assert len(result["rows"]) == 2
-    assert get.call_args.args == ("https://finance.pae.baidu.com/selfselect/getstockquotation",)
+    assert get.call_args.args[0] == "https://finance.pae.baidu.com/selfselect/getstockquotation"
     assert get.call_args.kwargs["params"]["code"] == "600519"
-    assert get.call_args.kwargs["impersonate"] == "chrome"
-    assert get.call_args.kwargs["timeout"] == 10
+    assert get.call_args.kwargs["tier"] == "R"
+    # asgk 端不再传 impersonate（网关负责指纹）
+    assert "impersonate" not in get.call_args.kwargs
 
 
 def test_baidu_distinguishes_http_200_business_403():
     denied = {"ResultCode": "403", "Result": []}
-    with patch("asgk.quote.curl_requests.get", return_value=_response(denied, 200)):
+    with patch("asgk.quote.em_get", return_value=_response(denied, 200)):
         with pytest.raises(RuntimeError, match=r"HTTP 200.*ResultCode=403"):
             baidu_kline_with_ma("600519")
 
 
 def test_baidu_distinguishes_http_error_from_business_code():
     denied = {"ResultCode": "403", "Result": []}
-    with patch("asgk.quote.curl_requests.get", return_value=_response(denied, 403)):
+    with patch("asgk.quote.em_get", return_value=_response(denied, 403)):
         with pytest.raises(RuntimeError, match=r"HTTP 403.*ResultCode=403"):
             baidu_kline_with_ma("600519")
 
 
-def test_baidu_transport_error_does_not_leak_exception_url():
-    from curl_cffi.requests import RequestsError
-
-    error = RequestsError("failed https://example.test/?cookie=secret")
-    with patch("asgk.quote.curl_requests.get", side_effect=error):
-        with pytest.raises(RuntimeError) as raised:
+def test_baidu_non_json_response_raises():
+    """网关返回非 JSON（如错误页）时给出清晰错误，不泄漏原始内容。"""
+    response = MagicMock()
+    response.status_code = 502
+    response.json.side_effect = ValueError("not json")
+    with patch("asgk.quote.em_get", return_value=response):
+        with pytest.raises(RuntimeError, match=r"非 JSON 响应"):
             baidu_kline_with_ma("600519")
-    assert "cookie=secret" not in str(raised.value)
 
 
 def test_mootdx_daily_bars_fall_back_to_baidu_when_empty():
