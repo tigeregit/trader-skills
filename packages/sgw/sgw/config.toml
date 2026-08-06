@@ -71,13 +71,6 @@ domains = ["www.cninfo.com.cn", "irm.cninfo.com.cn"]
 rps = 0.5          # 官方平台保守（2秒1次）
 jitter = [0.5, 1.0]
 
-# ── 理杏仁（legulegu.com，全市场PE/PB历史，需CSRF caller模式）──
-[[group]]
-name = "legulegu"
-domains = ["legulegu.com"]
-rps = 0.2          # 极保守（5秒1次），仅单发验证过未测并发
-jitter = [0.5, 1.0]
-
 # ── 百度股市通（finance.pae.baidu.com，需 curl_cffi Chrome 指纹出网）──
 [[group]]
 name = "baidu"
@@ -431,41 +424,6 @@ ip_risk = "controlled"
 response_scope = "public"
 credential_mode = "none"
 cache_mode = "shared"
-
-# ── 理杏仁（legulegu.com，caller 模式透传 CSRF；token 不进 cache key）──
-# 调用方先 GET 页面拿 CSRF token+cookie，再带 X-CSRF-Token/Cookie 调 API。
-# response 是公共的（全市场PE/PB），用 shared cache；token 是会话级防伪不进 key。
-[[endpoint]]
-name = "legulegu-csrf-page"
-host = "legulegu.com"
-path = "/stockdata/*"
-review_status = "approved"
-ip_risk = "controlled"
-response_scope = "public"
-credential_mode = "caller"
-cache_mode = "shared"
-
-[[endpoint]]
-name = "legulegu-market-pe"
-host = "legulegu.com"
-path = "/api/stock-data/market-pe"
-review_status = "approved"
-ip_risk = "controlled"
-response_scope = "public"
-credential_mode = "caller"
-cache_mode = "shared"
-credential_params = ["token"]
-
-[[endpoint]]
-name = "legulegu-index-pb"
-host = "legulegu.com"
-path = "/api/stockdata/index-basic-pb"
-review_status = "approved"
-ip_risk = "controlled"
-response_scope = "public"
-credential_mode = "caller"
-cache_mode = "shared"
-credential_params = ["token"]
 
 # ── 百度股市通K线（finance.pae.baidu.com，curl_cffi Chrome 指纹出网，R 档）──
 [[endpoint]]

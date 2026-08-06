@@ -175,10 +175,6 @@ class TestGroupOfRegression:
         assert g.group_of("www.cninfo.com.cn") == "cninfo"
         assert g.group_of("irm.cninfo.com.cn") == "cninfo"
 
-    def test_legulegu_routable(self):
-        g = _make_gateway()
-        assert g.group_of("legulegu.com") == "legulegu"
-
     def test_baidu_routable(self):
         g = _make_gateway()
         assert g.group_of("finance.pae.baidu.com") == "baidu"

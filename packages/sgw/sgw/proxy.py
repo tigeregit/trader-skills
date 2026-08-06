@@ -44,7 +44,6 @@ PROXIED_DOMAIN_SUFFIXES = (
     ".sina.cn", ".sinajs.cn",  # 新浪行情/财报/期权
     ".cls.cn",               # 财联社电报
     ".cninfo.com.cn",        # 巨潮公告/互动易
-    ".legulegu.com",         # 理杏仁估值历史
     ".baidu.com",            # 百度股市通(需 curl_cffi 指纹)
 )
 
@@ -1211,6 +1210,7 @@ class Gateway:
                     continue
                 # 成功
                 circuit.success()
+                # cache 只存 Content-Type（不含 Set-Cookie，避免会话 cookie 跨 agent 泄漏）
                 resp_headers = {"Content-Type": r.headers.get("Content-Type", "application/json")}
                 if ttl > 0:
                     self.cache.set(cache_key, r.content, resp_headers, ttl, tier)
