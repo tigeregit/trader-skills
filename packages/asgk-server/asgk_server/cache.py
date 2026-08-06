@@ -247,3 +247,139 @@ class SemanticCache:
             "memory": self.memory.stats(),
             "disk": self.disk.stats() if self.disk else None,
         }
+
+
+# ── 文档缓存：原始 bytes 文件（§3.7 文档型，独立于结构化缓存）──
+class DocumentCache:
+    """文档型缓存：存原始 bytes 文件（PDF/xlsx 原文），带体积上限 + LRU 淘汰。
+
+    与结构化缓存（SemanticCache）的根本差异：
+    - 存原始 bytes（PDF/xlsx 是二进制文件，非 JSON 可序列化）
+    - 体积必须管（单文件 ≤20MB，总 ≤2GB）——结构化数据是 KB 级，文档是 MB 级
+    - LRU 淘汰：超总上限时删最久未访问的（文档 30 天 TTL 但可能先被 LRU 挤掉）
+    - 路径：<cache_dir>/_docs/<doc_id>.<ext> + <cache_dir>/_docs/_index.json 元数据
+
+    线程安全（一把锁串行化文件写 + 元数据更新；文档下载 ≤1 req/s，无竞争）。
+    """
+
+    # 体积上限（§3.7）
+    MAX_FILE_BYTES = 20 * 1024 * 1024   # 单文件 20MB
+    MAX_TOTAL_BYTES = 2 * 1024 * 1024 * 1024  # 总 2GB
+
+    def __init__(self, cache_dir: Path, max_total_bytes: int | None = None,
+                 max_file_bytes: int | None = None):
+        self.docs_dir = Path(cache_dir) / "_docs"
+        self.docs_dir.mkdir(parents=True, exist_ok=True)
+        self.index_path = self.docs_dir / "_index.json"
+        self.max_total = max_total_bytes if max_total_bytes is not None else self.MAX_TOTAL_BYTES
+        self.max_file = max_file_bytes if max_file_bytes is not None else self.MAX_FILE_BYTES
+        self._lock = threading.Lock()
+        self._index: dict[str, dict] = self._load_index()  # doc_id -> {ext, size, expire, atime}
+        self._total_bytes = sum(e["size"] for e in self._index.values())
+
+    def _load_index(self) -> dict[str, dict]:
+        """启动时加载元数据索引；删除已过期的文档文件。"""
+        if not self.index_path.exists():
+            return {}
+        try:
+            data = json.loads(self.index_path.read_text(encoding="utf-8"))
+        except (ValueError, json.JSONDecodeError, OSError):
+            return {}
+        now = time.time()
+        expired = [k for k, e in data.items() if e.get("expire", 0) <= now]
+        for k in expired:
+            self._unlink_doc(k, data)
+        return data
+
+    def _unlink_doc(self, doc_id: str, index: dict) -> None:
+        """删一个文档文件 + 从 index 移除（不写盘，调用方负责持久化）。"""
+        entry = index.pop(doc_id, None)
+        if entry is None:
+            return
+        path = self.docs_dir / f"{doc_id}.{entry['ext']}"
+        path.unlink(missing_ok=True)
+
+    def _persist_index(self) -> None:
+        """原子写元数据索引。"""
+        tmp = self.index_path.with_name(f".{self.index_path.name}.{threading.get_ident()}.tmp")
+        tmp.write_text(json.dumps(self._index, ensure_ascii=False), encoding="utf-8")
+        tmp.replace(self.index_path)
+
+    def _path_for(self, doc_id: str, ext: str) -> Path:
+        return self.docs_dir / f"{doc_id}.{ext}"
+
+    def _evict_lru(self, need_bytes: int) -> None:
+        """LRU 淘汰：腾出至少 need_bytes 空间（删最久未访问的）。
+
+        假设已持锁。淘汰后 _total_bytes 更新。
+        """
+        if self._total_bytes + need_bytes <= self.max_total:
+            return
+        # 按 atime 升序排（最旧的先删）
+        ordered = sorted(self._index.items(), key=lambda kv: kv[1].get("atime", 0))
+        for doc_id, entry in ordered:
+            if self._total_bytes + need_bytes <= self.max_total:
+                break
+            self._unlink_doc(doc_id, self._index)
+            self._total_bytes -= entry["size"]
+
+    def get(self, doc_id: str) -> tuple[bytes, str] | None:
+        """取文档 bytes + ext。命中时刷新 atime（LRU）。过期/不存在返回 None。"""
+        with self._lock:
+            entry = self._index.get(doc_id)
+            if entry is None:
+                return None
+            if entry.get("expire", 0) <= time.time():
+                self._unlink_doc(doc_id, self._index)
+                self._total_bytes -= entry["size"]
+                self._persist_index()
+                return None
+            path = self._path_for(doc_id, entry["ext"])
+            if not path.exists():
+                # 文件丢了（外部删除），清 index
+                del self._index[doc_id]
+                self._persist_index()
+                return None
+            data = path.read_bytes()
+            entry["atime"] = time.time()  # 刷新 LRU
+            self._persist_index()
+            return data, entry["ext"]
+
+    def set(self, doc_id: str, data: bytes, ext: str, ttl: int) -> bool:
+        """存文档 bytes。超单文件上限拒绝（返 False）；超总量先 LRU 淘汰再写。
+
+        ttl<=0 不写（文档型 ttl 固定 30 天，不会是 0）。
+        """
+        if ttl <= 0 or not data:
+            return False
+        if len(data) > self.max_file:
+            return False  # 单文件超限拒绝（不淘汰——这是异常大文件）
+        with self._lock:
+            # 同 doc_id 已存在则先删旧（避免重复计入体积）
+            if doc_id in self._index:
+                old = self._index[doc_id]
+                self._unlink_doc(doc_id, self._index)
+                self._total_bytes -= old["size"]
+            # LRU 淘汰腾空间
+            self._evict_lru(len(data))
+            path = self._path_for(doc_id, ext)
+            # 原子写
+            tmp = path.with_name(f".{path.name}.{threading.get_ident()}.tmp")
+            tmp.write_bytes(data)
+            tmp.replace(path)
+            self._index[doc_id] = {
+                "ext": ext, "size": len(data),
+                "expire": time.time() + ttl, "atime": time.time(),
+            }
+            self._total_bytes += len(data)
+            self._persist_index()
+            return True
+
+    def stats(self) -> dict:
+        with self._lock:
+            return {"docs": len(self._index),
+                    "total_bytes": self._total_bytes,
+                    "max_total_bytes": self.max_total}
+
+    def close(self):
+        pass

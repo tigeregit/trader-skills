@@ -16,6 +16,7 @@ T1 阶段：服务端可启动、GET /v1/sources 返回空、mock 能力可注�
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import signal
 import threading
@@ -30,7 +31,8 @@ from urllib.parse import urlparse, parse_qs
 import requests
 
 from . import registry
-from .cache import JsonDiskCache, SemanticCache, semantic_key
+from .binary import BinaryPayload
+from .cache import DocumentCache, JsonDiskCache, SemanticCache, semantic_key
 from .cache_policy import resolve_ttl, should_persist
 from .context import FetchContext, SourceBlocked, SourceUnhealthy
 from .egress import egress_request
@@ -48,6 +50,25 @@ HERE = Path(__file__).resolve().parent
 DEFAULT_CONFIG = HERE / "config.toml"
 
 _DEFAULT_UA = "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"
+
+# 文档型扩展名 → MIME（§3.7 二进制回传的 content_type）
+_CONTENT_TYPES = {
+    "pdf": "application/pdf",
+    "xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "xls": "application/vnd.ms-excel",
+    "doc": "application/msword",
+    "docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+
+
+def _content_type(ext: str) -> str:
+    """扩展名 → MIME；未知默认 octet-stream。"""
+    return _CONTENT_TYPES.get(ext.lower(), "application/octet-stream")
+
+
+def _b64(data: bytes) -> str:
+    """bytes → base64 字符串（JSON-RPC 无法传 bytes，文档型走 base64）。"""
+    return base64.b64encode(data).decode("ascii")
 
 
 def load_config(path: Path) -> dict:
@@ -137,6 +158,13 @@ class CapabilityServer:
             self._disk_load_count = self.cache.memory.stats()["size"]
             self._disk_load_ms = round((time.time() - t0) * 1000, 1)
 
+        # 文档缓存（§3.7）：原始 bytes 文件，复用同一 cache_dir/_docs/。
+        # 仅在持久化开启时建（文档是 MB 级，session-only 无意义）；否则为 None，
+        # 文档能力退化为「不缓存、每次重下」。
+        self.doc_cache: Optional[DocumentCache] = None
+        if disk_cache is not None:
+            self.doc_cache = DocumentCache(cache_dir)
+
         # 指纹日志（沿用 sgw §3.4.7）
         fp = config.get("fingerprint", {})
         self.fp_enabled = fp.get("enabled", False)
@@ -177,6 +205,18 @@ class CapabilityServer:
         s = self.cfg["cache"]["session"]
         t = now.strftime("%H:%M")
         return s["intraday_start"] <= t < s["intraday_end"]
+
+    def _doc_id(self, params: dict) -> str | None:
+        """文档型 cache key：取语义参数中的文档标识（anno_id / info_code / doc_id）。
+
+        文档能力的 doc_id 是稳定的（公告/研报发布后 ID 不变），适合做文件名。
+        优先 anno_id（公告），其次 info_code（研报），兜底 doc_id。
+        """
+        for key in ("anno_id", "info_code", "doc_id"):
+            v = params.get(key)
+            if v:
+                return str(v)
+        return None
 
     # ── 选源（§3.1 核心契约）──
     def _resolve_source(self, meta: registry.CapabilityMeta,
@@ -231,12 +271,23 @@ class CapabilityServer:
         policy = meta.cache_policy
         ttl = self._ttl_for_policy(policy)
         persist = should_persist(policy)
+        is_doc = (policy == "document")
 
         # cache key：capability|source|语义键（§3.6b/f，per-source 独立不跨源共享）
         cache_key = semantic_key(capability_name, sm.name, params)
 
+        # 文档型：cache key 的语义参数就是 doc_id（annoId/infoCode），扁平键查 doc_cache
+        if is_doc and self.doc_cache is not None:
+            doc_id = self._doc_id(params)
+            cached_doc = self.doc_cache.get(doc_id) if doc_id else None
+            if cached_doc is not None:
+                data_b, ext = cached_doc
+                return 200, {"data": _b64(data_b), "_binary": True, "ext": ext,
+                             "content_type": _content_type(ext),
+                             "cache": "HIT-DOC", "source": sm.name}
+
         # 命中缓存（TTL>0 才查；realtime/streaming 的 TTL=0 不查）
-        if ttl > 0:
+        if ttl > 0 and not is_doc:
             cached = self.cache.get(cache_key)
             if cached is not None:
                 return 200, {"data": cached, "cache": "HIT-MEM", "source": sm.name}
@@ -253,7 +304,7 @@ class CapabilityServer:
 
         # leader：执行 fetch，带流量内核保护（状态闩 → 熔断 → 限流 → 出网）
         try:
-            result = self._execute_fetch(meta, fetch, sm, group, params, ttl, persist, cache_key)
+            result = self._execute_fetch(meta, fetch, sm, group, params, ttl, persist, cache_key, is_doc)
         except SourceBlocked as e:
             result = (503, {"error": str(e)})
         except Exception:
@@ -267,7 +318,8 @@ class CapabilityServer:
 
     def _execute_fetch(self, meta: registry.CapabilityMeta, fetch,
                        sm: registry.SourceMeta, group: str, params: dict,
-                       ttl: int, persist: bool, cache_key: str) -> tuple[int, dict]:
+                       ttl: int, persist: bool, cache_key: str,
+                       is_doc: bool = False) -> tuple[int, dict]:
         """leader 路径：状态闩 → 熔断 → 限流 → 调 fetch → 反馈 → 写缓存。
 
         fetch 函数体内自行调用 egress_request 出网（服务端持有全部上游知识）。
@@ -308,6 +360,15 @@ class CapabilityServer:
         if ctx.failed:
             return 502, {"error": "upstream failed", "reason": ctx.last_status}
 
+        # 文档型：data 是 BinaryPayload，写 doc_cache（bytes 文件 + LRU），base64 回传
+        if is_doc and isinstance(data, BinaryPayload):
+            if self.doc_cache is not None:
+                doc_id = self._doc_id(params)
+                if doc_id:
+                    self.doc_cache.set(doc_id, data.data, data.ext, ttl)
+            return 200, {"data": _b64(data.data), "_binary": True, "ext": data.ext,
+                         "content_type": data.content_type, "cache": "MISS"}
+
         # 写缓存（结构化数据；TTL>0 才写，persist 决定是否落盘，§3.6）
         if ttl > 0 and data is not None:
             self.cache.set(cache_key, data, ttl, persist)
@@ -323,6 +384,7 @@ class CapabilityServer:
             "circuits": {n: c.stats() for n, c in self.circuits.items()},
             "state_safety": self.state_manager.stats() if self.state_manager else None,
             "cache": self.cache.stats(),
+            "doc_cache": self.doc_cache.stats() if self.doc_cache else None,
             "disk_load_count": self._disk_load_count,
             "disk_load_ms": self._disk_load_ms,
             "intraday": self._is_intraday(),
@@ -334,6 +396,8 @@ class CapabilityServer:
         self._closed = True
         if self.cache.disk:
             self.cache.disk.close()
+        if self.doc_cache:
+            self.doc_cache.close()
         if self.state_manager:
             self.state_manager.close()
 
